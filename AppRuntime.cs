@@ -36,6 +36,7 @@ public sealed class AppRuntime : IDisposable
     public CredentialStore Store { get; } = new();
     public ThemeColors Theme { get; }
     public LoginCoordinator Coordinator { get; }
+    public DeviceManager Devices { get; }
     public DispatcherQueue Dispatcher { get; }
     public TrayIcon? Tray { get; private set; }
 
@@ -78,6 +79,8 @@ public sealed class AppRuntime : IDisposable
         Coordinator = new LoginCoordinator(Store, dispatcher, launchedAtStartup);
         Coordinator.StateChanged += OnStateChanged;
         Coordinator.Log += AddLog;
+
+        Devices = new DeviceManager(dispatcher, new PortalClient());
 
         HasLegacyHosts = HostsCleanup.HasLegacyBlock();
         LegacyHostsEntries = HasLegacyHosts ? HostsCleanup.CountLegacyEntries() : 0;
@@ -422,6 +425,7 @@ public sealed class AppRuntime : IDisposable
         _session = null;
 
         Coordinator.Dispose();
+        Devices.Dispose();
         Theme.Dispose();
         Tray?.Dispose();
         Tray = null;

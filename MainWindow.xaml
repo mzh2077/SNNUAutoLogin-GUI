@@ -16,6 +16,9 @@
     <Grid x:Name="Root">
         <Grid.Resources>
 
+            <!--  bool → Visibility：设备行里「点击下线」与「断开连接」按会话类型二选一  -->
+            <local:BoolToVisibilityConverter x:Key="BoolToVisibility" />
+
             <Style x:Key="CardStyle" TargetType="Border">
                 <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
                 <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
@@ -398,6 +401,189 @@
                 Padding="0,0,0,0"
                 VerticalScrollBarVisibility="Auto">
                 <StackPanel x:Name="SettingsPanel" Spacing="12">
+
+                    <!--  在线设备：门户在线控制页里的设备表格  -->
+                    <Border x:Name="DeviceCard" Style="{StaticResource CardStyle}">
+                        <StackPanel Padding="20,14,20,14" Spacing="0">
+
+                            <Grid>
+                                <StackPanel
+                                    VerticalAlignment="Center"
+                                    Orientation="Horizontal"
+                                    Spacing="8">
+                                    <FontIcon Style="{StaticResource SectionIconStyle}" Glyph="&#xE968;" />
+                                    <TextBlock Style="{StaticResource CardTitleStyle}" Text="在线设备" />
+                                </StackPanel>
+
+                                <StackPanel
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Center"
+                                    Orientation="Horizontal"
+                                    Spacing="8">
+
+                                    <ComboBox
+                                        x:Name="DevicePortBox"
+                                        Width="96"
+                                        VerticalAlignment="Center"
+                                        FontSize="12"
+                                        ToolTipService.ToolTip="接入端口" />
+
+                                    <Button
+                                        x:Name="DeviceRefreshBtn"
+                                        Width="30"
+                                        Height="30"
+                                        Padding="0"
+                                        ToolTipService.ToolTip="刷新设备列表">
+                                        <FontIcon FontSize="13" Glyph="&#xE72C;" />
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+
+                            <!--  列表说明：当前端口的在线控制  -->
+                            <TextBlock
+                                x:Name="DeviceSummary"
+                                Margin="0,8,0,0"
+                                Style="{StaticResource HintStyle}"
+                                Text="尚未加载" />
+
+                            <Border Style="{StaticResource DividerStyle}" />
+
+                            <ItemsControl x:Name="DeviceList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Padding="0,10">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+
+                                            <!--  第一行：设备名 + IP + 状态  -->
+                                            <Grid ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+
+                                                <Ellipse
+                                                    Width="6"
+                                                    Height="6"
+                                                    VerticalAlignment="Center"
+                                                    Fill="{ThemeResource SystemFillColorSuccessBrush}" />
+
+                                                <TextBlock
+                                                    Grid.Column="1"
+                                                    VerticalAlignment="Center"
+                                                    FontSize="13"
+                                                    FontWeight="SemiBold"
+                                                    Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                                    Text="{Binding DisplayName}" />
+
+                                                <TextBlock
+                                                    Grid.Column="2"
+                                                    VerticalAlignment="Center"
+                                                    FontSize="11.5"
+                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                    Text="{Binding Status}" />
+                                            </Grid>
+
+                                            <!--  第二行：明细 + 操作  -->
+                                            <Grid
+                                                Grid.Row="1"
+                                                Margin="14,5,0,0"
+                                                ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+
+                                                <StackPanel VerticalAlignment="Center" Spacing="2">
+                                                    <TextBlock
+                                                        FontFamily="Consolas"
+                                                        FontSize="11"
+                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                        Text="{Binding Ip}" />
+                                                    <TextBlock
+                                                        FontSize="11"
+                                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                        Text="{Binding Detail}" />
+                                                </StackPanel>
+
+                                                <StackPanel
+                                                    Grid.Column="1"
+                                                    VerticalAlignment="Center"
+                                                    Orientation="Horizontal"
+                                                    Spacing="6">
+
+                                                    <!--  别的会话：强制下线（门户里的「强制下线」）  -->
+                                                    <Button
+                                                        Click="OnDeviceOfflineClicked"
+                                                        Content="点击下线"
+                                                        FontSize="12"
+                                                        Tag="{Binding}"
+                                                        Visibility="{Binding CanForceOffline, Converter={StaticResource BoolToVisibility}}" />
+
+                                                    <!--  本机当前这条连接不能强制下线，改用卡片底部的「断开连接」  -->
+                                                    <TextBlock
+                                                        VerticalAlignment="Center"
+                                                        FontSize="11"
+                                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                        Text="本机"
+                                                        Visibility="{Binding IsCurrent, Converter={StaticResource BoolToVisibility}}" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <!--  空态 / 错误态  -->
+                            <TextBlock
+                                x:Name="DeviceEmptyText"
+                                Margin="0,12,0,4"
+                                HorizontalAlignment="Center"
+                                FontSize="12"
+                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                Text="暂无在线设备"
+                                Visibility="Collapsed" />
+
+                            <Border Style="{StaticResource DividerStyle}" />
+
+                            <TextBlock
+                                x:Name="DeviceErrorText"
+                                Margin="0,8,0,0"
+                                FontSize="11.5"
+                                Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                TextWrapping="Wrap"
+                                Visibility="Collapsed" />
+
+                            <!--
+                                页面级主控：断开本机当前连接。
+                                对应门户 userstatus.jsp 底部那个「断开连接」大按钮 ——
+                                它断的是本机这条会话（logoff），与设备行里的
+                                「点击下线」（踢别人，type=dm）是两件事。
+                            -->
+                            <Button
+                                x:Name="DeviceDisconnectBtn"
+                                Margin="0,12,0,2"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Center"
+                                Style="{StaticResource AccentButtonStyle}"
+                                Click="OnDeviceDisconnectSelfClicked">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon FontSize="13" Glyph="&#xE71A;" />
+                                    <TextBlock x:Name="DeviceDisconnectLabel" FontSize="13" Text="断开连接" />
+                                </StackPanel>
+                            </Button>
+
+                            <TextBlock
+                                Margin="0,2,0,0"
+                                HorizontalAlignment="Center"
+                                Style="{StaticResource HintStyle}"
+                                Text="断开本机当前连接，巡检会按设置自动重新认证" />
+
+                        </StackPanel>
+                    </Border>
 
                     <!--  1.4.0 起移除了网络加速：只在检测到旧版残留时出现，一键还原  -->
                     <Border

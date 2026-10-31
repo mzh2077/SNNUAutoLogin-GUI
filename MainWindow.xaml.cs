@@ -71,6 +71,7 @@ public sealed partial class MainWindow : Window
         _rt.Logged += OnRuntimeLog;
         _rt.SettingsChanged += OnRuntimeSettings;
         _rt.LegacyHostsChanged += OnLegacyHostsChanged;
+        _rt.Devices.Changed += OnDeviceListChanged;
 
         Activated += OnWindowActivated;
         Closed += OnClosed;
@@ -197,6 +198,8 @@ public sealed partial class MainWindow : Window
         LoadSettingsToUi();
         FillLogsFromRuntime();
         WireEvents();
+        FillDevicePorts();
+        OnDeviceListChanged();
 
         ApplyThemeColors();
         ApplyState(_rt.State, _rt.LastResult, animate: false);
@@ -466,6 +469,18 @@ public sealed partial class MainWindow : Window
         ScrollLogToEnd();
     }
 
+    /// <summary>填充接入端口下拉框，并选中当前端口。</summary>
+    private void FillDevicePorts()
+    {
+        DevicePortBox.Items.Clear();
+        foreach (int p in PortalClient.KnownPorts) DevicePortBox.Items.Add(p);
+
+        bool ready = _uiReady;
+        _uiReady = false;
+        DevicePortBox.SelectedItem = _rt.Devices.Port;
+        _uiReady = ready;
+    }
+
     private void WireEvents()
     {
         ConnectBtn.Click += async (_, _) => await OnConnectClicked();
@@ -512,6 +527,11 @@ public sealed partial class MainWindow : Window
         Fx.PressFeedback(ConnectBtn);
         Fx.PressFeedback(CaptchaSubmitBtn);
         Fx.PressFeedback(RefreshBtn);
+        Fx.PressFeedback(DeviceRefreshBtn);
+
+        // 在线设备
+        DeviceRefreshBtn.Click += async (_, _) => await OnDeviceRefreshClicked();
+        DevicePortBox.SelectionChanged += async (_, _) => await OnDevicePortChanged();
 
         LegacyCleanBtn.Click += (_, _) => OnLegacyCleanClicked();
         LegacyDismissBtn.Click += (_, _) =>
@@ -726,6 +746,133 @@ public sealed partial class MainWindow : Window
     }
 
     // ────────────────────────── 交互 ──────────────────────────
+
+    // ────────────────────────── 在线设备 ──────────────────────────
+
+    /// <summary>在线设备列表。门户在线控制页里的设备表格。</summary>
+    private void OnDeviceListChanged()
+    {
+        if (!_uiBuilt) return;
+
+        var dm = _rt.Devices;
+
+        DeviceList.ItemsSource = dm.Devices;
+        DevicePortBox.SelectedItem = dm.Port;
+
+        bool loading = dm.State == DeviceListState.Loading;
+        DeviceRefreshBtn.IsEnabled = !loading;
+        DevicePortBox.IsEnabled = !loading;
+
+        switch (dm.State)
+        {
+            case DeviceListState.Loading:
+                DeviceSummary.Text = "正在读取在线设备…";
+                DeviceEmptyText.Visibility = Visibility.Collapsed;
+                break;
+
+            case DeviceListState.Ready:
+                DeviceSummary.Text = dm.Devices.Count == 0
+                    ? $"端口 {dm.Port} 下没有其他在线设备"
+                    : $"端口 {dm.Port} · 共 {dm.Devices.Count} 台在线设备";
+                DeviceEmptyText.Visibility = dm.Devices.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+                break;
+
+            case DeviceListState.Failed:
+                DeviceSummary.Text = "在线设备读取失败";
+                DeviceEmptyText.Visibility = Visibility.Collapsed;
+                break;
+
+            default:
+                DeviceSummary.Text = "尚未加载";
+                DeviceEmptyText.Visibility = Visibility.Collapsed;
+                break;
+        }
+
+        if (!string.IsNullOrEmpty(dm.Error))
+        {
+            DeviceErrorText.Text = dm.Error;
+            DeviceErrorText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            DeviceErrorText.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private async Task OnDeviceRefreshClicked()
+    {
+        if (!_uiBuilt) return;
+
+        DeviceRefreshBtn.IsEnabled = false;
+        DeviceSummary.Text = "正在读取在线设备…";
+
+        try
+        {
+            await _rt.Devices.RefreshAsync();
+        }
+        finally
+        {
+            if (_uiBuilt) DeviceRefreshBtn.IsEnabled = true;
+        }
+    }
+
+    private async Task OnDevicePortChanged()
+    {
+        if (!_uiReady) return;
+        if (DevicePortBox.SelectedItem is not int port) return;
+
+        await _rt.Devices.RefreshAsync(port);
+    }
+
+    /// <summary>下线别的设备（门户里的「强制下线」）。</summary>
+    private async void OnDeviceOfflineClicked(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        if (!_uiBuilt) return;
+        if ((sender as FrameworkElement)?.Tag is not OnlineDevice device) return;
+
+        if (!device.CanForceOffline)
+        {
+            _rt.AddLog($"{device.DisplayName} 是本机当前连接，请用卡片底部的「断开连接」");
+            return;
+        }
+
+        _rt.AddLog($"正在下线 {device.DisplayName}（{device.Ip}）…");
+        device.Status = "下线中";
+        OnDeviceListChanged();
+
+        var ok = await _rt.Devices.TakeOfflineAsync(device);
+        _rt.AddLog(ok ? $"{device.DisplayName} 已下线" : $"{device.DisplayName} 下线失败");
+    }
+
+    /// <summary>
+    /// 断开本机当前这条连接 —— 卡片底部的页面级按钮，
+    /// 对应门户 userstatus.jsp 底部那个「断开连接」。
+    /// </summary>
+    private async void OnDeviceDisconnectSelfClicked(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        if (!_uiBuilt) return;
+
+        DeviceDisconnectBtn.IsEnabled = false;
+        DeviceDisconnectLabel.Text = "断开中…";
+
+        _rt.AddLog("正在断开本机连接…");
+
+        try
+        {
+            var ok = await _rt.Devices.DisconnectSelfAsync();
+            _rt.AddLog(ok
+                ? "本机连接已断开，巡检将按设置自动重新认证"
+                : "断开失败");
+        }
+        finally
+        {
+            if (_uiBuilt)
+            {
+                DeviceDisconnectBtn.IsEnabled = true;
+                DeviceDisconnectLabel.Text = "断开连接";
+            }
+        }
+    }
 
     // ────────────────────────── 旧版 hosts 残留 ──────────────────────────
 
@@ -1001,6 +1148,7 @@ public sealed partial class MainWindow : Window
         _rt.SettingsChanged -= OnRuntimeSettings;
         _rt.LegacyHostsChanged -= OnLegacyHostsChanged;
         _rt.Coordinator.CaptchaChanged -= OnCaptchaChanged;
+        _rt.Devices.Changed -= OnDeviceListChanged;
 
         _closeHook?.Dispose();
         _closeHook = null;

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Services/DeviceListParser.cs" Link="DeviceListParser.cs" />
+    <Compile Include="../../Services/IOnlineDevicePortal.cs" Link="IOnlineDevicePortal.cs" />
+    <Compile Include="../../Services/DeviceManager.cs" Link="DeviceManager.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- 真实门户页面样本：解析测试要拿它当输入 -->
+    <None Include="fixture_devices.html" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

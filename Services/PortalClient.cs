@@ -63,10 +63,16 @@ internal sealed class LoginPage
 /// 协议：POST application/x-www-form-urlencoded 到 /snnuportal/login，
 /// 字段 account / password / yys；认证结果按出口 IP 判定，页面为 GB2312 编码。
 /// </summary>
-public sealed class PortalClient : IDisposable
+public sealed class PortalClient : IDisposable, IOnlineDevicePortal
 {
     private const string Root = "http://202.117.144.205:8603/snnuportal/";
     private const string PortalHost = "202.117.144.205";
+
+    /// <summary>可选接入端口：不同端口对应不同接入方式（有线 / 无线 / 各运营商出口）。</summary>
+    public static readonly int[] KnownPorts = { 8603, 8601, 8602, 8605, 8609, 8604, 8606, 8607, 8608, 8610, 8600 };
+
+    /// <summary>指定端口下的门户根地址。</summary>
+    private static string RootFor(int port) => $"http://{PortalHost}:{port}/snnuportal/";
 
     private static readonly Encoding Gb = CreateGbEncoding();
 
@@ -94,7 +100,11 @@ public sealed class PortalClient : IDisposable
             UseCookies = true,
             CookieContainer = new CookieContainer(),
             ConnectTimeout = TimeSpan.FromSeconds(6),
-            PooledConnectionLifetime = TimeSpan.FromMinutes(2)
+            PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+
+            // 认证门户是校园网内网地址，绝不能走系统或环境变量里的 HTTP 代理：
+            // 代理往往连不进内网，设备列表（80 端口的 zili）会直接 404。
+            UseProxy = false
         };
 
         _http = new HttpClient(handler)
@@ -151,6 +161,87 @@ public sealed class PortalClient : IDisposable
 
     /// <summary>最近一次解析到的登录页；提交表单时复用它带的 action 与隐藏域。</summary>
     private LoginPage? _page;
+
+    /// <summary>
+    /// 取当前账号下的在线设备列表。
+    ///
+    /// 协议：userstatus.jsp 页面里嵌了一个 iframe（zili/auth_my_state.php），
+    /// 设备表格在 iframe 里。iframe 页面是 UTF-8 编码，和外层的 GB2312 不一样。
+    /// </summary>
+    public async Task<DeviceListResult> GetOnlineDevicesAsync(int port, CancellationToken ct = default)
+    {
+        try
+        {
+            using var resp = await _http.GetAsync(RootFor(port) + "userstatus.jsp", ct).ConfigureAwait(false);
+            var html = await ReadHtmlAsync(resp, ct).ConfigureAwait(false);
+
+            // 没登录时这个页面没有 iframe，也没有「当前登录账号」
+            var currentIp = Match(html, @"当前IP[：:]\s*(?:<[^>]+>\s*)*([0-9]{1,3}(?:\.[0-9]{1,3}){3})");
+            var frameUrl = Match(html, @"<iframe[^>]*\ssrc\s*=\s*[""']([^""']+)[""']");
+            if (string.IsNullOrEmpty(frameUrl))
+                return DeviceListResult.Fail("未认证，无法获取在线设备");
+
+            // iframe 在 80 端口的 zili 目录下，是绝对地址
+            using var frameResp = await _http.GetAsync(frameUrl, ct).ConfigureAwait(false);
+            var frameBytes = await frameResp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+            var frameHtml = Encoding.UTF8.GetString(frameBytes);
+
+            var devices = DeviceListParser.Parse(frameHtml, currentIp);
+            return DeviceListResult.Ok(devices, frameUrl);
+        }
+        catch (OperationCanceledException)
+        {
+            return DeviceListResult.Fail("连接超时");
+        }
+        catch (Exception ex)
+        {
+            return DeviceListResult.Fail(Describe(ex));
+        }
+    }
+
+    /// <summary>
+    /// 强制下线某台设备（别的会话）。
+    /// 走在线控制页自己的 type=dm 接口，成功后由调用方刷新列表。
+    /// </summary>
+    public async Task<bool> ForceOfflineAsync(string frameUrl, string sessionId, CancellationToken ct = default)
+    {
+        try
+        {
+            var url = DeviceListParser.BuildForceOfflineUrl(frameUrl, sessionId);
+            using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);
+            return resp.IsSuccessStatusCode;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 断开本机当前这条连接。
+    /// 对应门户 userstatus.jsp 底部那个「断开连接」按钮（logoff）。
+    /// </summary>
+    public async Task<bool> DisconnectAsync(int port, CancellationToken ct = default)
+    {
+        try
+        {
+            var url = DeviceListParser.BuildDisconnectUrl(RootFor(port));
+            using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);
+            return resp.IsSuccessStatusCode;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     /// <summary>执行登录（无验证码路径）。</summary>
     public Task<LoginResult> LoginAsync(string account, string password, Operator op, CancellationToken ct = default)

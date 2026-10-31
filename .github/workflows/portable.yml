@@ -18,6 +18,8 @@ jobs:
         run: dotnet run --project tests/StartupTests -c Release
       - name: Credential persistence regression tests
         run: dotnet run --project tests/CredentialTests -c Release
+      - name: Online device list parsing regression tests
+        run: dotnet run --project tests/DeviceListTests -c Release
       - name: Build installer and portable archive
         shell: pwsh
         run: ./tools/build_release.ps1
