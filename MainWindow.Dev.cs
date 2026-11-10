@@ -434,7 +434,7 @@ public sealed partial class MainWindow
                 $"logCard    = {LogCard.ActualWidth} x {LogCard.ActualHeight}\n" +
                 $"rtb        = {rtb.PixelWidth} x {rtb.PixelHeight}\n" +
                 $"operatorBox= {RectOf(OperatorBox)} sel={OperatorBox.SelectedIndex}\n" +
-                $"interval   = {RectOf(IntervalBox)} sel={IntervalBox.SelectedIndex}\n" +
+                $"interval   = {RectOf(IntervalBox)} val={IntervalBox.Value}\n" +
                 $"toggle     = {RectOf(AutoStartSwitch)} minW={AutoStartSwitch.MinWidth} pad={AutoStartSwitch.Padding}\n" +
                 $"opField    = {_operator} ({(int)_operator})\n" +
                 $"settingsOp = {_rt.Store.Settings.Operator} ({(int)_rt.Store.Settings.Operator})\n" +

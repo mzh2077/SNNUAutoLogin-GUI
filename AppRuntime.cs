@@ -40,6 +40,21 @@ public sealed class AppRuntime : IDisposable
     public DispatcherQueue Dispatcher { get; }
     public TrayIcon? Tray { get; private set; }
 
+    /// <summary>接入方式识别（网卡类型 + SSID）。</summary>
+    public NetworkAccessService Access { get; }
+
+    /// <summary>生效档案解析（连接规则 → 账号 / 密码 / 端口）。</summary>
+    public ConnectionProfileResolver Profiles { get; }
+
+    /// <summary>独立外网探测。</summary>
+    public NetworkProbeService Probe { get; }
+
+    /// <summary>设备数守卫。</summary>
+    public DeviceGuardService Guard { get; }
+
+    /// <summary>全程序共用一个门户客户端：省 HTTP 连接池，也保证同一端口的会话是同一份。</summary>
+    private readonly PortalClient _portal = new();
+
     /// <summary>旧版本「网络加速」在系统 hosts 里留下的标记块是否还在。</summary>
     public bool HasLegacyHosts { get; private set; }
 
@@ -76,14 +91,30 @@ public sealed class AppRuntime : IDisposable
 
         Theme = new ThemeColors(dispatcher);
 
-        Coordinator = new LoginCoordinator(Store, dispatcher, launchedAtStartup);
+        Access = new NetworkAccessService();
+        Profiles = new ConnectionProfileResolver(Store, Access);
+        Probe = new NetworkProbeService();
+
+        Coordinator = new LoginCoordinator(Store, dispatcher, Profiles, launchedAtStartup);
         Coordinator.StateChanged += OnStateChanged;
         Coordinator.Log += AddLog;
 
-        Devices = new DeviceManager(dispatcher, new PortalClient());
+        // 门户客户端是共用的，所以这里不让 DeviceManager 负责释放它
+        Devices = new DeviceManager(dispatcher, _portal, ownsClient: false);
+
+        Guard = new DeviceGuardService(
+            Store,
+            _portal,
+            Probe,
+            () => Profiles.Resolve().Port,
+            () => Coordinator.RequestReauthenticate(),
+            AddLog);
 
         HasLegacyHosts = HostsCleanup.HasLegacyBlock();
         LegacyHostsEntries = HasLegacyHosts ? HostsCleanup.CountLegacyEntries() : 0;
+
+        if (!string.IsNullOrWhiteSpace(Store.LastNotice))
+            AddLog(Store.LastNotice);
 
         AddLog("程序启动");
         AddLog(Store.Settings.AutoStart && StartupManager.IsEnabled()
@@ -191,9 +222,14 @@ public sealed class AppRuntime : IDisposable
         _netWatch = new NetworkWatch(Dispatcher, () =>
         {
             AddLog("检测到网络状态变化，立即重新认证");
+            Access.Invalidate();          // 网卡换了，接入方式要重新判定
+            Guard.NotifyNetworkChanged(); // 换网了，守卫顺手评估一次
             Coordinator.RequestImmediateCheck();
         });
         _netWatch.Start();
+
+        // 设备数守卫：自己一个后台循环，不占巡检的锁
+        Guard.Start();
 
         // 启动期的临时分配（XAML 解析、字体排版、图标解码）用完就没价值了。
         // 6 秒后先归还一次，25 秒后再收一次尾 —— 以前只等 20 秒，任务管理器里
@@ -424,8 +460,11 @@ public sealed class AppRuntime : IDisposable
         _session?.Dispose();
         _session = null;
 
+        Guard.Dispose();
+        Probe.Dispose();
         Coordinator.Dispose();
         Devices.Dispose();
+        _portal.Dispose();   // 门户客户端是共用的，由这里统一释放
         Theme.Dispose();
         Tray?.Dispose();
         Tray = null;

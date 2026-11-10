@@ -49,6 +49,14 @@ public partial class App : Application
             return;
         }
 
+        // 出网探测自检：按当前设置做一次独立探测（不碰门户、不改认证状态）
+        if (Has("--probe"))
+        {
+            Diagnostics.RunProbe();
+            Exit();
+            return;
+        }
+
         // 登录页解析自检（不联网）：确认验证码字段/图片/表单地址认得出来
         if (Has("--login-selftest"))
         {

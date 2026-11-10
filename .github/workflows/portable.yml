@@ -20,6 +20,8 @@ jobs:
         run: dotnet run --project tests/CredentialTests -c Release
       - name: Online device list parsing regression tests
         run: dotnet run --project tests/DeviceListTests -c Release
+      - name: Device guard and connection rules regression tests
+        run: dotnet run --project tests/GuardTests -c Release
       - name: Build installer and portable archive
         shell: pwsh
         run: ./tools/build_release.ps1

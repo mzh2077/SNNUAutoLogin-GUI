@@ -343,6 +343,21 @@ dotnet build SNNUAutoLogin.csproj -c Release
 
 ---
 
+## 4.5 换学校时，新功能要一起改的三处
+
+1.6.0 起多了「连接规则」「设备数守卫」「按端口登录」三样东西，换学校时下面三处要跟着改：
+
+| 改哪里 | 改什么 |
+| --- | --- |
+| `Services/PortalClient.cs` 的 `KnownPorts` | 换成你学校的接入端口列表。**端口对应不同的接入方式与运营商出口**，规则的「出口端口」就是从这里选的 |
+| `Services/PortalClient.cs` 的 `PortalHost` | 门户主机名/IP。登录、状态查询、验证码、断开连接都走它 |
+| `Services/NetworkProbeService.cs` 的 `DefaultTarget` | 出网探测的默认目标。换成你学校网络里能 ping 通、且**不是**学校认证门户自身的地址 |
+
+另外两条经验：
+
+- **端口必须能各自独立登录**。程序给每个接入端口建了独立的 Cookie 容器（校园网所有端口在同一台主机上，Cookie 本来不按端口隔离）。如果你的学校所有端口共用同一个认证会话，把 `PortalClient.ClientFor(port)` 改回共用一个 `HttpClient` 即可。
+- **探测目标别填门户地址**。填了门户自己的地址，探测只会验证「能不能连到门户」，而不是「能不能出网」，守卫就白设了。
+
 ## 5. 常见坑
 
 | 现象 | 原因 | 怎么办 |

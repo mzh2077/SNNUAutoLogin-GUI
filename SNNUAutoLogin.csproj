@@ -20,9 +20,9 @@
     <EnableMsixTooling>true</EnableMsixTooling>
 
     <!-- 文件属性（exe 右键「属性 → 详细信息」与「应用和功能」列表里显示的内容） -->
-    <Version>1.5.1</Version>
-    <FileVersion>1.5.1.0</FileVersion>
-    <AssemblyVersion>1.5.1.0</AssemblyVersion>
+    <Version>1.6.0</Version>
+    <FileVersion>1.6.0.0</FileVersion>
+    <AssemblyVersion>1.6.0.0</AssemblyVersion>
     <Product>陕师大校园网自动登录</Product>
     <AssemblyTitle>陕师大校园网自动登录</AssemblyTitle>
     <Company>SNNU</Company>

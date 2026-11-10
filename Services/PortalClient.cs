@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -65,18 +66,34 @@ internal sealed class LoginPage
 /// </summary>
 public sealed class PortalClient : IDisposable, IOnlineDevicePortal
 {
-    private const string Root = "http://202.117.144.205:8603/snnuportal/";
     private const string PortalHost = "202.117.144.205";
 
     /// <summary>可选接入端口：不同端口对应不同接入方式（有线 / 无线 / 各运营商出口）。</summary>
     public static readonly int[] KnownPorts = { 8603, 8601, 8602, 8605, 8609, 8604, 8606, 8607, 8608, 8610, 8600 };
+
+    /// <summary>端口是否在可选集合内。</summary>
+    public static bool IsKnownPort(int port) => Array.IndexOf(KnownPorts, port) >= 0;
 
     /// <summary>指定端口下的门户根地址。</summary>
     private static string RootFor(int port) => $"http://{PortalHost}:{port}/snnuportal/";
 
     private static readonly Encoding Gb = CreateGbEncoding();
 
-    private readonly HttpClient _http;
+    /// <summary>
+    /// 每个端口一个独立的 HttpClient。
+    ///
+    /// 关键点：CookieContainer **不按端口隔离**（同 host 不同端口会互相带 Cookie）。
+    /// 校园网所有接入端口都在 202.117.144.205 上，如果共用一个 Cookie 容器，
+    /// 「宿舍 Wi-Fi 的账号」会把会话带到「办公室网线的端口」上，多条连接规则的账号直接串味。
+    /// 所以端口隔离的最小充分条件就是「每个端口一个 HttpClient」。
+    /// </summary>
+    private readonly ConcurrentDictionary<int, Lazy<HttpClient>> _clients = new();
+
+    /// <summary>最近一次用过会话的端口：强制下线要走同一份 Cookie。</summary>
+    private int _sessionPort = 8603;
+
+    /// <summary>最近一次解析到的登录页，按端口分开（不同端口的登录页不能混用）。</summary>
+    private readonly ConcurrentDictionary<int, LoginPage?> _pages = new();
 
     private static Encoding CreateGbEncoding()
     {
@@ -91,14 +108,23 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
         }
     }
 
-    public PortalClient()
+    public PortalClient() { }
+
+    /// <summary>取（或惰性创建）某个端口专属的 HttpClient。</summary>
+    private HttpClient ClientFor(int port)
+    {
+        var lazy = _clients.GetOrAdd(port, p => new Lazy<HttpClient>(() => CreateClient(), true));
+        return lazy.Value;
+    }
+
+    private static HttpClient CreateClient()
     {
         var handler = new SocketsHttpHandler
         {
             AllowAutoRedirect = true,
             MaxAutomaticRedirections = 8,
             UseCookies = true,
-            CookieContainer = new CookieContainer(),
+            CookieContainer = new CookieContainer(),   // 每个端口一份，端口之间互不串味
             ConnectTimeout = TimeSpan.FromSeconds(6),
             PooledConnectionLifetime = TimeSpan.FromMinutes(2),
 
@@ -107,22 +133,24 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
             UseProxy = false
         };
 
-        _http = new HttpClient(handler)
+        var http = new HttpClient(handler)
         {
             Timeout = TimeSpan.FromSeconds(15)
         };
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd(
+        http.DefaultRequestHeaders.UserAgent.ParseAdd(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36");
-        _http.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,*/*");
+        http.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,*/*");
+        return http;
     }
 
     /// <summary>检查 Portal 是否可达（即是否处在校园网环境）。</summary>
-    public async Task<bool> IsPortalReachableAsync(CancellationToken ct = default)
+    public async Task<bool> IsPortalReachableAsync(int port, CancellationToken ct = default)
     {
         try
         {
-            using var req = new HttpRequestMessage(HttpMethod.Head, Root + "login");
-            using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            using var req = new HttpRequestMessage(HttpMethod.Head, RootFor(port) + "login");
+            using var resp = await ClientFor(port)
+                .SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             return true;
         }
         catch
@@ -132,11 +160,12 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
     }
 
     /// <summary>查询当前出口是否已认证在线。</summary>
-    public async Task<LoginResult> GetStatusAsync(CancellationToken ct = default)
+    public async Task<LoginResult> GetStatusAsync(int port, CancellationToken ct = default)
     {
         try
         {
-            using var resp = await _http.GetAsync(Root + "userstatus.jsp", ct).ConfigureAwait(false);
+            using var resp = await ClientFor(port)
+                .GetAsync(RootFor(port) + "userstatus.jsp", ct).ConfigureAwait(false);
             var html = await ReadHtmlAsync(resp, ct).ConfigureAwait(false);
 
             if (html.Contains("当前登录账号", StringComparison.Ordinal))
@@ -159,9 +188,6 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
         }
     }
 
-    /// <summary>最近一次解析到的登录页；提交表单时复用它带的 action 与隐藏域。</summary>
-    private LoginPage? _page;
-
     /// <summary>
     /// 取当前账号下的在线设备列表。
     ///
@@ -172,7 +198,10 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
     {
         try
         {
-            using var resp = await _http.GetAsync(RootFor(port) + "userstatus.jsp", ct).ConfigureAwait(false);
+            Interlocked.Exchange(ref _sessionPort, port);
+
+            using var resp = await ClientFor(port)
+                .GetAsync(RootFor(port) + "userstatus.jsp", ct).ConfigureAwait(false);
             var html = await ReadHtmlAsync(resp, ct).ConfigureAwait(false);
 
             // 没登录时这个页面没有 iframe，也没有「当前登录账号」
@@ -182,7 +211,7 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
                 return DeviceListResult.Fail("未认证，无法获取在线设备");
 
             // iframe 在 80 端口的 zili 目录下，是绝对地址
-            using var frameResp = await _http.GetAsync(frameUrl, ct).ConfigureAwait(false);
+            using var frameResp = await ClientFor(port).GetAsync(frameUrl, ct).ConfigureAwait(false);
             var frameBytes = await frameResp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
             var frameHtml = Encoding.UTF8.GetString(frameBytes);
 
@@ -202,13 +231,17 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
     /// <summary>
     /// 强制下线某台设备（别的会话）。
     /// 走在线控制页自己的 type=dm 接口，成功后由调用方刷新列表。
+    ///
+    /// 走的是「最近一次拉过设备列表的那个端口」的会话 —— 在线控制页的地址里
+    /// 没有门户端口，只能靠记住上一次用的端口来找到正确的 Cookie 容器。
     /// </summary>
     public async Task<bool> ForceOfflineAsync(string frameUrl, string sessionId, CancellationToken ct = default)
     {
         try
         {
             var url = DeviceListParser.BuildForceOfflineUrl(frameUrl, sessionId);
-            using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);
+            using var resp = await ClientFor(Volatile.Read(ref _sessionPort))
+                .GetAsync(url, ct).ConfigureAwait(false);
             return resp.IsSuccessStatusCode;
         }
         catch (OperationCanceledException)
@@ -229,8 +262,10 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
     {
         try
         {
+            Interlocked.Exchange(ref _sessionPort, port);
+
             var url = DeviceListParser.BuildDisconnectUrl(RootFor(port));
-            using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);
+            using var resp = await ClientFor(port).GetAsync(url, ct).ConfigureAwait(false);
             return resp.IsSuccessStatusCode;
         }
         catch (OperationCanceledException)
@@ -244,20 +279,25 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
     }
 
     /// <summary>执行登录（无验证码路径）。</summary>
-    public Task<LoginResult> LoginAsync(string account, string password, Operator op, CancellationToken ct = default)
-        => LoginInternalAsync(account, password, op, null, ct);
+    public Task<LoginResult> LoginAsync(
+        int port, string account, string password, Operator op, CancellationToken ct = default, bool force = false)
+        => LoginInternalAsync(port, account, password, op, null, ct, force);
 
     /// <summary>执行登录，带上用户填写的图形验证码。</summary>
     public Task<LoginResult> LoginAsync(
-        string account, string password, Operator op, string captcha, CancellationToken ct = default)
-        => LoginInternalAsync(account, password, op, captcha, ct);
+        int port, string account, string password, Operator op, string captcha,
+        CancellationToken ct = default, bool force = false)
+        => LoginInternalAsync(port, account, password, op, captcha, ct, force);
 
     /// <summary>
     /// 登录主流程：先看是否已在线 → 抓登录页 → 需要验证码且没提供就返回 NeedCaptcha
     /// → 按页面里的 action + 隐藏域提交 → 判定结果。
+    ///
+    /// <paramref name="force"/> 为真时跳过「已在线就返回」的快捷路径 ——
+    /// 守卫断开本机连接后要求换一条新会话，这时不能被旧会话的在线状态挡住。
     /// </summary>
     private async Task<LoginResult> LoginInternalAsync(
-        string account, string password, Operator op, string? captcha, CancellationToken ct)
+        int port, string account, string password, Operator op, string? captcha, CancellationToken ct, bool force)
     {
         if (string.IsNullOrWhiteSpace(account)) return LoginResult.Fail("账号不能为空");
         if (string.IsNullOrEmpty(password)) return LoginResult.Fail("密码不能为空");
@@ -284,14 +324,17 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
             }
         }
 
-        // 先探测：已在线则直接返回
-        var status = await GetStatusAsync(ct).ConfigureAwait(false);
-        if (status.Success) return status;
+        // 先探测：已在线则直接返回（强制重登时跳过，走完整登录流程）
+        if (!force)
+        {
+            var status = await GetStatusAsync(port, ct).ConfigureAwait(false);
+            if (status.Success) return status;
+        }
 
         LoginPage? page;
         try
         {
-            page = await LoadLoginPageAsync(ct).ConfigureAwait(false);
+            page = await LoadLoginPageAsync(port, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -340,8 +383,8 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
 
         var endpoints = new List<string>();
         if (page.FormAction is { Length: > 0 } action) endpoints.Add(action);
-        endpoints.Add(Root + "login");
-        endpoints.Add(Root + "login.jsp");
+        endpoints.Add(RootFor(port) + "login");
+        endpoints.Add(RootFor(port) + "login.jsp");
 
         string lastError = "登录失败";
 
@@ -350,7 +393,7 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
             try
             {
                 using var content = new StringContent(BuildFormBody(form), Gb, "application/x-www-form-urlencoded");
-                using var resp = await _http.PostAsync(url, content, ct).ConfigureAwait(false);
+                using var resp = await ClientFor(port).PostAsync(url, content, ct).ConfigureAwait(false);
                 var html = await ReadHtmlAsync(resp, ct).ConfigureAwait(false);
 
                 if (html.Contains("当前登录账号", StringComparison.Ordinal))
@@ -367,7 +410,7 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
                 var again = ParseLoginPage(html, resp.RequestMessage?.RequestUri);
                 if (again.CaptchaField is { Length: > 0 })
                 {
-                    _page = again;
+                    _pages[port] = again;
                     return LoginResult.Captcha(lastError.Contains("验证码", StringComparison.Ordinal)
                         ? "验证码不正确，已刷新，请重新输入"
                         : lastError);
@@ -388,7 +431,7 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
         }
 
         // 最后确认一次真实状态（有的实现登录成功但页面跳转延迟）
-        var verify = await GetStatusAsync(ct).ConfigureAwait(false);
+        var verify = await GetStatusAsync(port, ct).ConfigureAwait(false);
         if (verify.Success) return verify;
 
         return LoginResult.Fail(lastError);
@@ -398,16 +441,16 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
     /// 取一张验证码图片。每次都重新拉一遍登录页，保证「图片 → 提交」落在同一个会话里
     /// （验证码是按会话存的，中间夹一次别的请求就可能被重置）。
     /// </summary>
-    public async Task<CaptchaImage?> FetchCaptchaAsync(CancellationToken ct = default)
+    public async Task<CaptchaImage?> FetchCaptchaAsync(int port, CancellationToken ct = default)
     {
         try
         {
-            var page = await LoadLoginPageAsync(ct).ConfigureAwait(false);
+            var page = await LoadLoginPageAsync(port, ct).ConfigureAwait(false);
             if (page is null || page.AlreadyOnline) return null;
 
             if (string.IsNullOrEmpty(page.CaptchaImageUrl)) return null;
 
-            using var resp = await _http.GetAsync(page.CaptchaImageUrl, ct).ConfigureAwait(false);
+            using var resp = await ClientFor(port).GetAsync(page.CaptchaImageUrl, ct).ConfigureAwait(false);
             var media = resp.Content.Headers.ContentType?.MediaType ?? "";
             var bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
 
@@ -423,16 +466,16 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
         }
     }
 
-    private async Task<LoginPage?> LoadLoginPageAsync(CancellationToken ct)
+    private async Task<LoginPage?> LoadLoginPageAsync(int port, CancellationToken ct)
     {
-        using var resp = await _http.GetAsync(Root + "login", ct).ConfigureAwait(false);
+        using var resp = await ClientFor(port).GetAsync(RootFor(port) + "login", ct).ConfigureAwait(false);
         var html = await ReadHtmlAsync(resp, ct).ConfigureAwait(false);
 
         if (html.Contains("当前登录账号", StringComparison.Ordinal))
             return new LoginPage { BaseUri = resp.RequestMessage?.RequestUri, AlreadyOnline = true };
 
         var page = ParseLoginPage(html, resp.RequestMessage?.RequestUri);
-        _page = page;
+        _pages[port] = page;
         return page;
     }
 
@@ -637,5 +680,16 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
         _ => ex.Message
     };
 
-    public void Dispose() => _http.Dispose();
+    public void Dispose()
+    {
+        foreach (var lazy in _clients.Values)
+        {
+            try
+            {
+                if (lazy.IsValueCreated) lazy.Value.Dispose();
+            }
+            catch { }
+        }
+        _clients.Clear();
+    }
 }
