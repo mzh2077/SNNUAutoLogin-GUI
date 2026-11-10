@@ -320,6 +320,9 @@ SNNUAutoLogin.exe --diag
 | `--op=N` | 强制指定出口（0 校园网 / 1 移动 / 2 联通 / 3 电信） |
 | `--login-selftest` | 拿三份典型 Portal 页面跑登录页解析（离线），结果写入 `%TEMP%\snnu_login_selftest.txt` |
 | `--probe` | 按当前设置做一次独立出网探测（不碰门户、不改认证状态），结果写入 `%TEMP%\snnu_probe.txt`，用来验证「设备数守卫」的探测目标填对没有 |
+| `--devices` | 只读取一次在线设备表，打印设备数与明细，并给出「守卫会不会触发」的结论；结果写入 `%TEMP%\snnu_devices.txt` |
+| `--rules` | 判定当前接入方式（有线 / 无线 / SSID），按规则优先级算出实际生效的账号与出口端口；结果写入 `%TEMP%\snnu_rules.txt` |
+| `--wlan` | WLAN 原始探针：打印 `wlanapi` 返回的连接属性缓冲（十六进制 + SSID 长度字段扫描），用于定位 SSID 的真实偏移；结果写入 `%TEMP%\snnu_wlan.txt` |
 | `--captcha-demo` | 塞一张假验证码进状态机，检查验证码面板的布局与交互（配合 `--snapshot` 出图） |
 | `--hosts-selftest <报告路径>` | 只算不写：输出「删掉旧标记块之后 hosts 应该是什么样」，并落到 `<hosts>.cleaned` |
 

@@ -219,19 +219,48 @@ try
     var (ssid, reliable) = NetworkAccessService.ReadSsid(null);
     Check(ssid.Length == 0 && !reliable, "网卡标识为空时降级为取不到 SSID");
 
-    var fake = new byte[32];
-    fake[8] = 3;                       // uSSIDLength = 3
-    fake[12] = (byte)'a';
-    fake[13] = (byte)'b';
-    fake[14] = (byte)'c';
+    // 真实布局：isState(4) | mode(4) | profileName[256]WCHAR(512) | DOT11_SSID
+    // 所以 uSSIDLength 在偏移 520，SSID 字节从 524 开始。
+    var fake = new byte[560];
+    fake[520] = 3;                      // uSSIDLength = 3
+    fake[524] = (byte)'a';
+    fake[525] = (byte)'b';
+    fake[526] = (byte)'c';
     var (parsed, parsedOk) = NetworkAccessService.ParseSsid(fake);
-    Check(parsedOk && parsed == "abc", "SSID 缓冲按规范偏移解析");
+    Check(parsedOk && parsed == "abc", "SSID 缓冲按规范偏移（520）解析");
 
-    var garbage = new byte[32];
-    garbage[8] = 200;                  // 长度不合法
+    // 偏移 8 是 profileName 的头（UTF-16 的 'm' = 0x6D），不是 SSID 长度。
+    // 以前把它当长度读会得到 109，才导致「永远取不到 SSID」。
+    var wrongOffset = new byte[560];
+    wrongOffset[8] = (byte)'m';         // 0x6D
+    wrongOffset[9] = 0x00;
+    var (_, wrongOk) = NetworkAccessService.ParseSsid(wrongOffset);
+    Check(!wrongOk, "偏移 8 的 profileName 不会被误当成 SSID 长度");
+
+    // 真实机型取到的形态：profileName 是 UTF-16，SSID 在 520
+    var real = new byte[604];
+    var profileName = System.Text.Encoding.Unicode.GetBytes("mtt_315_5G");
+    Array.Copy(profileName, 0, real, 8, profileName.Length);
+    real[520] = 10;
+    var realBytes = System.Text.Encoding.ASCII.GetBytes("mtt_315_5G");
+    Array.Copy(realBytes, 0, real, 524, realBytes.Length);
+    var (realSsid, realOk) = NetworkAccessService.ParseSsid(real);
+    Check(realOk && realSsid == "mtt_315_5G", "实机形态的连接属性能解出 SSID");
+
+    var garbage = new byte[560];
+    garbage[520] = 200;                 // 长度不合法
     var (_, garbageOk) = NetworkAccessService.ParseSsid(garbage);
     Check(!garbageOk, "非法 SSID 长度被拒绝");
 
+    // 兜底扫描：SSID 落在非规范位置时仍要能解出来
+    var offSpec = new byte[560];
+    offSpec[300] = 4;
+    offSpec[304] = (byte)'t';
+    offSpec[305] = (byte)'e';
+    offSpec[306] = (byte)'s';
+    offSpec[307] = (byte)'t';
+    var (fallback, fallbackOk) = NetworkAccessService.ParseSsid(offSpec);
+    Check(fallbackOk && fallback == "test", "非规范偏移时兜底扫描能解出 SSID");
 }
 finally
 {

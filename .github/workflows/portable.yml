@@ -22,6 +22,8 @@ jobs:
         run: dotnet run --project tests/DeviceListTests -c Release
       - name: Device guard and connection rules regression tests
         run: dotnet run --project tests/GuardTests -c Release
+      # tests/LiveCheck 需要真实校园网（要能连到 202.117.144.205 的 Portal 并拿到真实 SSID），
+      # GitHub runner 上跑不了，因此不进 CI。它是给本机用的实机验证入口。
       - name: Build installer and portable archive
         shell: pwsh
         run: ./tools/build_release.ps1

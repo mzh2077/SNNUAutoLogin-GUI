@@ -362,6 +362,9 @@ public sealed class AppRuntime : IDisposable
             if (_logs.Count > MaxLogLines) _logs.RemoveRange(0, _logs.Count - MaxLogLines);
         }
 
+        // 运行日志同时落一份到临时目录，程序关掉后还能查
+        TraceLine(text);
+
         // 调用方可能在后台线程（加速服务的测速/写入都在线程池里），
         // 而日志最终会写进绑定 ListView 的 ObservableCollection —— 必须在 UI 线程触发。
         if (Dispatcher.HasThreadAccess)
@@ -375,6 +378,23 @@ public sealed class AppRuntime : IDisposable
                 try { Logged?.Invoke(text); } catch { }
             });
         }
+    }
+
+    /// <summary>
+    /// 把一行运行日志追加到临时目录的 snnu_trace.txt。
+    ///
+    /// 界面上的日志只在内存里，程序一关就没了 —— 出问题时（比如守卫为什么没触发）
+    /// 没有痕迹根本查不了。这里只写日志文案，不含任何凭据内容。
+    /// </summary>
+    internal static void TraceLine(string text)
+    {
+        try
+        {
+            System.IO.File.AppendAllText(
+                System.IO.Path.Combine(System.IO.Path.GetTempPath(), "snnu_trace.txt"),
+                $"[{DateTime.Now:HH:mm:ss.fff}] {text}\n");
+        }
+        catch { }
     }
 
     // ────────────────────────── 旧版 hosts 残留 ──────────────────────────

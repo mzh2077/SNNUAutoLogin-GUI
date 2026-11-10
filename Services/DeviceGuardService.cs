@@ -425,13 +425,32 @@ public sealed class DeviceGuardService : IDisposable
 
     private void SetState(DeviceGuardState state, string message)
     {
+        bool changed;
         lock (_stateGate)
         {
+            changed = _state != state || _lastMessage != message;
             _state = state;
             _lastMessage = message;
         }
+
+        // 状态变了才记日志 —— 守卫每分钟评估一次，不去重的话日志会被同一个状态刷屏
+        if (changed) Write($"守卫状态：{DescribeState(state)} · {message}");
+
         RaiseChanged();
     }
+
+    /// <summary>守卫状态的中文名，写日志用。</summary>
+    private static string DescribeState(DeviceGuardState state) => state switch
+    {
+        DeviceGuardState.Disabled => "已关闭",
+        DeviceGuardState.Idle => "待命",
+        DeviceGuardState.Probing => "探测中",
+        DeviceGuardState.Disposing => "断开中",
+        DeviceGuardState.Reauthenticating => "重认证中",
+        DeviceGuardState.Cooldown => "冷却中",
+        DeviceGuardState.Stopped => "已停止",
+        _ => state.ToString()
+    };
 
     private void SetDeviceCount(int count, int port)
     {

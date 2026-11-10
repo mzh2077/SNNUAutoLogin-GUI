@@ -350,28 +350,17 @@ public sealed class NetworkAccessService : INetworkAccessService
             uint size;
             uint opcode;
 
-            // 第一遍：只要长度。ppData 传 NULL 时 WLAN 服务会返回所需字节数
+            // WlanQueryInterface 的 ppData 是 out 参数：WLAN 服务总会自己分配并填充，
+            // 传 NULL 只是说「不要把指针给我」。实测一次调用就能同时拿到 size 和内容，
+            // 所以不需要「先问长度再取数据」跑两遍 —— 两遍会把第一次分配的内存漏掉。
             uint rc = WlanQueryInterface(client, ref guid, CurrentConnectionOpcode,
                 IntPtr.Zero, out size, out data, out opcode);
-            if (rc != 0 || size == 0) return ("", false);
+            if (rc != 0 || size == 0 || data == IntPtr.Zero) return ("", false);
 
-            // 第二遍：自己分配缓冲，按字节解析
-            IntPtr buffer = Marshal.AllocHGlobal((int)size);
-            try
-            {
-                rc = WlanQueryInterface(client, ref guid, CurrentConnectionOpcode,
-                    IntPtr.Zero, out size, out data, out opcode);
-                if (rc != 0 || data == IntPtr.Zero) return ("", false);
+            var bytes = new byte[size];
+            Marshal.Copy(data, bytes, 0, (int)size);
 
-                var bytes = new byte[size];
-                Marshal.Copy(data, bytes, 0, (int)size);
-
-                return ParseSsid(bytes);
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(buffer);
-            }
+            return ParseSsid(bytes);
         }
         catch
         {
@@ -390,24 +379,29 @@ public sealed class NetworkAccessService : INetworkAccessService
     /// <summary>
     /// 从连接属性缓冲里取 SSID。
     ///
-    /// WLAN_CONNECTION_ATTRIBUTES 的布局是：
-    ///   isState(4) | mode(4) | DOT11_SSID{ uSSIDLength(4), ucSSID[1..32] } | ...
-    /// 也就是长度在偏移 8、字节从偏移 12 开始。
+    /// WLAN_CONNECTION_ATTRIBUTES 的实际布局（本机 wlanapi 实测确认）：
+    ///   isState(4) | mode(4) | profileName[256] WCHAR(512) | WLAN_ASSOCIATION_ATTRIBUTES
+    ///   其中 DOT11_SSID{ uSSIDLength(4), ucSSID[1..32] } 落在偏移 520。
     ///
-    /// 但不同 Windows 版本的实现细节可能有出入（有的机器上按规范偏移解不出内容），
-    /// 所以规范偏移失败时会在前 48 字节里再扫一遍 —— 只接受「长度合理 + 全是可打印字符」的组合，
+    /// 注意 offset 8 是 profileName 的**头**，不是 SSID 长度 —— 那里是 UTF-16 的
+    /// 「m」= 6D-00-…，按长度读会得到 109，直接被 1..32 的校验挡掉。
+    /// 这也是先前「拿不到 SSID」的根因：opcode 取错（4 是 radio_state），
+    /// 偏移也取错（8 是 profileName 起点）。
+    ///
+    /// 规范偏移失败时再全缓冲扫描兜底 —— 只接受「长度合理 + 全是可打印 ASCII」的组合，
     /// 宁可取不到也不让垃圾字节变成 SSID 去参与规则匹配。
     /// </summary>
     internal static (string Ssid, bool Reliable) ParseSsid(byte[] buffer)
     {
         if (buffer is null || buffer.Length < 16) return ("", false);
 
-        if (TryReadSsidAt(buffer, 8, out var ssid)) return (ssid, true);
+        // 规范位置：DOT11_SSID.uSSIDLength
+        if (TryReadSsidAt(buffer, SsidLengthOffset, out var ssid)) return (ssid, true);
 
-        int limit = Math.Min(48, buffer.Length - 4);
-        for (int off = 8; off <= limit; off++)
+        // 兜底：全缓冲扫描
+        for (int off = 4; off + 4 <= buffer.Length; off += 4)
         {
-            if (off == 8) continue;
+            if (off == SsidLengthOffset) continue;
             if (TryReadSsidAt(buffer, off, out var alt)) return (alt, true);
         }
 
@@ -439,8 +433,168 @@ public sealed class NetworkAccessService : INetworkAccessService
 
     // ────────────────────────── P/Invoke ──────────────────────────
 
-    /// <summary>wlan_intf_opcode_current_connection：当前连接的属性（含 SSID）。</summary>
-    private const uint CurrentConnectionOpcode = 4;
+    /// <summary>
+    /// wlan_intf_opcode_current_connection：当前连接的属性（含 SSID）。
+    ///
+    /// 注意这个值是 **7**，不是 4 —— 4 是 wlan_intf_opcode_radio_state。
+    /// 本机实测：opcode 4 返回 772 字节、outOpcode=2（radio_state 的形状），
+    /// 里面根本没有 SSID；opcode 7 返回 604 字节，偏移 520 处才是 DOT11_SSID。
+    /// </summary>
+    private const uint CurrentConnectionOpcode = 7;
+
+    /// <summary>DOT11_SSID.uSSIDLength 在 WLAN_CONNECTION_ATTRIBUTES 缓冲里的偏移。</summary>
+    private const int SsidLengthOffset = 520;
+
+    /// <summary>
+    /// WLAN 原始探针：把 wlanapi 返回的连接属性缓冲原样打印出来。
+    ///
+    /// 只做诊断用 —— 结构布局在不同 Windows 版本上不一致，必须看原始字节才能定
+    /// SSID 到底在哪个偏移，而不是靠猜。
+    /// </summary>
+    internal static string DumpWlanBuffer()
+    {
+        var sb = new StringBuilder();
+
+        IntPtr client = IntPtr.Zero;
+        IntPtr list = IntPtr.Zero;
+        IntPtr data = IntPtr.Zero;
+
+        try
+        {
+            uint negotiated;
+            uint rc = WlanOpenHandle(2, IntPtr.Zero, out negotiated, out client);
+            sb.AppendLine($"WlanOpenHandle rc={rc} negotiated={negotiated}");
+            if (rc != 0) return sb.ToString();
+
+            uint count;
+            rc = WlanEnumInterfaces(client, IntPtr.Zero, out list, out count);
+            sb.AppendLine($"WlanEnumInterfaces rc={rc} count(out)={count}");
+
+            int items = Marshal.ReadInt32(list, 0);
+            sb.AppendLine($"链表头条数={items}");
+            if (items <= 0) return sb.ToString();
+
+            const int headerSize = 8;
+            const int itemSize = 532;
+
+            for (int i = 0; i < items; i++)
+            {
+                IntPtr item = list + headerSize + i * itemSize;
+                var guidBytes = new byte[16];
+                Marshal.Copy(item, guidBytes, 0, 16);
+                var guid = new Guid(guidBytes);
+
+                sb.AppendLine($"── 接口[{i}] GUID={guid}");
+
+                // 枚举描述（偏移 16 起，256 个 WCHAR）
+                var desc = new byte[512];
+                Marshal.Copy(item + 16, desc, 0, 512);
+                sb.AppendLine($"   描述={Encoding.Unicode.GetString(desc).TrimEnd('\0')}");
+
+                // 枚举 isState（偏移 16+512）
+                sb.AppendLine($"   isState={Marshal.ReadInt32(item, 16 + 512)}");
+
+                DumpOpcode(client, guid, CurrentConnectionOpcode, "current_connection(7)", sb);
+                DumpOpcode(client, guid, 4, "radio_state(4)", sb);
+                DumpOpcode(client, guid, 1, "interface_state", sb);
+            }
+
+            return sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"异常: {ex.GetType().Name} {ex.Message}");
+            return sb.ToString();
+        }
+        finally
+        {
+            if (data != IntPtr.Zero) { try { WlanFreeMemory(data); } catch { } }
+            if (client != IntPtr.Zero) { try { WlanCloseHandle(client, IntPtr.Zero); } catch { } }
+        }
+    }
+
+    /// <summary>查询一个 opcode，并把返回缓冲的十六进制与可打印字符原样列出。</summary>
+    private static void DumpOpcode(IntPtr client, Guid guid, uint opcode, string label, StringBuilder sb)
+    {
+        IntPtr data = IntPtr.Zero;
+        try
+        {
+            uint size;
+            uint outOpcode;
+
+            // 第一遍：只要长度
+            uint rc = WlanQueryInterface(client, ref guid, opcode, IntPtr.Zero, out size, out data, out outOpcode);
+            sb.AppendLine($"   [{label}] 第一遍 rc={rc} size={size}");
+            if (rc != 0 || size == 0)
+            {
+                if (data != IntPtr.Zero) { try { WlanFreeMemory(data); } catch { } }
+                data = IntPtr.Zero;
+                return;
+            }
+
+            // 第二遍：自己分配缓冲，交给 API 去填
+            IntPtr buffer = Marshal.AllocHGlobal((int)size);
+            try
+            {
+                IntPtr ppData = buffer;
+                uint size2 = size;
+                rc = WlanQueryInterface(client, ref guid, opcode, IntPtr.Zero, out size2, out ppData, out outOpcode);
+                sb.AppendLine($"   [{label}] 第二遍(自带缓冲) rc={rc} size={size2} outOpcode={outOpcode} ppData={(ppData == buffer ? "=buffer" : "≠buffer")}");
+
+                if (rc != 0) return;
+
+                var bytes = new byte[(int)size2];
+                Marshal.Copy(ppData, bytes, 0, (int)size2);
+
+                sb.AppendLine($"   [{label}] 十六进制（前 64 字节）:");
+                sb.AppendLine($"      {BitConverter.ToString(bytes, 0, Math.Min(64, bytes.Length))}");
+
+                sb.AppendLine($"   [{label}] 按长度字段扫描（找 uSSIDLength=1..32 的位置）:");
+                for (int off = 0; off + 4 <= bytes.Length; off += 4)
+                {
+                    int len = BitConverter.ToInt32(bytes, off);
+                    if (len is < 1 or > 32) continue;
+                    if (off + 4 + len > bytes.Length) continue;
+                    bool printable = true;
+                    for (int k = 0; k < len; k++)
+                    {
+                        byte b = bytes[off + 4 + k];
+                        if (b < 0x20 || b > 0x7E) { printable = false; break; }
+                    }
+                    if (!printable) continue;
+                    sb.AppendLine($"      offset {off}: len={len} value=\"{Encoding.ASCII.GetString(bytes, off + 4, len)}\"");
+                }
+
+                sb.AppendLine($"   [{label}] 全部可打印 ASCII 片段（长度>=3）:");
+                {
+                    int run = 0;
+                    for (int k = 0; k < bytes.Length; k++)
+                    {
+                        byte b = bytes[k];
+                        if (b >= 0x20 && b <= 0x7E) { run++; continue; }
+                        if (run >= 3) sb.AppendLine($"      offset {k - run}: \"{Encoding.ASCII.GetString(bytes, k - run, run)}\"");
+                        run = 0;
+                    }
+                    if (run >= 3) sb.AppendLine($"      offset {bytes.Length - run}: \"{Encoding.ASCII.GetString(bytes, bytes.Length - run, run)}\"");
+                }
+
+                var (ssid, ok) = ParseSsid(bytes);
+                sb.AppendLine($"   [{label}] ParseSsid -> ssid=\"{ssid}\" reliable={ok}");
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"   [{label}] 异常 {ex.GetType().Name} {ex.Message}");
+        }
+        finally
+        {
+            if (data != IntPtr.Zero) { try { WlanFreeMemory(data); } catch { } }
+        }
+    }
 
     [DllImport("iphlpapi.dll", SetLastError = true)]
     private static extern uint GetBestInterfaceEx(byte[] pDestinationAddress, out uint pdwBestIfIndex);

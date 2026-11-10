@@ -26,12 +26,25 @@
 | E6 | `WlanOpenHandle(2)` 成功；`WlanEnumInterfaces` 返回的 `WLAN_INTERFACE_INFO_LIST` **头部的 `NumberOfItems` 正确（=1），但出参 `pdwNumberOfItems` 读回为 0** | 实测两次，均复现 | 条数必须**从链表头 offset 0 读**，不能信出参 |
 | E7 | `WlanEnumInterfaces` 返回的接口 GUID（`c2cde55a-…`）与 `.NET NetworkInterface.Id`（`{C2CDE55A-…}`）**是同一个 GUID** | 实测对比 | **SSID ↔ 网卡映射不需要 `IP_ADAPTER_ADDRESSES.AdapterName`**，直接用 GUID 对齐即可 |
 | E8 | `WlanEnumInterfaces` 只列出了 1 个真实 Wi-Fi 接口（AX201），**不含** 2 个「Microsoft Wi-Fi Direct Virtual Adapter」 | 实测 | WLAN GUID 集合天然排除虚拟无线适配器，比字符串匹配可靠 |
-| E9 | `WlanQueryInterface(current_connection)` 返回 772 字节缓冲，但**在本机解不出 SSID**（全缓冲无 `mtt` 字样；`netsh wlan show interfaces` 却能显示 SSID `mtt_315_5G`） | 实测 + `netsh` 对照 | 本机 WLAN 服务为受限实现；SSID 解析**必须带合法性校验并可降级**，且需在真实 WLAN 环境复验 |
+| E9 | ~~`WlanQueryInterface(current_connection)` 返回 772 字节缓冲但解不出 SSID~~ **该结论已被 E13/E14 推翻**：真正的原因是 **opcode 与偏移都取错了**，不是 WLAN 实现受限 | 见 E13 / E14 | SSID 取不到时**不要**先归因于「系统实现受限」，要先把 opcode 与结构偏移坐实 |
 | E10 | `System.Net.NetworkInformation.Ping` 在 .NET 8 **没有带 `CancellationToken` 的 `SendPingAsync` 重载** | 反射枚举全部重载 | 超时必须靠「超时参数 + `Task.WhenAny` + 取消令牌」实现，不能指望 CT 直接中断 |
 | E11 | `Ping` 223.5.5.5 实测 `Success`，RTT 43–59 ms | 实测 | ICMP 探测可行；默认目标 `223.5.5.5` 合理 |
 | E12 | 本机 `wlanapi.dll` / `iphlpapi.dll` 存在，`WlanSvc`（Automatic / Running）、`AppIDSvc`（Running）正常 | 实测 | P/Invoke 走系统自带 DLL，无需第三方包 |
+| **E13** | **`wlan_intf_opcode_current_connection` 的值是 `7`，不是 `4`**。实测：`opcode=4` 返回 **772 字节**且 `outOpcode=2`（这是 `radio_state` 的形状，缓冲里根本没有 SSID）；`opcode=7` 返回 **604 字节**且 `outOpcode=0` | `--wlan` 探针逐 opcode 打印 size/outOpcode/十六进制 | **取 SSID 的 opcode 必须是 7**。`4` 是 `wlan_intf_opcode_radio_state`，取错了必然解不出 SSID，而且失败方式非常隐蔽（不报错，只是"取不到"） |
+| **E14** | **`DOT11_SSID.uSSIDLength` 在 `WLAN_CONNECTION_ATTRIBUTES` 缓冲里的偏移是 `520`，不是 `8`**。实测 `opcode=7` 的缓冲：`offset 8` 起是 UTF-16 的 `profileName`（`6D-00-74-00-74-00…` = "mtt"），`offset 520` 处 `len=10`，`offset 524` 起是 ASCII `"mtt_315_5G"` | `--wlan` 探针扫描全部 `uSSIDLength` 候选位置 | 结构是 `isState(4) \| mode(4) \| profileName[256]WCHAR(512) \| association{ DOT11_SSID{ uSSIDLength(4), ucSSID[1..32] } }`。**offset 8 是 profileName 的头，不是长度字段** —— 按长度读会得到 109（`0x6D`），被 `1..32` 的校验直接挡掉，于是表现为"永远取不到 SSID" |
+| **E15** | `WlanQueryInterface` 的 `ppData` 是 **out 参数**：WLAN 服务总会自己分配并填充，**传 `NULL` 只是说"不要把指针给我"**。单次调用即可同时拿到 `dwDataSize` 与内容 | `--wlan` 探针对比 | 「先问长度再取数据」跑两遍的写法**会漏掉第一次分配的内存**（`WlanFreeMemory` 只释放最后一个指针）。正确做法：**调用一次**，读 `size` 与 `data`，一次 `WlanFreeMemory` |
 
-> **给工程师的验证提示**：本机存在应用控制策略（WDAC/AppLocker），**新构建产物偶发被拦截**，报 `System.IO.FileLoadException: 应用程序控制策略已阻止此文件 (0x800711C7)`。这是环境问题不是代码问题。实测有效的绕过方式：把被改文件 `git checkout` 还原后重新 `dotnet build`（内容哈希回到已放行集合）。若连续遇到，可先 `git stash` 还原工作区再构建。**注意 `dotnet build` 本身永远成功，只有「运行新产物」会被拦。**
+> **给工程师的验证提示（2026-11-10 实测更新）**：本机启用了 **Smart App Control**（`VerifiedAndReputablePolicyState=1`），策略里带 `VerifiedAndReputableAllowUnknown` / `VerifiedAndReputableAllowAntiMalware`，**不含任何路径规则**。实际效果是：**同一路径下已跑过的文件能再跑，改了代码重编的新 dll 首次运行会被拦**（报 `0x800711C7` 应用程序控制策略已阻止此文件）。`dotnet build` 永远成功，只有「运行新产物」会被拦。
+>
+> **当前实测可用的绕过通道**：`tests/<某工程>` 的 csproj 里内置了 `WdacSlot` 开关，把产物**借用 `StartupTests` 的路径 + 文件名**即可在本机执行：
+> ```bash
+> dotnet build tests/XxxTests -c Release -p:WdacSlot=StartupTests
+> dotnet tests/StartupTests/bin/Release/net8.0-windows/StartupTests.dll
+> # 跑完务必重新构建 StartupTests 把产物还原回去
+> dotnet build tests/StartupTests/StartupTests.csproj -c Release
+> ```
+> 主程序本体没有等价通道（它是 WinUI 3 + apphost，apphost 会按自身名字去找同名 dll），因此**主程序的实机验证走 `tests/LiveCheck`**（同样借用该槽位），而不是直接跑主 exe。
+
 
 ---
 
@@ -118,10 +131,10 @@ graph TD
 
 | 项 | 内容 |
 | --- | --- |
-| **选定** | `wlanapi.dll` 的 `WlanOpenHandle(2)` → `WlanEnumInterfaces` → `WlanQueryInterface(wlan_intf_opcode_current_connection)`；**全程按字节缓冲区手工解析，绝不用固定 `StructLayout` 硬套变长结构**。<br>① `WLAN_INTERFACE_INFO_LIST`：`NumberOfItems` 从链表 **offset 0** 读（E6：出参不可信），`Index` 在 offset 4，元素从 **offset 8** 开始，每元素 **532 字节**（GUID 16 + `WCHAR[256]` 512 + `isState` 4）。<br>② `WLAN_CONNECTION_ATTRIBUTES` 是**变长**的：`isState`(4) + `mode`(4) + `association`（内含 `DOT11_SSID{ ULONG uSSIDLength; UCHAR ucSSID[1]; }`）+ `security`。因此走**两阶段**：先以 `ppData=null` 拿 `dwDataSize`，再按该尺寸分配缓冲二次调用，**在自有缓冲上按偏移手工取 `uSSIDLength` 与 SSID 字节**（不声明 C# 结构体）。<br>③ 校验：`1 ≤ uSSIDLength ≤ 32` 且字节为**可打印 ASCII**（含 UTF-8 兼容字节）→ 通过；否则判为「取不到 SSID」。<br>④ 释放：`WlanFreeMemory(ppData)`（WLAN API 分配的内存**必须**用它释放，不能 `Marshal.FreeHGlobal`）。<br>⑤ **降级链**：SSID 取不到 → 命中判定降级为「**无线（任意 SSID）**」（即 `WirelessAny` 规则仍可命中，`WirelessSsid` 规则不命中），日志写「未能读取 SSID，按无线（任意）判定」。 |
-| **备选 A** | `netsh wlan show interfaces` 文本解析 —— 能拿到 SSID（E9 实测），但**依赖本地化输出**、需起子进程、延迟数十到数百 ms。 |
+| **选定** | `wlanapi.dll` 的 `WlanOpenHandle(2)` → `WlanEnumInterfaces` → `WlanQueryInterface(wlan_intf_opcode_current_connection)`；**全程按字节缓冲区手工解析，绝不用固定 `StructLayout` 硬套变长结构**。<br>① `WLAN_INTERFACE_INFO_LIST`：`NumberOfItems` 从链表 **offset 0** 读（E6：出参不可信），`Index` 在 offset 4，元素从 **offset 8** 开始，每元素 **532 字节**（GUID 16 + `WCHAR[256]` 512 + `isState` 4）。<br>② `WLAN_CONNECTION_ATTRIBUTES` 是**变长**的：`isState`(4) + `mode`(4) + `profileName[256] WCHAR`(512) + `association`（内含 `DOT11_SSID{ ULONG uSSIDLength; UCHAR ucSSID[1]; }`）+ `security`。**`uSSIDLength` 在偏移 520**（E14 实测），SSID 字节从偏移 524 开始。<br>③ **opcode 必须是 `7`**（E13 实测），不能写 `4`（那是 `radio_state`）。<br>④ **`WlanQueryInterface` 只调用一次**（E15 实测）：`ppData` 是 out 参数，WLAN 服务总会自己分配并填充，传 `NULL` 只是说"不要把指针给我"。一次调用同时拿到 `dwDataSize` 与内容，只需一次 `WlanFreeMemory`。<br>⑤ 校验：`1 ≤ uSSIDLength ≤ 32` 且字节为**可打印 ASCII**（含 UTF-8 兼容字节）→ 通过；否则判为「取不到 SSID」，并**全缓冲扫描兜底**（规范偏移失败时按 4 字节步进找合法长度 + 可打印内容的组合）。<br>⑥ 释放：`WlanFreeMemory(ppData)`（WLAN API 分配的内存**必须**用它释放，不能 `Marshal.FreeHGlobal`）。<br>⑦ **降级链**：SSID 取不到 → 命中判定降级为「**无线（任意 SSID）**」（即 `WirelessAny` 规则仍可命中，`WirelessSsid` 规则不命中），日志写「未能读取 SSID，按无线（任意）判定」。 |
+| **备选 A** | `netsh wlan show interfaces` 文本解析 —— 能拿到 SSID，但**依赖本地化输出**、需起子进程、延迟数十到数百 ms。 |
 | **备选 B** | `WlanGetProfile` / `WlanGetProfileList` —— 读的是**已保存的配置**（SSID 列表），不等于**当前连接**的 SSID，语义不对。 |
-| **理由** | ① PRD 明确要求「按字节缓冲区处理，不能用固定 `StructLayout` 硬套」——变长成员 `ucSSID[1]` 一旦被固定数组覆盖，后续字段全部错位。选定方案两阶段取长度 + 自有缓冲手工解析，天然规避。<br>② `netsh` 方案与 PRD「不引第三方依赖、不起外部进程」的既有风格冲突，且中文/英文系统输出不一致。<br>③ **E9 证明本机 WLAN 实现受限**，因此「取不到」是**常态路径而非异常**，必须有明确降级 + 合法值校验，不能让垃圾字节变成 SSID 参与规则匹配。<br>④ **E7 证明 WLAN GUID 与 `.NET NetworkInterface.Id` 同值** ⇒ SSID ↔ 网卡映射直接靠 GUID 对齐，不需要 `IP_ADAPTER_ADDRESSES` 变长结构。 |
+| **理由** | ① PRD 明确要求「按字节缓冲区处理，不能用固定 `StructLayout` 硬套」——变长成员 `ucSSID[1]` 一旦被固定数组覆盖，后续字段全部错位。选定方案按字节手工解析，天然规避。<br>② `netsh` 方案与 PRD「不引第三方依赖、不起外部进程」的既有风格冲突，且中文/英文系统输出不一致。<br>③ **E9 的「本机 WLAN 实现受限」结论已被 E13/E14 推翻**：真正的原因是 opcode 取成 `4`（`radio_state`）且偏移取成 `8`（`profileName` 起点）。修正后实机稳定解出 SSID `mtt_315_5G`，并与 WLAN 接口自身报告的值一致（`tests/LiveCheck` 断言）。因此「取不到 SSID」是**异常路径**，降级链仍要保留，但**不能**再当作常态。<br>④ 教训：这类"静默取不到"的失败最容易被误判成"环境不支持"。**先坐实 opcode 与结构偏移，再谈降级**。<br>⑤ **E7 证明 WLAN GUID 与 `.NET NetworkInterface.Id` 同值** ⇒ SSID ↔ 网卡映射直接靠 GUID 对齐，不需要 `IP_ADAPTER_ADDRESSES` 变长结构。 |
 
 ### 2.3 独立外网探测（PRD F1-05/F1-06、Q6、N4）
 
