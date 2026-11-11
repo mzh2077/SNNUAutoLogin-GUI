@@ -11,7 +11,9 @@
 #define AppNameEn      "SNNUAutoLogin"
 #define AppVer         "1.6.0"
 #define AppVerFull     "1.6.0.0"
-#define AppExe         "SNNUAutoLogin.exe"
+#ifndef AppExe
+  #define AppExe       "SNNUAutoLogin.exe"
+#endif
 #define AppPublisher   "SNNU"
 #define AppURL         "https://www.snnu.edu.cn"
 #ifndef SrcDir

@@ -398,8 +398,17 @@
                             CornerRadius="4">
                             <ScrollViewer
                                 x:Name="LogScroll"
-                                Padding="0,0,6,0"
+                                Padding="0,0,8,0"
                                 VerticalScrollBarVisibility="Auto">
+                                <ScrollViewer.Resources>
+                                    <!--  与右侧设置区一致：轨道更宽、拇指更粗  -->
+                                    <Style TargetType="ScrollBar">
+                                        <Setter Property="Width" Value="14" />
+                                    </Style>
+                                    <Style TargetType="Thumb">
+                                        <Setter Property="MinWidth" Value="10" />
+                                    </Style>
+                                </ScrollViewer.Resources>
                                 <ItemsControl x:Name="LogList">
                                     <ItemsControl.ItemContainerTransitions>
                                         <TransitionCollection>
@@ -437,11 +446,22 @@
             </Grid>
 
             <!--  ────────── 右：设置  ──────────  -->
+            <!--  右侧留 8 像素：默认滚动条紧贴内容边缘，容易跟卡片边框糊在一起，
+                 往右挪一点并让轨道更宽，鼠标也更好抓  -->
             <ScrollViewer
                 x:Name="SettingsScroll"
                 Grid.Column="1"
-                Padding="0,0,0,0"
+                Padding="0,0,8,0"
                 VerticalScrollBarVisibility="Auto">
+                <ScrollViewer.Resources>
+                    <!--  轨道更宽、拇指更粗：默认的细滚动条在这个宽度的设置面板上不好抓  -->
+                    <Style TargetType="ScrollBar">
+                        <Setter Property="Width" Value="14" />
+                    </Style>
+                    <Style TargetType="Thumb">
+                        <Setter Property="MinWidth" Value="10" />
+                    </Style>
+                </ScrollViewer.Resources>
                 <StackPanel x:Name="SettingsPanel" Spacing="12">
 
                     <!--  在线设备：门户在线控制页里的设备表格  -->
@@ -1288,7 +1308,7 @@
                                     VerticalAlignment="Center"
                                     Background="Transparent"
                                     BorderThickness="0"
-                                    Content="github.com/marike86/SNNUAutoLogin-GUI"
+                                    Content="github.com/mzh2077/SNNUAutoLogin-GUI"
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                     FontFamily="Consolas"
                                     FontSize="12" />

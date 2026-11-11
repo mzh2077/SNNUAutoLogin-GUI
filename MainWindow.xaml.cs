@@ -52,8 +52,8 @@ public sealed partial class MainWindow : Window
     private const int MaxIntervalSeconds = 120;
 
     /// <summary>「关于」卡片里的两个链接。</summary>
-    private const string RepoUrl = "https://github.com/marike86/SNNUAutoLogin-GUI";
-    private const string IssueUrl = "https://github.com/marike86/SNNUAutoLogin-GUI/issues/new";
+    private const string RepoUrl = "https://github.com/mzh2077/SNNUAutoLogin-GUI";
+    private const string IssueUrl = "https://github.com/mzh2077/SNNUAutoLogin-GUI/issues/new";
 
     public MainWindow(AppRuntime runtime)
     {
