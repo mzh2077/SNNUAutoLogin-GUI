@@ -26,6 +26,8 @@ public sealed partial class MainWindow
         // 自检：把一张假验证码塞进来，检查面板布局与交互（配合 --snapshot 出图）
         if (argv.AsSpan().Contains("--captcha-demo")) Guard(RunCaptchaDemoAsync);
 
+        if (argv.AsSpan().Contains("--module-probe")) Guard(RunModuleProbeAsync);
+
         if (argv.AsSpan().Contains("--snapshot")) Guard(RunSnapshotAsync);
         else if (argv.AsSpan().Contains("--ui-test")) Guard(RunUiSelfTestAsync);
         else if (argv.AsSpan().Contains("--motion")) Guard(RunMotionTestAsync);
