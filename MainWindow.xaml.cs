@@ -51,6 +51,10 @@ public sealed partial class MainWindow : Window
     private const int MinIntervalSeconds = 4;
     private const int MaxIntervalSeconds = 120;
 
+    /// <summary>「关于」卡片里的两个链接。</summary>
+    private const string RepoUrl = "https://github.com/marike86/SNNUAutoLogin-GUI";
+    private const string IssueUrl = "https://github.com/marike86/SNNUAutoLogin-GUI/issues/new";
+
     public MainWindow(AppRuntime runtime)
     {
         _rt = runtime;
@@ -261,6 +265,22 @@ public sealed partial class MainWindow : Window
         catch { }
     }
 
+    /// <summary>
+    /// 关于卡片里的两个链接：源代码仓库与问题反馈。
+    /// 用系统默认浏览器打开，不自己实现一套 URL 协议。
+    /// </summary>
+    private void OpenExternal(string url)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch
+        {
+            // 打开失败不该让程序崩掉，提示一下就好
+            _rt.AddLog($"打开链接失败：{url}");
+        }
+    }
     /// <summary>把 x:Name 生成的控件字段全部置空，断开它们对已卸载树的强引用。</summary>
     private void DropElementReferences()
     {
@@ -753,7 +773,6 @@ public sealed partial class MainWindow : Window
             PasswordRevealMode = PasswordRevealMode.Peek,
             PlaceholderText = editing ? "留空表示不修改" : "校园网密码"
         };
-
         // 新建时把当前生效的密码也带上：用户接着改几个字就行，
         // 不用把密码从头敲一遍（更不用为了确认「填了没」去切到明文）。
         // 编辑已有规则时不预填 —— 那是该规则自己的密码，留空表示不改。
@@ -786,17 +805,28 @@ public sealed partial class MainWindow : Window
 
         var panel = new StackPanel { Spacing = 10, Width = 320 };
 
-        void AddRow(string label, Microsoft.UI.Xaml.Controls.Control control)
+        // 每一行：标题 + 一句说明（说明这个输入框要填什么）+ 控件
+        void AddRow(string label, string desc, Microsoft.UI.Xaml.Controls.Control control)
         {
             panel.Children.Add(new TextBlock { Text = label, FontSize = 12 });
+            if (!string.IsNullOrEmpty(desc))
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = desc,
+                    FontSize = 11.5,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gray)
+                });
+            }
             panel.Children.Add(control);
         }
 
-        AddRow("匹配方式", matchBox);
-        AddRow("SSID", ssidBox);
-        AddRow("账号", accountBox);
-        AddRow("密码", pwdBox);
-        AddRow("出口", operatorBox);
+        AddRow("匹配方式", "按当前接入方式决定这条规则何时生效", matchBox);
+        AddRow("SSID", "无线网络的名称，只在「无线（指定 SSID）」时生效", ssidBox);
+        AddRow("账号", "登录校园网用的学号，留空则沿用默认账号", accountBox);
+        AddRow("密码", "该学号对应的密码，编辑时留空表示不修改", pwdBox);
+        AddRow("出口", "运营商出口，决定这段流量从哪条链路出去", operatorBox);
         panel.Children.Add(errorText);
 
         var dialog = new ContentDialog
@@ -904,6 +934,9 @@ public sealed partial class MainWindow : Window
     {
         ConnectBtn.Click += async (_, _) => await OnConnectClicked();
         RefreshBtn.Click += async (_, _) => await OnRefreshClicked();
+
+        RepoLinkButton.Click += (_, _) => OpenExternal(RepoUrl);
+        IssueLinkButton.Click += (_, _) => OpenExternal(IssueUrl);
 
         OperatorBox.SelectionChanged += (_, _) =>
         {

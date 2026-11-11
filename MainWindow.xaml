@@ -89,6 +89,48 @@
                 <Setter Property="VerticalAlignment" Value="Center" />
             </Style>
 
+            <!--
+                设置项右侧的输入控件统一规格。
+                之前宽度散落成 250 / 320 / 自适应三套，同一列里的输入框大小参差；
+                这里收敛成一个宽度与高度，靠 RowInputWidth / RowInputHeight 两个
+                资源改一处就能整体调整。
+            -->
+            <Style x:Key="RowInputBase" TargetType="Control">
+                <Setter Property="Width" Value="264" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="HorizontalAlignment" Value="Left" />
+            </Style>
+
+            <Style
+                x:Key="RowTextBoxStyle"
+                BasedOn="{StaticResource RowInputBase}"
+                TargetType="TextBox">
+                <Setter Property="Height" Value="32" />
+                <Setter Property="FontFamily" Value="Consolas, Microsoft YaHei UI" />
+            </Style>
+
+            <Style
+                x:Key="RowPasswordBoxStyle"
+                BasedOn="{StaticResource RowInputBase}"
+                TargetType="PasswordBox">
+                <Setter Property="Height" Value="32" />
+                <Setter Property="FontFamily" Value="Consolas, Microsoft YaHei UI" />
+                <Setter Property="PasswordRevealMode" Value="Peek" />
+            </Style>
+
+            <Style
+                x:Key="RowComboBoxStyle"
+                BasedOn="{StaticResource RowInputBase}"
+                TargetType="ComboBox" />
+
+            <Style
+                x:Key="RowNumberBoxStyle"
+                BasedOn="{StaticResource RowInputBase}"
+                TargetType="NumberBox">
+                <Setter Property="Width" Value="120" />
+                <Setter Property="SpinButtonPlacementMode" Value="Compact" />
+            </Style>
+
         </Grid.Resources>
 
         <Grid.RowDefinitions>
@@ -708,11 +750,9 @@
                                 <TextBox
                                     x:Name="DeviceGuardProbeTargetBox"
                                     Grid.Column="1"
-                                    Width="250"
-                                    VerticalAlignment="Center"
-                                    FontFamily="Consolas, Microsoft YaHei UI"
+                                    Style="{StaticResource RowTextBoxStyle}"
                                     MaxLength="255"
-                                    PlaceholderText="223.5.5.5" />
+                                    PlaceholderText="www.snnu.edu.cn" />
                             </Grid>
 
                             <Border Style="{StaticResource DividerStyle}" />
@@ -729,11 +769,10 @@
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
                                     <NumberBox
                                         x:Name="DeviceGuardTimeoutBox"
-                                        Width="120"
+                                        Style="{StaticResource RowNumberBoxStyle}"
                                         Minimum="1"
                                         Maximum="30"
-                                        SmallChange="1"
-                                        SpinButtonPlacementMode="Compact" />
+                                        SmallChange="1" />
                                     <TextBlock VerticalAlignment="Center" Text="秒" />
                                 </StackPanel>
                             </Grid>
@@ -887,9 +926,7 @@
                                 <TextBox
                                     x:Name="AccountBox"
                                     Grid.Column="1"
-                                    Width="250"
-                                    VerticalAlignment="Center"
-                                    FontFamily="Consolas, Microsoft YaHei UI"
+                                    Style="{StaticResource RowTextBoxStyle}"
                                     PlaceholderText="请输入学号" />
                             </Grid>
 
@@ -907,10 +944,7 @@
                                 <PasswordBox
                                     x:Name="PwdBox"
                                     Grid.Column="1"
-                                    Width="250"
-                                    VerticalAlignment="Center"
-                                    FontFamily="Consolas, Microsoft YaHei UI"
-                                    PasswordRevealMode="Peek"
+                                    Style="{StaticResource RowPasswordBoxStyle}"
                                     PlaceholderText="校园网密码" />
                             </Grid>
 
@@ -928,8 +962,7 @@
                                 <ComboBox
                                     x:Name="OperatorBox"
                                     Grid.Column="1"
-                                    Width="250"
-                                    VerticalAlignment="Center">
+                                    Style="{StaticResource RowComboBoxStyle}">
                                     <ComboBoxItem Content="校园网直连" />
                                     <ComboBoxItem Content="中国移动" />
                                     <ComboBoxItem Content="中国联通" />
@@ -955,7 +988,7 @@
                                 <TextBlock
                                     x:Name="DefaultPortText"
                                     Grid.Column="1"
-                                    Width="250"
+                                    Width="264"
                                     VerticalAlignment="Center"
                                     Style="{StaticResource RowTitleStyle}"
                                     Text="—" />
@@ -1124,11 +1157,10 @@
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
                                     <NumberBox
                                         x:Name="IntervalBox"
-                                        Width="96"
+                                        Style="{StaticResource RowNumberBoxStyle}"
                                         Minimum="4"
                                         Maximum="120"
-                                        SmallChange="1"
-                                        SpinButtonPlacementMode="Compact" />
+                                        SmallChange="1" />
                                     <TextBlock x:Name="IntervalUnitText" VerticalAlignment="Center" Text="秒" />
                                 </StackPanel>
                             </Grid>
@@ -1234,6 +1266,57 @@
                                     HorizontalAlignment="Right"
                                     Style="{StaticResource ValueTextStyle}"
                                     Text="—" />
+                            </Grid>
+
+                            <Border Style="{StaticResource DividerStyle}" />
+
+                            <Grid Height="30">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock
+                                    VerticalAlignment="Center"
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                    Text="源代码" />
+                                <HyperlinkButton
+                                    x:Name="RepoLinkButton"
+                                    Grid.Column="1"
+                                    Padding="0"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Center"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    Content="github.com/marike86/SNNUAutoLogin-GUI"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    FontFamily="Consolas"
+                                    FontSize="12" />
+                            </Grid>
+
+                            <Border Style="{StaticResource DividerStyle}" />
+
+                            <Grid Height="30">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock
+                                    VerticalAlignment="Center"
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                    Text="问题反馈" />
+                                <HyperlinkButton
+                                    x:Name="IssueLinkButton"
+                                    Grid.Column="1"
+                                    Padding="0"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Center"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    Content="提交 Issue"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    FontSize="12" />
                             </Grid>
                         </StackPanel>
                     </Border>
