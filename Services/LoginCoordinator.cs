@@ -235,7 +235,11 @@ public sealed class LoginCoordinator : IDisposable
             var delayTask = Task.Delay(delay, ct);
             var done = await Task.WhenAny(delayTask, tcs.Task).ConfigureAwait(false);
 
-            if (done == tcs.Task) LogLine("网络状态变化，立即重新检测");
+            if (done == tcs.Task)
+            {
+                Interlocked.Exchange(ref _pendingCheck, 0);
+                LogLine("网络状态变化，立即重新检测");
+            }
             return !ct.IsCancellationRequested;
         }
         catch (OperationCanceledException)
@@ -499,6 +503,7 @@ public sealed class LoginCoordinator : IDisposable
 
             if (r.Success)
             {
+                _startupLoginPending = false;
                 _failures = 0;
                 ClearCaptcha();
                 SetState(ConnState.Online, r);
@@ -542,18 +547,26 @@ public sealed class LoginCoordinator : IDisposable
     /// <summary>换一张验证码。</summary>
     public async Task RefreshCaptchaAsync()
     {
-        if (!_awaitingCaptcha && State != ConnState.CaptchaRequired) return;
-
+        await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            PendingCaptcha = await _client.FetchCaptchaAsync(Volatile.Read(ref _currentPort)).ConfigureAwait(false);
-        }
-        catch
-        {
-            PendingCaptcha = null;
-        }
+            if (!_awaitingCaptcha) return;
 
-        PushCaptcha();
+            try
+            {
+                PendingCaptcha = await _client.FetchCaptchaAsync(Volatile.Read(ref _currentPort)).ConfigureAwait(false);
+            }
+            catch
+            {
+                PendingCaptcha = null;
+            }
+
+            PushCaptcha();
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     private void ClearCaptcha()
