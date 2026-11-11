@@ -126,12 +126,28 @@ try
         var normalized = new CredentialStore(root2);
         normalized.Load();
         Check(normalized.Settings.DeviceGuardThreshold == 2, "设备数阈值越界回落");
-        Check(normalized.Settings.DeviceGuardProbeTarget == "223.5.5.5", "探测目标为空回落默认");
+        Check(normalized.Settings.DeviceGuardProbeTarget == "www.snnu.edu.cn", "探测目标为空回落默认");
         Check(normalized.Settings.DeviceGuardProbeTimeoutSeconds == 3, "探测超时越界回落");
         Check(normalized.Settings.DefaultPort == 8603, "默认端口越界回落");
         Check(normalized.Settings.ConnectionRules.Count == 1, "非法规则被单独丢弃，其余保留");
         Check(normalized.Settings.ConnectionRules.Count == 1
               && normalized.Settings.ConnectionRules[0].Id == "r1", "保留下来的是合法规则");
+
+        // 旧版默认探测目标（公网 DNS IP）要迁到新默认上，不能留在那儿
+        File.WriteAllText(settings2,
+            "{\"Account\":\"a\",\"DeviceGuardProbeTarget\":\"223.5.5.5\"}");
+        var probeMigrated = new CredentialStore(root2);
+        probeMigrated.Load();
+        Check(probeMigrated.Settings.DeviceGuardProbeTarget == "www.snnu.edu.cn",
+            "旧版默认探测目标迁到学校官网");
+
+        // 用户自己改过的目标不能被动到
+        File.WriteAllText(settings2,
+            "{\"Account\":\"a\",\"DeviceGuardProbeTarget\":\"1.1.1.1\"}");
+        var customized = new CredentialStore(root2);
+        customized.Load();
+        Check(customized.Settings.DeviceGuardProbeTarget == "1.1.1.1",
+            "用户自定义的探测目标保持不变");
 
         // 两条有线规则互相冲突：后一条应被丢弃
         File.WriteAllText(settings2,
@@ -141,6 +157,27 @@ try
         var conflict = new CredentialStore(root2);
         conflict.Load();
         Check(conflict.Settings.ConnectionRules.Count == 1, "同一匹配方式只保留一条规则");
+
+        // 旧版规则只有 Port、没有 Operator：那时规则不覆盖出口，一律用全局出口。
+        // 迁上来必须保持这个语义，不能悄悄变成「校园网直连」。
+        File.WriteAllText(settings2,
+            "{\"Account\":\"a\",\"Operator\":2,\"ConnectionRules\":["
+            + "{\"Id\":\"r1\",\"MatchType\":0,\"Account\":\"ok\",\"Port\":8603}]}");
+        var legacyRule = new CredentialStore(root2);
+        legacyRule.Load();
+        Check(legacyRule.Settings.ConnectionRules.Count == 1, "旧版规则被正常读出");
+        Check(legacyRule.Settings.ConnectionRules[0].Operator == (Operator)2,
+            "旧版规则迁上来沿用全局出口，不被改成校园网直连");
+
+        // 新版规则带 Operator：按自己写的来
+        File.WriteAllText(settings2,
+            "{\"Account\":\"a\",\"Operator\":2,\"ConnectionRules\":["
+            + "{\"Id\":\"r1\",\"MatchType\":0,\"Account\":\"ok\",\"Operator\":3}]}");
+        var newRule = new CredentialStore(root2);
+        newRule.Load();
+        Check(newRule.Settings.ConnectionRules.Count == 1
+              && newRule.Settings.ConnectionRules[0].Operator == (Operator)3,
+            "新版规则用自己的出口");
     }
     finally { Directory.Delete(root2, true); }
 

@@ -172,6 +172,12 @@ public sealed class CredentialStore
 
                         if (rule is null) continue;
 
+                        // 旧版规则只有 Port、没有 Operator —— 那时规则不覆盖出口，
+                        // 一律用全局出口。老配置迁上来必须保持这个语义，
+                        // 否则用户升级后出口会被悄悄改成「校园网直连」。
+                        if (!item.TryGetProperty("Operator", out _))
+                            rule.Operator = settings.Operator;
+
                         var error = ConnectionRuleSet.Validate(rule, rules);
                         if (error is not null)
                         {
@@ -208,6 +214,11 @@ public sealed class CredentialStore
             Settings.DeviceGuardProbeTarget = NetworkProbeService.DefaultTarget;
         else
             Settings.DeviceGuardProbeTarget = Settings.DeviceGuardProbeTarget.Trim();
+
+        // 探测目标换过默认值：老配置里存的还是那个公网 DNS IP 的，
+        // 直接当成「没自定义过」迁到新默认上，免得用户以为改设置没生效。
+        if (Settings.DeviceGuardProbeTarget == NetworkProbeService.LegacyDefaultTarget)
+            Settings.DeviceGuardProbeTarget = NetworkProbeService.DefaultTarget;
 
         if (Settings.DeviceGuardProbeTimeoutSeconds is < 1 or > 30)
             Settings.DeviceGuardProbeTimeoutSeconds = NetworkProbeService.DefaultTimeoutSeconds;

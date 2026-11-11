@@ -26,26 +26,26 @@ try
     // ══════════════ 规则校验 ══════════════
     Console.WriteLine("\n规则校验");
 
-    var wired = new ConnectionRule { Id = "w1", MatchType = ConnectionMatchType.Wired, Account = "a", Port = 8603 };
-    var wired2 = new ConnectionRule { Id = "w2", MatchType = ConnectionMatchType.Wired, Account = "b", Port = 8603 };
-    var any = new ConnectionRule { Id = "a1", MatchType = ConnectionMatchType.WirelessAny, Account = "a", Port = 8603 };
-    var any2 = new ConnectionRule { Id = "a2", MatchType = ConnectionMatchType.WirelessAny, Account = "b", Port = 8603 };
-    var ssid1 = new ConnectionRule { Id = "s1", MatchType = ConnectionMatchType.WirelessSsid, Ssid = "校园网", Account = "a", Port = 8603 };
-    var ssid2 = new ConnectionRule { Id = "s2", MatchType = ConnectionMatchType.WirelessSsid, Ssid = "校园网", Account = "b", Port = 8603 };
-    var ssidUpper = new ConnectionRule { Id = "s3", MatchType = ConnectionMatchType.WirelessSsid, Ssid = "校园网", Account = "c", Port = 8603 };
+    var wired = new ConnectionRule { Id = "w1", MatchType = ConnectionMatchType.Wired, Account = "a", Operator = Operator.Campus };
+    var wired2 = new ConnectionRule { Id = "w2", MatchType = ConnectionMatchType.Wired, Account = "b", Operator = Operator.Campus };
+    var any = new ConnectionRule { Id = "a1", MatchType = ConnectionMatchType.WirelessAny, Account = "a", Operator = Operator.Campus };
+    var any2 = new ConnectionRule { Id = "a2", MatchType = ConnectionMatchType.WirelessAny, Account = "b", Operator = Operator.Campus };
+    var ssid1 = new ConnectionRule { Id = "s1", MatchType = ConnectionMatchType.WirelessSsid, Ssid = "校园网", Account = "a", Operator = Operator.Campus };
+    var ssid2 = new ConnectionRule { Id = "s2", MatchType = ConnectionMatchType.WirelessSsid, Ssid = "校园网", Account = "b", Operator = Operator.Campus };
+    var ssidUpper = new ConnectionRule { Id = "s3", MatchType = ConnectionMatchType.WirelessSsid, Ssid = "校园网", Account = "c", Operator = Operator.Campus };
 
     Check(ConnectionRuleSet.Validate(wired, new List<ConnectionRule>()) is null, "有线规则合法");
     Check(ConnectionRuleSet.Validate(wired2, new List<ConnectionRule> { wired }) is not null, "有线只能一条");
     Check(ConnectionRuleSet.Validate(any2, new List<ConnectionRule> { any }) is not null, "无线（任意）只能一条");
     Check(ConnectionRuleSet.Validate(ssid2, new List<ConnectionRule> { ssid1 }) is not null, "同一 SSID 不能重复");
     Check(ConnectionRuleSet.Validate(ssidUpper, new List<ConnectionRule> { ssid1 }) is not null, "SSID 重复忽略大小写");
-    Check(ConnectionRuleSet.Validate(new ConnectionRule { Id = "x", MatchType = ConnectionMatchType.Wired, Account = "", Port = 8603 },
+    Check(ConnectionRuleSet.Validate(new ConnectionRule { Id = "x", MatchType = ConnectionMatchType.Wired, Account = "", Operator = Operator.Campus },
         new List<ConnectionRule>()) is not null, "账号为空不合法");
-    Check(ConnectionRuleSet.Validate(new ConnectionRule { Id = "x", MatchType = ConnectionMatchType.Wired, Account = "a", Port = 1234 },
-        new List<ConnectionRule>()) is not null, "端口不在可选范围不合法");
-    Check(ConnectionRuleSet.Validate(new ConnectionRule { Id = "x", MatchType = ConnectionMatchType.WirelessSsid, Account = "a", Port = 8603 },
+    Check(ConnectionRuleSet.Validate(new ConnectionRule { Id = "x", MatchType = ConnectionMatchType.Wired, Account = "a", Operator = (Operator)99 },
+        new List<ConnectionRule>()) is not null, "出口无效不合法");
+    Check(ConnectionRuleSet.Validate(new ConnectionRule { Id = "x", MatchType = ConnectionMatchType.WirelessSsid, Account = "a", Operator = Operator.Campus },
         new List<ConnectionRule>()) is not null, "指定 SSID 必须填 SSID");
-    Check(ConnectionRuleSet.Validate(new ConnectionRule { Id = "x", MatchType = ConnectionMatchType.WirelessAny, Ssid = "校园网", Account = "a", Port = 8603 },
+    Check(ConnectionRuleSet.Validate(new ConnectionRule { Id = "x", MatchType = ConnectionMatchType.WirelessAny, Ssid = "校园网", Account = "a", Operator = Operator.Campus },
         new List<ConnectionRule>()) is not null, "非指定类型不能带 SSID");
 
     var mixed = ConnectionRuleSet.ValidateSet(new List<ConnectionRule> { wired, wired2, ssid1 }, out var dropped);
@@ -70,9 +70,9 @@ try
     var access = new FakeNetworkAccess();
     var resolver = new ConnectionProfileResolver(store, access);
 
-    var ruleWired = new ConnectionRule { Id = "rw", MatchType = ConnectionMatchType.Wired, Account = "wired-acc", Port = 8601 };
-    var ruleAny = new ConnectionRule { Id = "ra", MatchType = ConnectionMatchType.WirelessAny, Account = "any-acc", Port = 8602 };
-    var ruleSsid = new ConnectionRule { Id = "rs", MatchType = ConnectionMatchType.WirelessSsid, Ssid = "校园网", Account = "ssid-acc", Port = 8605 };
+    var ruleWired = new ConnectionRule { Id = "rw", MatchType = ConnectionMatchType.Wired, Account = "wired-acc", Operator = Operator.Campus };
+    var ruleAny = new ConnectionRule { Id = "ra", MatchType = ConnectionMatchType.WirelessAny, Account = "any-acc", Operator = Operator.Mobile };
+    var ruleSsid = new ConnectionRule { Id = "rs", MatchType = ConnectionMatchType.WirelessSsid, Ssid = "校园网", Account = "ssid-acc", Operator = Operator.Telecom };
 
     var all = new List<ConnectionRule> { ruleWired, ruleAny, ruleSsid };
 
@@ -82,7 +82,7 @@ try
     Check(resolver.Match(NetworkAccessKind.Wireless, "校园网", false, all)?.Id == "ra", "SSID 不可靠时不命中指定 SSID");
     Check(resolver.Match(NetworkAccessKind.Unknown, "", false, all) is null, "判定不出接入方式时不命中任何规则");
 
-    var disabled = new ConnectionRule { Id = "rd", MatchType = ConnectionMatchType.Wired, Account = "x", Port = 8603, Enabled = false };
+    var disabled = new ConnectionRule { Id = "rd", MatchType = ConnectionMatchType.Wired, Account = "x", Operator = Operator.Campus, Enabled = false };
     Check(resolver.Match(NetworkAccessKind.Wired, "", false, new List<ConnectionRule> { disabled }) is null, "停用的规则不参与匹配");
 
     // ══════════════ 生效档案 ══════════════
@@ -91,6 +91,7 @@ try
     var empty = resolver.Resolve();
     Check(empty.IsDefault && empty.Account == "global-account" && empty.Port == 8603, "未命中规则时用全局默认");
     Check(empty.Password == "global-password", "未命中规则时用全局密码");
+    Check(empty.Operator == Operator.Mobile, "未命中规则时用全局出口");
 
     store.Settings.ConnectionRules = new List<ConnectionRule> { ruleSsid };
     store.Save();
@@ -99,13 +100,16 @@ try
     access.SsidReliable = true;
 
     var hit = resolver.Resolve();
-    Check(!hit.IsDefault && hit.Account == "ssid-acc" && hit.Port == 8605, "命中规则时用规则的账号与端口");
+    Check(!hit.IsDefault && hit.Account == "ssid-acc", "命中规则时用规则的账号");
+    Check(hit.Operator == Operator.Telecom, "命中规则时用规则的出口");
+    Check(hit.Port == 8603, "命中规则时端口仍是门户分配的那个，不受规则影响");
     Check(hit.Rule?.Id == "rs", "生效档案带上了命中的规则");
 
-    var badPort = new ConnectionRule { Id = "rb", MatchType = ConnectionMatchType.WirelessSsid, Ssid = "校园网", Account = "x", Port = 1234 };
-    store.Settings.ConnectionRules = new List<ConnectionRule> { badPort };
-    var fallbackPort = resolver.Resolve();
-    Check(fallbackPort.Port == 8603, "规则端口非法时回落到默认端口");
+    // 规则命中时若该规则没设密码，回落到全局密码
+    store.Settings.ConnectionRules = new List<ConnectionRule> { ruleSsid };
+    store.Save();
+    var noPwd = resolver.Resolve();
+    Check(noPwd.Password == "global-password", "规则没设密码时回落到全局密码");
 
     store.Settings.ConnectionRules = new List<ConnectionRule>();
     store.Save();
@@ -116,8 +120,10 @@ try
     Check(NetworkProbeService.TransportOf("223.5.5.5") == ProbeTransport.Icmp, "IP 目标走 ICMP");
     Check(NetworkProbeService.TransportOf("example.com") == ProbeTransport.Http, "域名目标走 HTTP");
     Check(NetworkProbeService.TransportOf("http://example.com/x") == ProbeTransport.Http, "网址目标走 HTTP");
-    Check(NetworkProbeService.NormalizeTarget("") == "223.5.5.5", "空目标回落默认");
-    Check(NetworkProbeService.NormalizeTarget(new string('x', 300)) == "223.5.5.5", "超长目标回落默认");
+    Check(NetworkProbeService.DefaultTarget == "www.snnu.edu.cn", "默认探测目标是学校官网");
+    Check(NetworkProbeService.TransportOf(NetworkProbeService.DefaultTarget) == ProbeTransport.Http, "默认目标走 HTTP");
+    Check(NetworkProbeService.NormalizeTarget("") == NetworkProbeService.DefaultTarget, "空目标回落默认");
+    Check(NetworkProbeService.NormalizeTarget(new string('x', 300)) == NetworkProbeService.DefaultTarget, "超长目标回落默认");
     Check(NetworkProbeService.NormalizeTarget("  1.1.1.1  ") == "1.1.1.1", "目标会去掉首尾空格");
     Check(NetworkProbeService.NormalizeTimeoutSeconds(0) == 3, "超时越界回落默认");
     Check(NetworkProbeService.NormalizeTimeoutSeconds(99) == 3, "超时越界回落默认");

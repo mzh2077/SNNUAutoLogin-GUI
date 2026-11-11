@@ -116,24 +116,24 @@ internal static class Program
         var rules = store.Settings.ConnectionRules ?? new List<ConnectionRule>();
         Say($"已配置规则 {rules.Count} 条");
         foreach (var r in rules)
-            Say($"   {r.MatchType} SSID={r.Ssid} 账号={r.Account} 端口={r.Port} 启用={r.Enabled}");
+            Say($"   {r.MatchType} SSID={r.Ssid} 账号={r.Account} 出口={r.Operator} 启用={r.Enabled}");
 
         var matched = resolver.Match(info.Kind, info.Ssid, info.SsidReliable, rules);
         Say($"命中规则 : {(matched is null ? "(无)" : matched.MatchType + " " + matched.Ssid)}");
-        Say($"生效档案 : 账号={resolver.Resolve().Account} 端口={resolver.Resolve().Port}");
+        Say($"生效档案 : 账号={resolver.Resolve().Account} 出口={resolver.Resolve().Operator} 端口={resolver.Resolve().Port}");
 
         // 优先级：指定 SSID > 无线任意 > 有线
         var allRules = new List<ConnectionRule>
         {
-            new ConnectionRule { Id="wired", MatchType=ConnectionMatchType.Wired, Ssid="", Account="ACC_WIRED", Port=8601, Enabled=true },
-            new ConnectionRule { Id="any",  MatchType=ConnectionMatchType.WirelessAny, Ssid="", Account="ACC_ANY", Port=8605, Enabled=true },
+            new ConnectionRule { Id="wired", MatchType=ConnectionMatchType.Wired, Ssid="", Account="ACC_WIRED", Operator=Operator.Campus, Enabled=true },
+            new ConnectionRule { Id="any",  MatchType=ConnectionMatchType.WirelessAny, Ssid="", Account="ACC_ANY", Operator=Operator.Mobile, Enabled=true },
         };
         if (!string.IsNullOrEmpty(info.Ssid))
         {
             allRules.Add(new ConnectionRule
             {
                 Id="ssid", MatchType=ConnectionMatchType.WirelessSsid, Ssid=info.Ssid,
-                Account="ACC_SSID", Port=8603, Enabled=true
+                Account="ACC_SSID", Operator=Operator.Unicom, Enabled=true
             });
         }
 
@@ -163,8 +163,10 @@ internal static class Program
         Check(mNone is null, "没有规则时不命中任何规则");
 
         var profile = resolver.Resolve();
-        Check(profile.Port == (matched is not null && PortalClient.IsKnownPort(matched.Port) ? matched.Port : port),
-            "生效端口与命中的规则一致", profile.Port.ToString());
+        // 端口不再由规则决定（门户按线路分配），未命中规则时用配置里的兜底端口
+        Check(profile.Port == port, "未命中规则时生效端口为兜底端口", profile.Port.ToString());
+        Check(profile.Operator == (matched is not null ? matched.Operator : store.Settings.Operator),
+            "生效出口与命中的规则一致", profile.Operator.ToString());
         Console.WriteLine();
         sb.AppendLine();
 

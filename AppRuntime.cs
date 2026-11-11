@@ -43,8 +43,11 @@ public sealed class AppRuntime : IDisposable
     /// <summary>接入方式识别（网卡类型 + SSID）。</summary>
     public NetworkAccessService Access { get; }
 
-    /// <summary>生效档案解析（连接规则 → 账号 / 密码 / 端口）。</summary>
+    /// <summary>生效档案解析（连接规则 → 账号 / 密码 / 出口）。</summary>
     public ConnectionProfileResolver Profiles { get; }
+
+    /// <summary>门户接入端口发现者：端口由服务端分配，程序自己问门户要。</summary>
+    public PortalPortDiscovery Ports { get; }
 
     /// <summary>独立外网探测。</summary>
     public NetworkProbeService Probe { get; }
@@ -92,10 +95,14 @@ public sealed class AppRuntime : IDisposable
         Theme = new ThemeColors(dispatcher);
 
         Access = new NetworkAccessService();
-        Profiles = new ConnectionProfileResolver(Store, Access);
         Probe = new NetworkProbeService();
 
-        Coordinator = new LoginCoordinator(Store, dispatcher, Profiles, launchedAtStartup);
+        // 接入端口是门户按线路分配的，程序自己问门户要 —— 不让用户从下拉框里挑
+        Ports = new PortalPortDiscovery(_portal);
+
+        Profiles = new ConnectionProfileResolver(Store, Access, Ports);
+
+        Coordinator = new LoginCoordinator(Store, dispatcher, Profiles, Ports, launchedAtStartup);
         Coordinator.StateChanged += OnStateChanged;
         Coordinator.Log += AddLog;
 
@@ -223,6 +230,7 @@ public sealed class AppRuntime : IDisposable
         {
             AddLog("检测到网络状态变化，立即重新认证");
             Access.Invalidate();          // 网卡换了，接入方式要重新判定
+            Ports.Invalidate();          // 线路可能变了，门户分配的端口也要重新问
             Guard.NotifyNetworkChanged(); // 换网了，守卫顺手评估一次
             Coordinator.RequestImmediateCheck();
         });

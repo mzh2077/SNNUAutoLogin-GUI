@@ -236,7 +236,7 @@ public static class Diagnostics
                     ConnectionMatchType.WirelessSsid => $"无线 SSID={r.Ssid}",
                     _ => "未知"
                 };
-                sb.AppendLine($"  - {scope,-24} 账号={r.Account,-12} 端口={r.Port} 启用={r.Enabled}");
+                sb.AppendLine($"  - {scope,-24} 账号={r.Account,-12} 出口={DescribeOperator(r.Operator)} 启用={r.Enabled}");
             }
         }
         sb.AppendLine();
@@ -278,8 +278,18 @@ public static class Diagnostics
             ConnectionMatchType.WirelessSsid => $"无线 SSID={r.Ssid}",
             _ => "未知"
         };
-        return $"{scope} → 账号 {r.Account} / 端口 {r.Port}";
+        return $"{scope} → 账号 {r.Account} / 出口 {DescribeOperator(r.Operator)}";
     }
+
+    /// <summary>运营商出口的中文名。</summary>
+    private static string DescribeOperator(Operator op) => op switch
+    {
+        Operator.Campus => "校园网直连",
+        Operator.Mobile => "中国移动",
+        Operator.Unicom => "中国联通",
+        Operator.Telecom => "中国电信",
+        _ => op.ToString()
+    };
 
     private static void WriteAndReturn(StringBuilder sb, string fileName)
     {

@@ -204,6 +204,10 @@ public sealed partial class MainWindow : Window
         FillDevicePorts();
         OnDeviceListChanged();
 
+        // 在线设备默认就加载：进窗口就看到当前在线几台，不用再点一次刷新。
+        // 放在这里而不是构造函数里，是为了让「加载中」的状态能正常显示出来。
+        _ = RefreshDevicesAsync();
+
         ApplyThemeColors();
         ApplyState(_rt.State, _rt.LastResult, animate: false);
 
@@ -495,22 +499,17 @@ public sealed partial class MainWindow : Window
         ScrollLogToEnd();
     }
 
-    /// <summary>填充接入端口下拉框，并选中当前端口。</summary>
+    /// <summary>
+    /// 刷新「接入端口」的显示。
+    ///
+    /// 端口不是用户能选的 —— 门户按接入线路临时分配（访问门户根路径会回一段
+    /// JS 指向具体端口），所以这里只负责把当前实际用的端口显示出来。
+    /// </summary>
     private void FillDevicePorts()
     {
-        DevicePortBox.Items.Clear();
-        foreach (int p in PortalClient.KnownPorts) DevicePortBox.Items.Add(p);
-
-        DefaultPortBox.Items.Clear();
-        foreach (int p in PortalClient.KnownPorts) DefaultPortBox.Items.Add(p);
-
-        bool ready = _uiReady;
-        _uiReady = false;
-        DevicePortBox.SelectedItem = _rt.Devices.Port;
-        DefaultPortBox.SelectedItem = PortalClient.IsKnownPort(_rt.Store.Settings.DefaultPort)
-            ? _rt.Store.Settings.DefaultPort
-            : 8603;
-        _uiReady = ready;
+        int port = _rt.Devices.Port;
+        DevicePortText.Text = $"端口 {port}";
+        DefaultPortText.Text = $"{port}";
     }
 
     // ────────────────────────── 设备数守卫 ──────────────────────────
@@ -708,14 +707,21 @@ public sealed partial class MainWindow : Window
     {
         bool editing = existing is not null;
 
+        // 新建时用当前的实际接入状态预填：选「无线」就带上当前 SSID，
+        // 账号 / 密码 / 出口也都沿用当前生效的那一套，用户改成别的即可。
+        var currentAccess = _rt.Access.GetCurrent();
+        var currentProfile = _rt.Profiles.Resolve();
+
         var rule = existing is null
             ? new ConnectionRule
             {
                 Id = Guid.NewGuid().ToString("N"),
-                MatchType = ConnectionMatchType.Wired,
-                Port = PortalClient.IsKnownPort(_rt.Store.Settings.DefaultPort)
-                    ? _rt.Store.Settings.DefaultPort
-                    : 8603,
+                MatchType = currentAccess.Kind == NetworkAccessKind.Wireless
+                    ? ConnectionMatchType.WirelessSsid
+                    : ConnectionMatchType.Wired,
+                Ssid = currentAccess.Kind == NetworkAccessKind.Wireless ? currentAccess.Ssid : "",
+                Account = currentProfile.Account,
+                Operator = currentProfile.Operator,
                 Enabled = true
             }
             : new ConnectionRule
@@ -724,7 +730,7 @@ public sealed partial class MainWindow : Window
                 MatchType = existing.MatchType,
                 Ssid = existing.Ssid,
                 Account = existing.Account,
-                Port = existing.Port,
+                Operator = existing.Operator,
                 Enabled = existing.Enabled,
                 PasswordRef = existing.PasswordRef
             };
@@ -748,9 +754,19 @@ public sealed partial class MainWindow : Window
             PlaceholderText = editing ? "留空表示不修改" : "校园网密码"
         };
 
-        var portBox = new ComboBox { Width = 320, HorizontalAlignment = HorizontalAlignment.Stretch };
-        foreach (int p in PortalClient.KnownPorts) portBox.Items.Add(p);
-        portBox.SelectedItem = rule.Port;
+        // 新建时把当前生效的密码也带上：用户接着改几个字就行，
+        // 不用把密码从头敲一遍（更不用为了确认「填了没」去切到明文）。
+        // 编辑已有规则时不预填 —— 那是该规则自己的密码，留空表示不改。
+        if (!editing)
+            pwdBox.Password = currentProfile.Password;
+
+        // 出口是运营商（表单里的 yys），不是门户端口 —— 端口由服务端分配，用户选不了
+        var operatorBox = new ComboBox { Width = 320, HorizontalAlignment = HorizontalAlignment.Stretch };
+        operatorBox.Items.Add("校园网直连（教育网）");
+        operatorBox.Items.Add("中国移动");
+        operatorBox.Items.Add("中国联通");
+        operatorBox.Items.Add("中国电信");
+        operatorBox.SelectedIndex = (int)rule.Operator;
 
         var errorText = new TextBlock
         {
@@ -780,7 +796,7 @@ public sealed partial class MainWindow : Window
         AddRow("SSID", ssidBox);
         AddRow("账号", accountBox);
         AddRow("密码", pwdBox);
-        AddRow("出口端口", portBox);
+        AddRow("出口", operatorBox);
         panel.Children.Add(errorText);
 
         var dialog = new ContentDialog
@@ -798,7 +814,7 @@ public sealed partial class MainWindow : Window
             rule.MatchType = (ConnectionMatchType)Math.Max(0, matchBox.SelectedIndex);
             rule.Ssid = rule.MatchType == ConnectionMatchType.WirelessSsid ? ssidBox.Text.Trim() : "";
             rule.Account = accountBox.Text.Trim();
-            rule.Port = portBox.SelectedItem is int p ? p : 8603;
+            rule.Operator = (Operator)Math.Max(0, operatorBox.SelectedIndex);
 
             // 唯一性校验：把别的规则都算上（自己除外）
             var others = new List<ConnectionRule>();
@@ -855,7 +871,7 @@ public sealed partial class MainWindow : Window
                 _ => $"无线（指定 SSID）· SSID：{rule.Ssid}"
             };
 
-            DetailText = $"账号 {rule.Account} · 出口端口 {rule.Port} · 密码{(hasPassword ? "已设置" : "未设置")}";
+            DetailText = $"账号 {rule.Account} · 出口 {DescribeOperator(rule.Operator)} · 密码{(hasPassword ? "已设置" : "未设置")}";
         }
 
         public ConnectionRule Rule { get; }
@@ -863,6 +879,16 @@ public sealed partial class MainWindow : Window
         public string MatchText { get; }
         public string DetailText { get; }
     }
+
+    /// <summary>运营商出口的中文名。</summary>
+    private static string DescribeOperator(Operator op) => op switch
+    {
+        Operator.Campus => "校园网直连",
+        Operator.Mobile => "中国移动",
+        Operator.Unicom => "中国联通",
+        Operator.Telecom => "中国电信",
+        _ => op.ToString()
+    };
 
     /// <summary>巡检时长的快捷值按钮。</summary>
     private void OnIntervalQuickClicked(object sender, RoutedEventArgs e)
@@ -917,9 +943,6 @@ public sealed partial class MainWindow : Window
         DeviceGuardTimeoutBox.ValueChanged += (_, _) => ScheduleSave();
         // 「立即检测一次」与「添加规则」的点击在 XAML 里直接绑到处理器，这里不再重复接线
 
-        // 连接规则
-        DefaultPortBox.SelectionChanged += (_, _) => ScheduleSave();
-
         // 验证码：点按钮或直接回车提交
         CaptchaSubmitBtn.Click += (_, _) => _ = SubmitCaptchaAsync();
         CaptchaRefreshBtn.Click += (_, _) => _ = _rt.Coordinator.RefreshCaptchaAsync();
@@ -938,7 +961,6 @@ public sealed partial class MainWindow : Window
 
         // 在线设备
         DeviceRefreshBtn.Click += async (_, _) => await OnDeviceRefreshClicked();
-        DevicePortBox.SelectionChanged += async (_, _) => await OnDevicePortChanged();
 
         LegacyCleanBtn.Click += (_, _) => OnLegacyCleanClicked();
         LegacyDismissBtn.Click += (_, _) =>
@@ -1164,11 +1186,10 @@ public sealed partial class MainWindow : Window
         var dm = _rt.Devices;
 
         DeviceList.ItemsSource = dm.Devices;
-        DevicePortBox.SelectedItem = dm.Port;
+        DevicePortText.Text = $"端口 {dm.Port}";
 
         bool loading = dm.State == DeviceListState.Loading;
         DeviceRefreshBtn.IsEnabled = !loading;
-        DevicePortBox.IsEnabled = !loading;
 
         switch (dm.State)
         {
@@ -1208,6 +1229,17 @@ public sealed partial class MainWindow : Window
 
     private async Task OnDeviceRefreshClicked()
     {
+        await RefreshDevicesAsync();
+    }
+
+    /// <summary>
+    /// 拉一次在线设备列表。
+    ///
+    /// 端口取当前生效档案里的那个 —— 门户按线路分配接入端口，
+    /// 所以这里不能写死，得跟着门户分配的结果走。
+    /// </summary>
+    private async Task RefreshDevicesAsync()
+    {
         if (!_uiBuilt) return;
 
         DeviceRefreshBtn.IsEnabled = false;
@@ -1215,20 +1247,13 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            await _rt.Devices.RefreshAsync();
+            int port = _rt.Profiles.Resolve().Port;
+            await _rt.Devices.RefreshAsync(port);
         }
         finally
         {
             if (_uiBuilt) DeviceRefreshBtn.IsEnabled = true;
         }
-    }
-
-    private async Task OnDevicePortChanged()
-    {
-        if (!_uiReady) return;
-        if (DevicePortBox.SelectedItem is not int port) return;
-
-        await _rt.Devices.RefreshAsync(port);
     }
 
     /// <summary>下线别的设备（门户里的「强制下线」）。</summary>
@@ -1542,9 +1567,6 @@ public sealed partial class MainWindow : Window
         s.DeviceGuardProbeTimeoutSeconds = double.IsNaN(timeout)
             ? 3
             : Math.Clamp((int)Math.Round(timeout), 1, 30);
-
-        if (DefaultPortBox.SelectedItem is int dp && PortalClient.IsKnownPort(dp))
-            s.DefaultPort = dp;
 
         bool settingsSaved = _rt.Store.Save();
         bool passwordSaved = _rt.Store.SavePassword(PwdBox.Password);

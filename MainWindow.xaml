@@ -421,12 +421,12 @@
                                     Orientation="Horizontal"
                                     Spacing="8">
 
-                                    <ComboBox
-                                        x:Name="DevicePortBox"
-                                        Width="96"
+                                    <TextBlock
+                                        x:Name="DevicePortText"
                                         VerticalAlignment="Center"
                                         FontSize="12"
-                                        ToolTipService.ToolTip="接入端口" />
+                                        Style="{StaticResource HintStyle}"
+                                        Text="—" />
 
                                     <Button
                                         x:Name="DeviceRefreshBtn"
@@ -571,7 +571,9 @@
                                 Style="{StaticResource AccentButtonStyle}"
                                 Click="OnDeviceDisconnectSelfClicked">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <FontIcon FontSize="13" Glyph="&#xE71A;" />
+                                    <!--  E8BB = 叉号（关闭 / 断开）。原先用的 E71A 在 Segoe 图标字体里
+                                          画出来是一只空心圆角方框，看着像没加载出来的「豆腐块」。  -->
+                                    <FontIcon FontSize="13" Glyph="&#xE8BB;" />
                                     <TextBlock x:Name="DeviceDisconnectLabel" FontSize="13" Text="断开连接" />
                                 </StackPanel>
                             </Button>
@@ -942,22 +944,28 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Spacing="1">
+                                    <TextBlock
+                                        Style="{StaticResource RowTitleStyle}"
+                                        Text="接入端口" />
+                                    <TextBlock
+                                        Style="{StaticResource HintStyle}"
+                                        Text="由校园网门户自动分配，无需手动选择" />
+                                </StackPanel>
                                 <TextBlock
-                                    VerticalAlignment="Center"
-                                    Style="{StaticResource RowTitleStyle}"
-                                    Text="默认接入端口" />
-                                <ComboBox
-                                    x:Name="DefaultPortBox"
+                                    x:Name="DefaultPortText"
                                     Grid.Column="1"
                                     Width="250"
-                                    VerticalAlignment="Center" />
+                                    VerticalAlignment="Center"
+                                    Style="{StaticResource RowTitleStyle}"
+                                    Text="—" />
                             </Grid>
 
                             <TextBlock
                                 x:Name="OpHint"
                                 Margin="0,8,0,0"
                                 Style="{StaticResource HintStyle}"
-                                Text="未命中任何连接规则时使用这里的账号与端口；校园网为校内直连出口，移动 / 联通 / 电信为运营商代拨出口。" />
+                                Text="未命中任何连接规则时使用这里的账号与出口；校园网为校内直连出口，移动 / 联通 / 电信为运营商代拨出口。" />
 
                             <!--  验证码：只在 Portal 要求时出现  -->
                             <StackPanel

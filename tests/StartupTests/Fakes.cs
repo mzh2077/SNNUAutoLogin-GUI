@@ -33,7 +33,7 @@ namespace SNNUAutoLogin.Services
         public ConnectionMatchType MatchType { get; set; }
         public string Ssid { get; set; } = "";
         public string Account { get; set; } = "";
-        public int Port { get; set; } = 8603;
+        public int Operator { get; set; }
         public bool Enabled { get; set; } = true;
         public string PasswordRef { get; set; } = "";
     }
@@ -84,6 +84,17 @@ namespace SNNUAutoLogin.Services
     public interface IConnectionProfileResolver
     {
         EffectiveProfile Resolve();
+        void SetDiscoveredPort(int port);
+    }
+
+    /// <summary>
+    /// 端口发现者（测试占位）：门户按线路分配的接入端口，测试里直接给一个固定值。
+    /// </summary>
+    public interface IPortalPortDiscovery
+    {
+        Task<int?> DiscoverAsync(CancellationToken ct = default);
+        int? CurrentPort { get; }
+        void Invalidate();
     }
 
     public sealed class PortalClient : IDisposable

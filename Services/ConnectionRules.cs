@@ -37,8 +37,17 @@ public sealed class ConnectionRule
     /// <summary>该规则专用的账号。</summary>
     public string Account { get; set; } = "";
 
-    /// <summary>该规则专用的门户接入端口。</summary>
-    public int Port { get; set; } = 8603;
+    /// <summary>
+    /// 该规则专用的出口（运营商）。
+    ///
+    /// 这里放的是**出口策略**，不是门户端口 ——
+    /// 门户接入端口是服务端按线路临时分配的（实测连续请求会得到 8601 / 8602 / 8603），
+    /// 让用户去挑端口没有意义。真正由用户决定的是走哪个运营商出口（表单里的 yys）。
+    /// </summary>
+    /// <remarks>
+    /// 默认值与全局出口一致：没单独指定就跟着全局走（老版本规则就是这个行为）。
+    /// </remarks>
+    public Operator Operator { get; set; } = Operator.Mobile;
 
     /// <summary>关掉后不参与匹配。</summary>
     public bool Enabled { get; set; } = true;
@@ -89,7 +98,7 @@ public static class ConnectionRuleSet
         if (string.IsNullOrWhiteSpace(rule.Account)) return "账号不能为空";
         if (rule.Account.Trim().Length > 64) return "账号不能超过 64 个字符";
 
-        if (!PortalClient.IsKnownPort(rule.Port)) return $"出口端口不在可选范围（{string.Join(" / ", PortalClient.KnownPorts)}）";
+        if (!Enum.IsDefined(rule.Operator)) return "出口无效";
 
         if (all is not null)
         {

@@ -57,8 +57,20 @@ public interface INetworkProbe
 /// </summary>
 public sealed class NetworkProbeService : INetworkProbe, IDisposable
 {
-    /// <summary>默认探测目标。</summary>
-    public const string DefaultTarget = "223.5.5.5";
+    /// <summary>
+    /// 默认探测目标：学校官网 www.snnu.edu.cn。
+    ///
+    /// 用域名（而不是 IP 字面量）意味着走 HTTP —— 校园网普遍屏蔽 ICMP，
+    /// 用域名还能顺带验证 DNS 解析是否正常，比 ping 某个公网 IP 更贴近
+    /// 「能不能上网」这件事本身。
+    /// </summary>
+    public const string DefaultTarget = "www.snnu.edu.cn";
+
+    /// <summary>
+    /// 旧版默认探测目标（公网 DNS）。留着只为识别「还没自定义过」的老配置，
+    /// 迁移到 <see cref="DefaultTarget"/> 后就不再出现。
+    /// </summary>
+    public const string LegacyDefaultTarget = "223.5.5.5";
 
     /// <summary>默认探测超时（秒）。</summary>
     public const int DefaultTimeoutSeconds = 3;

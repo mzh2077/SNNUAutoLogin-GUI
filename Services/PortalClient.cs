@@ -159,6 +159,59 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
         }
     }
 
+    /// <summary>
+    /// 发现门户给本机分配的接入端口。
+    ///
+    /// 背景：访问 `http://202.117.144.205/`（不带端口）时，门户会回一段 JS
+    /// `window.location='http://202.117.144.205:8601/snnuportal/login.jsp'`，
+    /// 端口是**服务端按接入线路临时分配**的 —— 实测连续请求会得到 8601 / 8602 / 8603
+    /// 不同的端口，而且与「有线还是无线」无关。
+    ///
+    /// 所以「让用户从下拉框里挑端口」这件事本身就是错的：
+    /// 端口是门户给的，不是用户选的；用户真正能选的是**运营商出口**（表单里的 yys）。
+    /// 这个方法把门户的分配结果读出来，程序自己跟着走。
+    /// </summary>
+    /// <returns>门户分配的端口；读不到时返回 null。</returns>
+    public async Task<int?> DiscoverAssignedPortAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            // 走一个不带端口的临时客户端：这里只需要读那段跳转 JS，
+            // 不需要（也不应该）建立门户会话 —— 真正的会话在业务端口上建立。
+            using var handler = new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                UseCookies = false,
+                UseProxy = false,
+                ConnectTimeout = TimeSpan.FromSeconds(6)
+            };
+            using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+
+            using var resp = await http.GetAsync(DiscoveryUrl, ct).ConfigureAwait(false);
+            var html = await ReadHtmlAsync(resp, ct).ConfigureAwait(false);
+
+            // 形如 http://202.117.144.205:8601/snnuportal/login.jsp
+            var m = Regex.Match(html, @"https?://" + Regex.Escape(PortalHost) + @":(\d{2,5})",
+                RegexOptions.IgnoreCase);
+            if (m.Success && int.TryParse(m.Groups[1].Value, out int port))
+                return port;
+
+            // 兜底：万一是相对路径或别的写法，取第一个像端口的数字
+            var m2 = Regex.Match(html, @"location\s*=\s*['""][^'""]*:(\d{2,5})", RegexOptions.IgnoreCase);
+            if (m2.Success && int.TryParse(m2.Groups[1].Value, out int p2))
+                return p2;
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>门户根路径（不带端口）—— 门户在这里告诉我们该走哪个端口。</summary>
+    public static string DiscoveryUrl => $"http://{PortalHost}/";
+
     /// <summary>查询当前出口是否已认证在线。</summary>
     public async Task<LoginResult> GetStatusAsync(int port, CancellationToken ct = default)
     {

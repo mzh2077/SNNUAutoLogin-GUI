@@ -48,6 +48,9 @@ public sealed class LoginCoordinator : IDisposable
     /// <summary>解析当前生效的账号 / 密码 / 端口。没有它就只会用全局默认账号。</summary>
     private readonly IConnectionProfileResolver? _resolver;
 
+    /// <summary>门户端口发现者：接入端口是服务端分配的，程序自己问门户要。</summary>
+    private readonly IPortalPortDiscovery? _ports;
+
     public ConnState State { get; private set; } = ConnState.Idle;
 
     /// <summary>待输入的验证码图片；为空表示当前不需要验证码。</summary>
@@ -67,7 +70,7 @@ public sealed class LoginCoordinator : IDisposable
     public event Action? CaptchaChanged;
 
     public LoginCoordinator(CredentialStore store, DispatcherQueue dispatcher, bool launchedAtStartup = false)
-        : this(store, dispatcher, null, launchedAtStartup)
+        : this(store, dispatcher, null, null, launchedAtStartup)
     {
     }
 
@@ -76,10 +79,21 @@ public sealed class LoginCoordinator : IDisposable
         DispatcherQueue dispatcher,
         IConnectionProfileResolver? resolver,
         bool launchedAtStartup = false)
+        : this(store, dispatcher, resolver, null, launchedAtStartup)
+    {
+    }
+
+    public LoginCoordinator(
+        CredentialStore store,
+        DispatcherQueue dispatcher,
+        IConnectionProfileResolver? resolver,
+        IPortalPortDiscovery? ports,
+        bool launchedAtStartup = false)
     {
         _store = store;
         _dispatcher = dispatcher;
         _resolver = resolver;
+        _ports = ports;
         _startupLoginPending = launchedAtStartup && store.Settings.AutoStart;
     }
 
@@ -254,13 +268,37 @@ public sealed class LoginCoordinator : IDisposable
         };
     }
 
+    /// <summary>
+    /// 解析当前生效档案，并确保接入端口是最新的。
+    ///
+    /// 端口由门户分配，所以每轮巡检前都要问一次门户「我该走哪个端口」；
+    /// 发现服务内部有 30 秒缓存，不会每次都真的发请求。
+    /// </summary>
+    private async Task<EffectiveProfile> ResolveProfileAsync(CancellationToken ct)
+    {
+        if (_ports is not null)
+        {
+            try
+            {
+                var discovered = await _ports.DiscoverAsync(ct).ConfigureAwait(false);
+                if (discovered is > 0) _resolver?.SetDiscoveredPort(discovered.Value);
+            }
+            catch
+            {
+                // 读不到端口不是致命错误：继续用兜底端口
+            }
+        }
+
+        return CurrentProfile();
+    }
+
     /// <summary>一次完整巡检：查状态 → 必要时登录。返回 (是否正常, Portal 是否不可达)。</summary>
     private async Task<(bool ok, bool portalDown)> TickAsync(CancellationToken ct)
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var profile = CurrentProfile();
+            var profile = await ResolveProfileAsync(ct).ConfigureAwait(false);
             int port = profile.Port;
             Interlocked.Exchange(ref _currentPort, port);
 
