@@ -22,6 +22,8 @@ public interface IOnlineDevicePortal : IDisposable
     /// 走门户在线控制页自己的 type=dm 接口。
     /// </summary>
     Task<bool> ForceOfflineAsync(string frameUrl, string sessionId, CancellationToken ct = default);
+    Task<bool> ForceOfflineAsync(int port, string frameUrl, string sessionId, CancellationToken ct = default)
+        => ForceOfflineAsync(frameUrl, sessionId, ct);
 
     /// <summary>
     /// 断开本机当前这条连接。

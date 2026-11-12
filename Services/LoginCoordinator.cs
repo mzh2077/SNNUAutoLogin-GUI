@@ -1,7 +1,6 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.UI.Dispatching;
 
 namespace SNNUAutoLogin.Services;
 
@@ -25,9 +24,10 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
     private const int PortalDownDelayMax = 60;    // Portal 不可达（多半不在校园网）
     private const int FailureDelayMax = 120;      // 登录一直失败时的封顶间隔
 
-    private readonly PortalClient _client = new();
-    private readonly CredentialStore _store;
-    private readonly DispatcherQueue _dispatcher;
+    private readonly PortalClient _client;
+    private readonly bool _ownsClient;
+    private readonly ICredentialSource _store;
+    private readonly IEventDispatcher _dispatcher;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     private readonly OperationLifetime _operations = new();
@@ -40,12 +40,12 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
     private int _pendingCheck;
     private TaskCompletionSource<object?>? _wake;
     private bool _startupLoginPending;
+    private int _networkVersion;
+    private int _captchaNetworkVersion;
+    private EffectiveProfile? _captchaProfile;
 
     /// <summary>有守卫要求强制重新认证：下一轮不能走「已在线」的快捷路径。</summary>
     private int _forceRelogin;
-
-    /// <summary>当前这一轮使用的接入端口（验证码要发给同一个端口的门户）。</summary>
-    private int _currentPort = 8603;
 
     /// <summary>解析当前生效的账号 / 密码 / 端口。没有它就只会用全局默认账号。</summary>
     private readonly IConnectionProfileResolver? _resolver;
@@ -57,6 +57,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
 
     /// <summary>待输入的验证码图片；为空表示当前不需要验证码。</summary>
     public CaptchaImage? PendingCaptcha { get; private set; }
+    public bool HasPendingCaptcha => _awaitingCaptcha && _captchaNetworkVersion == Volatile.Read(ref _networkVersion);
 
     private bool _awaitingCaptcha;
     public LoginResult? LastResult { get; private set; }
@@ -71,14 +72,14 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
     /// <summary>验证码图片变化（到达 / 刷新 / 清除）。</summary>
     public event Action? CaptchaChanged;
 
-    public LoginCoordinator(CredentialStore store, DispatcherQueue dispatcher, bool launchedAtStartup = false)
+    public LoginCoordinator(ICredentialSource store, IEventDispatcher dispatcher, bool launchedAtStartup = false)
         : this(store, dispatcher, null, null, launchedAtStartup)
     {
     }
 
     public LoginCoordinator(
-        CredentialStore store,
-        DispatcherQueue dispatcher,
+        ICredentialSource store,
+        IEventDispatcher dispatcher,
         IConnectionProfileResolver? resolver,
         bool launchedAtStartup = false)
         : this(store, dispatcher, resolver, null, launchedAtStartup)
@@ -86,12 +87,14 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
     }
 
     public LoginCoordinator(
-        CredentialStore store,
-        DispatcherQueue dispatcher,
+        ICredentialSource store,
+        IEventDispatcher dispatcher,
         IConnectionProfileResolver? resolver,
         IPortalPortDiscovery? ports,
-        bool launchedAtStartup = false)
+        bool launchedAtStartup = false, PortalClient? client = null)
     {
+        _client = client ?? new PortalClient();
+        _ownsClient = client is null;
         _store = store;
         _dispatcher = dispatcher;
         _resolver = resolver;
@@ -105,8 +108,13 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
     /// <summary>开机认证成功前持续重试；成功后的掉线认证由自动重连开关控制。</summary>
     private bool AutoReady =>
         AutoLoginAllowed
-        && !string.IsNullOrWhiteSpace(_store.Settings.Account)
-        && _store.HasPassword;
+        && HasEffectiveCredentials();
+
+    private bool HasEffectiveCredentials()
+    {
+        var profile = CurrentProfile();
+        return !string.IsNullOrWhiteSpace(profile.Account) && !string.IsNullOrEmpty(profile.Password);
+    }
 
     public void Start()
     {
@@ -123,6 +131,14 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
     }
 
     public void SuppressAuto(bool suppress) => _suppressAuto = suppress;
+
+    public void SetStartupLogin(bool pending) => _startupLoginPending = pending;
+
+    public void InvalidateNetwork()
+    {
+        Interlocked.Increment(ref _networkVersion);
+        RequestImmediateCheck();
+    }
 
     /// <summary>
     /// 请求立刻巡检一次（网络恢复、用户手动刷新时用）。
@@ -305,13 +321,16 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            int networkVersion = Volatile.Read(ref _networkVersion);
+            if (_awaitingCaptcha && _captchaNetworkVersion != networkVersion) ClearCaptcha();
             var profile = await ResolveProfileAsync(ct).ConfigureAwait(false);
+            if (networkVersion != Volatile.Read(ref _networkVersion)) return (true, false);
             int port = profile.Port;
-            Interlocked.Exchange(ref _currentPort, port);
 
             bool force = Interlocked.Exchange(ref _forceRelogin, 0) == 1;
 
             var status = await _client.GetStatusAsync(port, ct).ConfigureAwait(false);
+            if (networkVersion != Volatile.Read(ref _networkVersion)) return (true, false);
             LastCheckAt = DateTime.Now;
 
             if (status.Success && !force)
@@ -351,7 +370,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
             var account = profile.Account;
             var password = profile.Password;
 
-            if (_suppressAuto || !AutoLoginAllowed
+            if (_suppressAuto || (!AutoLoginAllowed && !force)
                 || string.IsNullOrWhiteSpace(account) || string.IsNullOrEmpty(password))
             {
                 NoteIdleReason("idle");
@@ -366,6 +385,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
             var r = await _client
                 .LoginAsync(port, account, password, profile.Operator, ct, force)
                 .ConfigureAwait(false);
+            if (networkVersion != Volatile.Read(ref _networkVersion)) return (true, false);
 
             if (r.Success)
             {
@@ -378,7 +398,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
 
             if (r.NeedCaptcha)
             {
-                await EnterCaptchaAsync(r, ct).ConfigureAwait(false);
+                await EnterCaptchaAsync(r, profile, networkVersion, ct).ConfigureAwait(false);
                 return (true, false);
             }
 
@@ -412,9 +432,10 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
         var ct = operation.Token;
         try
         {
-            var profile = CurrentProfile();
+            int networkVersion = Volatile.Read(ref _networkVersion);
+            var profile = await ResolveProfileAsync(ct).ConfigureAwait(false);
+            if (networkVersion != Volatile.Read(ref _networkVersion)) return;
             int port = profile.Port;
-            Interlocked.Exchange(ref _currentPort, port);
 
             var account = profile.Account;
             var password = profile.Password;
@@ -430,6 +451,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
 
             var r = await _client.LoginAsync(port, account, password, profile.Operator, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
+            if (networkVersion != Volatile.Read(ref _networkVersion)) return;
             if (r.Success)
             {
                 _startupLoginPending = false;
@@ -440,7 +462,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
             }
             else if (r.NeedCaptcha)
             {
-                await EnterCaptchaAsync(r, ct).ConfigureAwait(false);
+                await EnterCaptchaAsync(r, profile, networkVersion, ct).ConfigureAwait(false);
             }
             else
             {
@@ -458,20 +480,29 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
     // ────────────────────────── 图形验证码 ──────────────────────────
 
     /// <summary>取一张验证码并切到「等输入」状态。</summary>
-    private async Task EnterCaptchaAsync(LoginResult r, CancellationToken ct)
+    private async Task EnterCaptchaAsync(LoginResult r, EffectiveProfile profile, int networkVersion, CancellationToken ct)
     {
+        if (networkVersion != Volatile.Read(ref _networkVersion)) return;
+        _captchaProfile = profile;
+        _captchaNetworkVersion = networkVersion;
         _awaitingCaptcha = true;
         LastResult = r;
 
         try
         {
             PendingCaptcha = await _client
-                .FetchCaptchaAsync(Volatile.Read(ref _currentPort), ct)
+                .FetchCaptchaAsync(profile.Port, ct)
                 .ConfigureAwait(false);
         }
         catch
         {
             PendingCaptcha = null;
+        }
+
+        if (networkVersion != Volatile.Read(ref _networkVersion))
+        {
+            ClearCaptcha();
+            return;
         }
 
         LogLine(PendingCaptcha is null
@@ -491,26 +522,27 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
         if (string.IsNullOrWhiteSpace(code))
             return LoginResult.Captcha("请输入验证码");
 
-        var profile = CurrentProfile();
-        int port = profile.Port;
-        Interlocked.Exchange(ref _currentPort, port);
-
-        var account = profile.Account;
-        var password = profile.Password;
-
-        if (string.IsNullOrWhiteSpace(account) || string.IsNullOrEmpty(password))
-            return LoginResult.Fail("请先填写账号与密码");
-
         if (!await WaitForGateAsync(ct).ConfigureAwait(false)) return LoginResult.Fail("程序正在退出");
         try
         {
+            if (_captchaProfile is not { } profile || _captchaNetworkVersion != Volatile.Read(ref _networkVersion))
+            {
+                ClearCaptcha();
+                return LoginResult.Fail("验证码已过期，请重新登录");
+            }
+            var account = profile.Account;
             SetState(ConnState.Connecting, null);
             LogLine("正在提交验证码…");
 
             var r = await _client
-                .LoginAsync(port, account, password, profile.Operator, code.Trim(), ct)
+                .LoginAsync(profile.Port, account, profile.Password, profile.Operator, code.Trim(), ct)
                 .ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
+            if (_captchaNetworkVersion != Volatile.Read(ref _networkVersion))
+            {
+                ClearCaptcha();
+                return LoginResult.Fail("网络已切换，请重新登录");
+            }
 
             if (r.Success)
             {
@@ -526,7 +558,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
             {
                 // 码错/过期：换一张，继续等输入
                 _awaitingCaptcha = true;
-                try { PendingCaptcha = await _client.FetchCaptchaAsync(Volatile.Read(ref _currentPort), ct).ConfigureAwait(false); }
+                try { PendingCaptcha = await _client.FetchCaptchaAsync(profile.Port, ct).ConfigureAwait(false); }
                 catch { PendingCaptcha = null; }
 
                 SetState(ConnState.CaptchaRequired, r);
@@ -563,11 +595,12 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
         if (operation is null || !await WaitForGateAsync(operation.Token).ConfigureAwait(false)) return;
         try
         {
-            if (!_awaitingCaptcha) return;
+            if (!_awaitingCaptcha || _captchaProfile is not { } profile
+                || _captchaNetworkVersion != Volatile.Read(ref _networkVersion)) return;
 
             try
             {
-                PendingCaptcha = await _client.FetchCaptchaAsync(Volatile.Read(ref _currentPort), operation.Token).ConfigureAwait(false);
+                PendingCaptcha = await _client.FetchCaptchaAsync(profile.Port, operation.Token).ConfigureAwait(false);
             }
             catch
             {
@@ -584,6 +617,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
 
     private void ClearCaptcha()
     {
+        _captchaProfile = null;
         _awaitingCaptcha = false;
         PendingCaptcha = null;
         PushCaptcha();
@@ -649,7 +683,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
         await stopping.ConfigureAwait(false);
         if (_loop is not null) await _loop.ConfigureAwait(false);
 
-        _client.Dispose();
+        if (_ownsClient) _client.Dispose();
         _gate.Dispose();
     }
 }

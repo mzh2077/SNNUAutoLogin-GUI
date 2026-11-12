@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.UI.Dispatching;
 
 namespace SNNUAutoLogin.Services;
 
@@ -37,7 +36,7 @@ public sealed class DeviceManager : IDisposable, IAsyncDisposable
 {
     private readonly IOnlineDevicePortal _client;
     private readonly bool _ownsClient;
-    private readonly DispatcherQueue _dispatcher;
+    private readonly IEventDispatcher _dispatcher;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     private readonly OperationLifetime _operations = new();
@@ -87,7 +86,7 @@ public sealed class DeviceManager : IDisposable, IAsyncDisposable
 
     /// <param name="dispatcher">界面线程调度器。</param>
     /// <param name="client">门户实现；由本类负责释放。</param>
-    public DeviceManager(DispatcherQueue dispatcher, IOnlineDevicePortal client)
+    public DeviceManager(IEventDispatcher dispatcher, IOnlineDevicePortal client)
     {
         _dispatcher = dispatcher;
         _client = client;
@@ -95,7 +94,7 @@ public sealed class DeviceManager : IDisposable, IAsyncDisposable
     }
 
     /// <summary>测试用：注入自己的门户实现（ownsClient=false 时不负责释放它）。</summary>
-    public DeviceManager(DispatcherQueue dispatcher, IOnlineDevicePortal client, bool ownsClient)
+    public DeviceManager(IEventDispatcher dispatcher, IOnlineDevicePortal client, bool ownsClient)
     {
         _dispatcher = dispatcher;
         _client = client;
@@ -195,7 +194,7 @@ public sealed class DeviceManager : IDisposable, IAsyncDisposable
                 }
 
                 if (version != Volatile.Read(ref _networkVersion)) return false;
-                ok = await _client.ForceOfflineAsync(snapshot.FrameUrl, device.SessionId!, ct).ConfigureAwait(false);
+                ok = await _client.ForceOfflineAsync(snapshot.Port, snapshot.FrameUrl, device.SessionId!, ct).ConfigureAwait(false);
                 message = ok ? $"{device.DisplayName} 已下线" : "下线失败";
             }
 

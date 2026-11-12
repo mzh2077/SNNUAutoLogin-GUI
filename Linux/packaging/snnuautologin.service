@@ -1,0 +1,13 @@
+[Unit]
+Description=SNNU campus network login
+
+[Service]
+ExecStart=/usr/bin/snnuautologin agent --autostart
+Type=simple
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

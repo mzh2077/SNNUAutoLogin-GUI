@@ -79,14 +79,15 @@ public interface IConnectionProfileResolver
 /// </summary>
 public sealed class ConnectionProfileResolver : IConnectionProfileResolver
 {
-    private readonly CredentialStore _store;
+    private readonly ICredentialSource _store;
     private readonly INetworkAccessService _access;
     private readonly IPortalPortDiscovery? _ports;
+    private readonly bool _allowDefaultRulePassword;
 
     /// <summary>门户最近一次分配的接入端口（0 表示还没发现过）。</summary>
     private int _discoveredPort;
 
-    public ConnectionProfileResolver(CredentialStore store, INetworkAccessService access)
+    public ConnectionProfileResolver(ICredentialSource store, INetworkAccessService access)
         : this(store, access, null)
     {
     }
@@ -96,19 +97,21 @@ public sealed class ConnectionProfileResolver : IConnectionProfileResolver
     /// 没有它时退回配置里的兜底端口。
     /// </param>
     public ConnectionProfileResolver(
-        CredentialStore store,
+        ICredentialSource store,
         INetworkAccessService access,
-        IPortalPortDiscovery? ports)
+        IPortalPortDiscovery? ports,
+        bool allowDefaultRulePassword = true)
     {
         _store = store;
         _access = access;
         _ports = ports;
+        _allowDefaultRulePassword = allowDefaultRulePassword;
     }
 
     /// <inheritdoc />
     public void SetDiscoveredPort(int port)
     {
-        if (port > 0) _discoveredPort = port;
+        System.Threading.Volatile.Write(ref _discoveredPort, port);
     }
 
     public ConnectionRule? Match(
@@ -174,9 +177,8 @@ public sealed class ConnectionProfileResolver : IConnectionProfileResolver
         int defaultPort = PortalClient.IsKnownPort(settings.DefaultPort) ? settings.DefaultPort : 8603;
 
         // 已发现的门户端口优先 —— 那是服务端真正分配的接入点
-        int port = _discoveredPort > 0 ? _discoveredPort
-            : _ports?.CurrentPort is > 0 ? _ports.CurrentPort.Value
-            : defaultPort;
+        int discovered = _ports is null ? System.Threading.Volatile.Read(ref _discoveredPort) : _ports.CurrentPort ?? 0;
+        int port = discovered > 0 ? discovered : defaultPort;
 
         if (rule is null)
         {
@@ -196,7 +198,7 @@ public sealed class ConnectionProfileResolver : IConnectionProfileResolver
         string password = _store.LoadRulePassword(key);
 
         // 规则没配密码时退回全局密码 —— 宁可少一次输入，也不能让登录直接失败
-        if (string.IsNullOrEmpty(password)) password = _store.LoadPassword();
+        if (_allowDefaultRulePassword && string.IsNullOrEmpty(password)) password = _store.LoadPassword();
 
         return new EffectiveProfile
         {

@@ -1,8 +1,9 @@
 // No real credentials, startup entries or campus network requests in these tests.
 namespace Microsoft.UI.Dispatching
 {
-    public sealed class DispatcherQueue
+    public sealed class DispatcherQueue : SNNUAutoLogin.Services.IEventDispatcher
     {
+        public bool HasThreadAccess => true;
         public bool TryEnqueue(Action action) { action(); return true; }
     }
 }
@@ -45,7 +46,7 @@ namespace SNNUAutoLogin.Services
         WirelessSsid = 2
     }
 
-    public sealed class CredentialStore
+    public sealed class CredentialStore : ICredentialSource
     {
         public AppSettings Settings { get; } = new();
         public string Password { get; set; } = "test-password";

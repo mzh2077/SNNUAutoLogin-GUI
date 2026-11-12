@@ -66,7 +66,7 @@ internal sealed class LoginPage
 /// </summary>
 public sealed class PortalClient : IDisposable, IOnlineDevicePortal
 {
-    private const string PortalHost = "202.117.144.205";
+    internal const string PortalHost = "202.117.144.205";
 
     /// <summary>可选接入端口：不同端口对应不同接入方式（有线 / 无线 / 各运营商出口）。</summary>
     public static readonly int[] KnownPorts = { 8603, 8601, 8602, 8605, 8609, 8604, 8606, 8607, 8608, 8610, 8600 };
@@ -108,21 +108,24 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
         }
     }
 
+    private readonly Func<int, HttpMessageHandler>? _testTransport;
+
     public PortalClient() { }
+
+    internal PortalClient(Func<int, HttpMessageHandler> transport) => _testTransport = transport;
 
     /// <summary>取（或惰性创建）某个端口专属的 HttpClient。</summary>
     private HttpClient ClientFor(int port)
     {
-        var lazy = _clients.GetOrAdd(port, p => new Lazy<HttpClient>(() => CreateClient(), true));
+        var lazy = _clients.GetOrAdd(port, p => new Lazy<HttpClient>(() => CreateClient(p), true));
         return lazy.Value;
     }
 
-    private static HttpClient CreateClient()
+    private HttpClient CreateClient(int port)
     {
-        var handler = new SocketsHttpHandler
+        var handler = _testTransport?.Invoke(port) ?? new SocketsHttpHandler
         {
-            AllowAutoRedirect = true,
-            MaxAutomaticRedirections = 8,
+            AllowAutoRedirect = false,
             UseCookies = true,
             CookieContainer = new CookieContainer(),   // 每个端口一份，端口之间互不串味
             ConnectTimeout = TimeSpan.FromSeconds(6),
@@ -133,7 +136,7 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
             UseProxy = false
         };
 
-        var http = new HttpClient(handler)
+        var http = new HttpClient(new PortalRequestHandler(handler))
         {
             Timeout = TimeSpan.FromSeconds(15)
         };
@@ -178,7 +181,7 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
         {
             // 走一个不带端口的临时客户端：这里只需要读那段跳转 JS，
             // 不需要（也不应该）建立门户会话 —— 真正的会话在业务端口上建立。
-            using var handler = new SocketsHttpHandler
+            using var handler = _testTransport?.Invoke(80) ?? new SocketsHttpHandler
             {
                 AllowAutoRedirect = false,
                 UseCookies = false,
@@ -193,12 +196,12 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
             // 形如 http://202.117.144.205:8601/snnuportal/login.jsp
             var m = Regex.Match(html, @"https?://" + Regex.Escape(PortalHost) + @":(\d{2,5})",
                 RegexOptions.IgnoreCase);
-            if (m.Success && int.TryParse(m.Groups[1].Value, out int port))
+            if (m.Success && int.TryParse(m.Groups[1].Value, out int port) && IsKnownPort(port))
                 return port;
 
             // 兜底：万一是相对路径或别的写法，取第一个像端口的数字
             var m2 = Regex.Match(html, @"location\s*=\s*['""][^'""]*:(\d{2,5})", RegexOptions.IgnoreCase);
-            if (m2.Success && int.TryParse(m2.Groups[1].Value, out int p2))
+            if (m2.Success && int.TryParse(m2.Groups[1].Value, out int p2) && IsKnownPort(p2))
                 return p2;
 
             return null;
@@ -288,12 +291,15 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
     /// 走的是「最近一次拉过设备列表的那个端口」的会话 —— 在线控制页的地址里
     /// 没有门户端口，只能靠记住上一次用的端口来找到正确的 Cookie 容器。
     /// </summary>
-    public async Task<bool> ForceOfflineAsync(string frameUrl, string sessionId, CancellationToken ct = default)
+    public Task<bool> ForceOfflineAsync(string frameUrl, string sessionId, CancellationToken ct = default)
+        => ForceOfflineAsync(Volatile.Read(ref _sessionPort), frameUrl, sessionId, ct);
+
+    public async Task<bool> ForceOfflineAsync(int port, string frameUrl, string sessionId, CancellationToken ct = default)
     {
         try
         {
             var url = DeviceListParser.BuildForceOfflineUrl(frameUrl, sessionId);
-            using var resp = await ClientFor(Volatile.Read(ref _sessionPort))
+            using var resp = await ClientFor(port)
                 .GetAsync(url, ct).ConfigureAwait(false);
             return resp.IsSuccessStatusCode;
         }
@@ -378,7 +384,7 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
         }
 
         // 先探测：已在线则直接返回（强制重登时跳过，走完整登录流程）
-        if (!force)
+        if (!force && string.IsNullOrWhiteSpace(captcha))
         {
             var status = await GetStatusAsync(port, ct).ConfigureAwait(false);
             if (status.Success) return status;
@@ -387,7 +393,9 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
         LoginPage? page;
         try
         {
-            page = await LoadLoginPageAsync(port, ct).ConfigureAwait(false);
+            page = !string.IsNullOrWhiteSpace(captcha) && _pages.TryGetValue(port, out var challenge)
+                ? challenge
+                : await LoadLoginPageAsync(port, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -435,7 +443,9 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
         }
 
         var endpoints = new List<string>();
-        if (page.FormAction is { Length: > 0 } action) endpoints.Add(action);
+        if (Uri.TryCreate(page.FormAction, UriKind.Absolute, out var action)
+            && PortalRequestHandler.CanSendForm(action, new Uri(RootFor(port))))
+            endpoints.Add(action.AbsoluteUri);
         endpoints.Add(RootFor(port) + "login");
         endpoints.Add(RootFor(port) + "login.jsp");
 

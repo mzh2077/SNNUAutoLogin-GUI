@@ -24,6 +24,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../../Shared/Platform.cs" Link="Platform.cs" />
+    <Compile Include="../../Shared/AppSettings.cs" Link="AppSettings.cs" />
+    <Compile Include="../../Shared/NetworkAccess.cs" Link="NetworkAccess.cs" />
     <Compile Include="../../Services/ConnectionRules.cs" Link="ConnectionRules.cs" />
     <Compile Include="../../Services/NetworkAccessService.cs" Link="NetworkAccessService.cs" />
     <Compile Include="../../Services/ConnectionProfileResolver.cs" Link="ConnectionProfileResolver.cs" />
@@ -34,6 +37,7 @@
     <Compile Include="../../Services/DeviceListParser.cs" Link="DeviceListParser.cs" />
     <Compile Include="../../Services/IOnlineDevicePortal.cs" Link="IOnlineDevicePortal.cs" />
     <Compile Include="../../Services/PortalClient.cs" Link="PortalClient.cs" />
+    <Compile Include="../../Shared/PortalRequestHandler.cs" Link="PortalRequestHandler.cs" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
 </Project>

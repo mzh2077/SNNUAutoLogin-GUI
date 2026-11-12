@@ -23,6 +23,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../../Shared/Platform.cs" Link="Platform.cs" />
+    <Compile Include="../../Shared/AppSettings.cs" Link="AppSettings.cs" />
+    <Compile Include="../../Shared/NetworkAccess.cs" Link="NetworkAccess.cs" />
     <Compile Include="../../Services/ConnectionRules.cs" Link="ConnectionRules.cs" />
     <Compile Include="../../Services/NetworkAccessService.cs" Link="NetworkAccessService.cs" />
     <Compile Include="../../Services/ConnectionProfileResolver.cs" Link="ConnectionProfileResolver.cs" />
