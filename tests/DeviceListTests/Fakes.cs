@@ -2,7 +2,7 @@
 // DeviceManager 依赖 IOnlineDevicePortal，这里给它一个可编程的假实现。
 namespace Microsoft.UI.Dispatching
 {
-    public sealed class DispatcherQueue
+    public sealed class DispatcherQueue : SNNUAutoLogin.Services.IEventDispatcher
     {
         public bool HasThreadAccess => true;
         public bool TryEnqueue(Action action) { action(); return true; }
@@ -60,3 +60,5 @@ namespace SNNUAutoLogin.Services
         public void Dispose() => Disposed = true;
     }
 }
+
+namespace SNNUAutoLogin.Services { public sealed class AppSettings { } }

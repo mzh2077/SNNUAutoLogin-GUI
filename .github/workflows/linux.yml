@@ -1,0 +1,66 @@
+name: Linux build and regression tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: ubuntu-24.04
+            image: ubuntu:24.04
+          - distro: debian-13
+            image: debian:13
+    container: ${{ matrix.image }}
+    steps:
+      - name: Prepare the disposable test environment
+        run: |
+          apt-get update
+          apt-get install -y ca-certificates curl git libicu-dev libssl-dev zlib1g dpkg-dev xvfb xauth
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet run --project tests/LinuxCoreTests -c Release
+      - run: |
+          bash -n Linux/packaging/build.sh
+          bash -n Linux/packaging/install-user-service.sh
+      - run: bash Linux/packaging/build.sh 1.6.0
+      - name: Check package metadata and checksums
+        working-directory: artifacts/linux
+        run: |
+          sha256sum -c SHA256SUMS.txt
+          dpkg-deb -f snnuautologin_1.6.0_amd64.deb Package Version Architecture
+          dpkg-deb -f snnuautologin-desktop_1.6.0_amd64.deb Package Version Architecture Depends
+      - name: Install, start and remove the packages
+        working-directory: artifacts/linux
+        shell: bash
+        run: |
+          apt-get install -y --no-install-recommends ./snnuautologin_*.deb ./snnuautologin-desktop_*.deb
+          snnuautologin --help
+          test -r /usr/lib/systemd/user/snnuautologin.service
+          test ! -e /etc/systemd/user/default.target.wants/snnuautologin.service
+          export XDG_RUNTIME_DIR="$(mktemp -d)"
+          result=0
+          timeout 8s xvfb-run -a snnuautologin-desktop || result=$?
+          test "$result" = 124
+          tar -xzf SNNUAutoLogin-1.6.0-linux-x64.tar.gz
+          ./SNNUAutoLogin-1.6.0-linux-x64/cli/snnuautologin --help
+          apt-get purge -y snnuautologin-desktop snnuautologin
+          test ! -e /usr/bin/snnuautologin
+          test ! -e /usr/bin/snnuautologin-desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SNNUAutoLogin-linux-x64-${{ matrix.distro }}
+          path: |
+            artifacts/linux/*.deb
+            artifacts/linux/*.tar.gz
+            artifacts/linux/SHA256SUMS.txt

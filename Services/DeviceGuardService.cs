@@ -84,12 +84,13 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
     /// <summary>连续处置失败上限。达到后停止自动处置，等用户手动处理。</summary>
     public const int GuardMaxConsecutiveFailures = 3;
 
-    private readonly CredentialStore _store;
+    private readonly ICredentialSource _store;
     private readonly IOnlineDevicePortal _portal;
     private readonly INetworkProbe _probe;
     private readonly Func<int> _effectivePort;
     private readonly Action _requestReauthenticate;
     private readonly Action<string> _log;
+    private readonly Func<bool> _canEvaluate;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _stateGate = new();
@@ -125,12 +126,12 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
     /// <param name="requestReauthenticate">唤醒巡检重新认证的回调（无锁）。</param>
     /// <param name="log">日志输出回调。</param>
     public DeviceGuardService(
-        CredentialStore store,
+        ICredentialSource store,
         IOnlineDevicePortal portal,
         INetworkProbe probe,
         Func<int> effectivePort,
         Action requestReauthenticate,
-        Action<string> log)
+        Action<string> log, Func<bool>? canEvaluate = null)
     {
         _store = store;
         _portal = portal;
@@ -138,6 +139,7 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
         _effectivePort = effectivePort;
         _requestReauthenticate = requestReauthenticate;
         _log = log;
+        _canEvaluate = canEvaluate ?? (() => true);
     }
 
     /// <summary>当前状态快照。</summary>
@@ -189,6 +191,12 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
     public void NotifyNetworkChanged()
     {
         Interlocked.Increment(ref _networkVersion);
+        lock (_stateGate)
+        {
+            _deviceCount = 0;
+            _lastProbeAt = null;
+            _lastProbeOk = null;
+        }
         _ = EvaluateAsync();
     }
 
@@ -267,6 +275,7 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
 
     private async Task EvaluateOnceAsync(CancellationToken ct)
     {
+        if (!_canEvaluate()) return;
         if (_disposed) return;
 
         var settings = _store.Settings;
@@ -325,7 +334,7 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
 
         Write($"在线设备 {count} 台，超过阈值 {threshold}，开始检测出网连通性（统计端口 {port}）");
 
-        var probe = await RunProbeAsync(ct).ConfigureAwait(false);
+        var probe = await RunProbeAsync(networkVersion, ct).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
         if (networkVersion != Volatile.Read(ref _networkVersion)) return;
 
@@ -347,13 +356,16 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
         if (_disposed) return new ProbeResult { Success = false, Detail = "守卫未启动" };
         using var operation = _operations.TryEnter();
         if (operation is null) return new ProbeResult { Success = false, Detail = "守卫未启动" };
+        int networkVersion = Volatile.Read(ref _networkVersion);
 
         SetState(DeviceGuardState.Probing, "正在检测出网连通性…");
 
         int port = _effectivePort();
         SetDeviceCount(_deviceCount, port);
 
-        var probe = await RunProbeAsync(operation.Token).ConfigureAwait(false);
+        var probe = await RunProbeAsync(networkVersion, operation.Token).ConfigureAwait(false);
+        if (networkVersion != Volatile.Read(ref _networkVersion))
+            return new ProbeResult { Success = false, Detail = "网络已切换，请重新检测" };
         if (operation.Token.IsCancellationRequested) return probe;
 
         SetState(probe.Success ? DeviceGuardState.Idle : DeviceGuardState.Idle,
@@ -385,7 +397,7 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
         try
         {
             if (_disposed) return false;
-            if (!manual && (!_store.Settings.DeviceGuardEnabled || IsCoolingDown()
+            if (!manual && (!_canEvaluate() || !_store.Settings.DeviceGuardEnabled || IsCoolingDown()
                 || CurrentState() == DeviceGuardState.Stopped || count <= Threshold
                 || networkVersion != Volatile.Read(ref _networkVersion) || port != _effectivePort()))
                 return false;
@@ -441,7 +453,7 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
     }
 
     /// <summary>执行一次探测，异常一律吞掉转成失败结果。</summary>
-    private async Task<ProbeResult> RunProbeAsync(CancellationToken ct)
+    private async Task<ProbeResult> RunProbeAsync(int networkVersion, CancellationToken ct)
     {
         var settings = _store.Settings;
         string target = NetworkProbeService.NormalizeTarget(settings.DeviceGuardProbeTarget);
@@ -453,13 +465,13 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
         try
         {
             var result = await _probe.ProbeAsync(target, timeout, ct).ConfigureAwait(false);
-            SetProbeResult(result.Success, result.Detail);
+            SetProbeResult(result.Success, result.Detail, networkVersion);
             return result;
         }
         catch (Exception ex)
         {
             var failed = new ProbeResult { Success = false, Detail = $"探测失败：{ex.Message}" };
-            SetProbeResult(false, failed.Detail);
+            SetProbeResult(false, failed.Detail, networkVersion);
             return failed;
         }
     }
@@ -526,10 +538,11 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
         RaiseChanged();
     }
 
-    private void SetProbeResult(bool ok, string message)
+    private void SetProbeResult(bool ok, string message, int networkVersion)
     {
         lock (_stateGate)
         {
+            if (networkVersion != Volatile.Read(ref _networkVersion)) return;
             _lastProbeAt = DateTime.Now;
             _lastProbeOk = ok;
             _lastMessage = message;

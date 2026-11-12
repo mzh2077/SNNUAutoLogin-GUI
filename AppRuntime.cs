@@ -103,12 +103,13 @@ public sealed class AppRuntime : IAsyncDisposable
 
         Profiles = new ConnectionProfileResolver(Store, Access, Ports);
 
-        Coordinator = new LoginCoordinator(Store, dispatcher, Profiles, Ports, launchedAtStartup);
+        var eventDispatcher = new EventDispatcher(() => dispatcher.HasThreadAccess, action => dispatcher.TryEnqueue(() => action()));
+        Coordinator = new LoginCoordinator(Store, eventDispatcher, Profiles, Ports, launchedAtStartup);
         Coordinator.StateChanged += OnStateChanged;
         Coordinator.Log += AddLog;
 
         // 门户客户端是共用的，所以这里不让 DeviceManager 负责释放它
-        Devices = new DeviceManager(dispatcher, _portal, ownsClient: false);
+        Devices = new DeviceManager(eventDispatcher, _portal, ownsClient: false);
 
         Guard = new DeviceGuardService(
             Store,

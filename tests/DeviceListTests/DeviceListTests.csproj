@@ -21,6 +21,7 @@
     <BaseOutputPath>..\$(WdacSlot)\bin\</BaseOutputPath>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../Shared/Platform.cs" Link="Platform.cs" />
     <Compile Include="../../Services/DeviceListParser.cs" Link="DeviceListParser.cs" />
     <Compile Include="../../Services/IOnlineDevicePortal.cs" Link="IOnlineDevicePortal.cs" />
     <Compile Include="../../Services/DeviceManager.cs" Link="DeviceManager.cs" />
