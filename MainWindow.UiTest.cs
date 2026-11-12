@@ -29,7 +29,11 @@ public sealed partial class MainWindow
         sb.AppendLine($"logCard    = {RectOf(LogCard)}");
         sb.AppendLine($"ringHost   = {RectOf(RingHost)}");
         sb.AppendLine($"opBox      = {RectOf(OperatorBox)}");
-        sb.AppendLine($"ivBox      = {RectOf(IntervalBox)}");
+        sb.AppendLine($"ivBox      = {RectOf(IntervalBox)} val={IntervalBox.Value}");
+        sb.AppendLine($"guardCard  = {RectOf(DeviceGuardCard)}");
+        sb.AppendLine($"rulesCard  = {RectOf(RulesCard)}");
+        sb.AppendLine($"guardState = {RectOf(DeviceGuardStateText)}");
+        sb.AppendLine($"rulesLink  = {RectOf(RulesCurrentLinkText)}");
         sb.AppendLine($"accBox     = {RectOf(AccountBox)}");
         sb.AppendLine($"pwdBox     = {RectOf(PwdBox)}");
 

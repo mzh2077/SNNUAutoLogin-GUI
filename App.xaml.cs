@@ -49,6 +49,38 @@ public partial class App : Application
             return;
         }
 
+        // 出网探测自检：按当前设置做一次独立探测（不碰门户、不改认证状态）
+        if (Has("--probe"))
+        {
+            Diagnostics.RunProbe();
+            Exit();
+            return;
+        }
+
+        // 在线设备自检：只读取一次在线设备表，核对守卫的触发条件（只读）
+        if (Has("--devices"))
+        {
+            Diagnostics.RunDevices();
+            Exit();
+            return;
+        }
+
+        // 连接规则自检：判定当前接入方式并算出实际生效的账号与端口（只读）
+        if (Has("--rules"))
+        {
+            Diagnostics.RunRules();
+            Exit();
+            return;
+        }
+
+        // WLAN 原始探针：打印 wlanapi 原始缓冲，用于定位 SSID 偏移（只读）
+        if (Has("--wlan"))
+        {
+            Diagnostics.RunWlan();
+            Exit();
+            return;
+        }
+
         // 登录页解析自检（不联网）：确认验证码字段/图片/表单地址认得出来
         if (Has("--login-selftest"))
         {

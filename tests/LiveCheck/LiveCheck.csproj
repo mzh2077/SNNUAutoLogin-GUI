@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>LiveCheck</AssemblyName>
+    <RootNamespace>LiveCheck</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    本机绕行开关：本机启用了 WDAC（Smart App Control 信誉判定），
+    新编译的产物首次运行会被拦（0x800711C7）。
+
+    带 WdacSlot 参数构建时，本工程产物借用 StartupTests 的「路径 + 文件名」，
+    从而在本机也能执行。用法：
+        dotnet build tests/LiveCheck -c Release -p:WdacSlot=StartupTests
+        dotnet tests/StartupTests/bin/Release/net8.0-windows/StartupTests.dll
+    跑完记得重新构建一次 StartupTests，把产物还原回去。
+  -->
+  <PropertyGroup Condition="'$(WdacSlot)' != ''">
+    <AssemblyName>$(WdacSlot)</AssemblyName>
+    <BaseOutputPath>..\$(WdacSlot)\bin\</BaseOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../Services/ConnectionRules.cs" Link="ConnectionRules.cs" />
+    <Compile Include="../../Services/NetworkAccessService.cs" Link="NetworkAccessService.cs" />
+    <Compile Include="../../Services/ConnectionProfileResolver.cs" Link="ConnectionProfileResolver.cs" />
+    <Compile Include="../../Services/NetworkProbeService.cs" Link="NetworkProbeService.cs" />
+    <Compile Include="../../Services/DeviceGuardService.cs" Link="DeviceGuardService.cs" />
+    <Compile Include="../../Services/CredentialStore.cs" Link="CredentialStore.cs" />
+    <Compile Include="../../Services/DeviceListParser.cs" Link="DeviceListParser.cs" />
+    <Compile Include="../../Services/IOnlineDevicePortal.cs" Link="IOnlineDevicePortal.cs" />
+    <Compile Include="../../Services/PortalClient.cs" Link="PortalClient.cs" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+</Project>

@@ -36,8 +36,27 @@ public sealed class AppRuntime : IDisposable
     public CredentialStore Store { get; } = new();
     public ThemeColors Theme { get; }
     public LoginCoordinator Coordinator { get; }
+    public DeviceManager Devices { get; }
     public DispatcherQueue Dispatcher { get; }
     public TrayIcon? Tray { get; private set; }
+
+    /// <summary>接入方式识别（网卡类型 + SSID）。</summary>
+    public NetworkAccessService Access { get; }
+
+    /// <summary>生效档案解析（连接规则 → 账号 / 密码 / 出口）。</summary>
+    public ConnectionProfileResolver Profiles { get; }
+
+    /// <summary>门户接入端口发现者：端口由服务端分配，程序自己问门户要。</summary>
+    public PortalPortDiscovery Ports { get; }
+
+    /// <summary>独立外网探测。</summary>
+    public NetworkProbeService Probe { get; }
+
+    /// <summary>设备数守卫。</summary>
+    public DeviceGuardService Guard { get; }
+
+    /// <summary>全程序共用一个门户客户端：省 HTTP 连接池，也保证同一端口的会话是同一份。</summary>
+    private readonly PortalClient _portal = new();
 
     /// <summary>旧版本「网络加速」在系统 hosts 里留下的标记块是否还在。</summary>
     public bool HasLegacyHosts { get; private set; }
@@ -75,12 +94,34 @@ public sealed class AppRuntime : IDisposable
 
         Theme = new ThemeColors(dispatcher);
 
-        Coordinator = new LoginCoordinator(Store, dispatcher, launchedAtStartup);
+        Access = new NetworkAccessService();
+        Probe = new NetworkProbeService();
+
+        // 接入端口是门户按线路分配的，程序自己问门户要 —— 不让用户从下拉框里挑
+        Ports = new PortalPortDiscovery(_portal);
+
+        Profiles = new ConnectionProfileResolver(Store, Access, Ports);
+
+        Coordinator = new LoginCoordinator(Store, dispatcher, Profiles, Ports, launchedAtStartup);
         Coordinator.StateChanged += OnStateChanged;
         Coordinator.Log += AddLog;
 
+        // 门户客户端是共用的，所以这里不让 DeviceManager 负责释放它
+        Devices = new DeviceManager(dispatcher, _portal, ownsClient: false);
+
+        Guard = new DeviceGuardService(
+            Store,
+            _portal,
+            Probe,
+            () => Profiles.Resolve().Port,
+            () => Coordinator.RequestReauthenticate(),
+            AddLog);
+
         HasLegacyHosts = HostsCleanup.HasLegacyBlock();
         LegacyHostsEntries = HasLegacyHosts ? HostsCleanup.CountLegacyEntries() : 0;
+
+        if (!string.IsNullOrWhiteSpace(Store.LastNotice))
+            AddLog(Store.LastNotice);
 
         AddLog("程序启动");
         AddLog(Store.Settings.AutoStart && StartupManager.IsEnabled()
@@ -188,9 +229,15 @@ public sealed class AppRuntime : IDisposable
         _netWatch = new NetworkWatch(Dispatcher, () =>
         {
             AddLog("检测到网络状态变化，立即重新认证");
+            Access.Invalidate();          // 网卡换了，接入方式要重新判定
+            Ports.Invalidate();          // 线路可能变了，门户分配的端口也要重新问
+            Guard.NotifyNetworkChanged(); // 换网了，守卫顺手评估一次
             Coordinator.RequestImmediateCheck();
         });
         _netWatch.Start();
+
+        // 设备数守卫：自己一个后台循环，不占巡检的锁
+        Guard.Start();
 
         // 启动期的临时分配（XAML 解析、字体排版、图标解码）用完就没价值了。
         // 6 秒后先归还一次，25 秒后再收一次尾 —— 以前只等 20 秒，任务管理器里
@@ -323,6 +370,9 @@ public sealed class AppRuntime : IDisposable
             if (_logs.Count > MaxLogLines) _logs.RemoveRange(0, _logs.Count - MaxLogLines);
         }
 
+        // 运行日志同时落一份到临时目录，程序关掉后还能查
+        TraceLine(text);
+
         // 调用方可能在后台线程（加速服务的测速/写入都在线程池里），
         // 而日志最终会写进绑定 ListView 的 ObservableCollection —— 必须在 UI 线程触发。
         if (Dispatcher.HasThreadAccess)
@@ -336,6 +386,23 @@ public sealed class AppRuntime : IDisposable
                 try { Logged?.Invoke(text); } catch { }
             });
         }
+    }
+
+    /// <summary>
+    /// 把一行运行日志追加到临时目录的 snnu_trace.txt。
+    ///
+    /// 界面上的日志只在内存里，程序一关就没了 —— 出问题时（比如守卫为什么没触发）
+    /// 没有痕迹根本查不了。这里只写日志文案，不含任何凭据内容。
+    /// </summary>
+    internal static void TraceLine(string text)
+    {
+        try
+        {
+            System.IO.File.AppendAllText(
+                System.IO.Path.Combine(System.IO.Path.GetTempPath(), "snnu_trace.txt"),
+                $"[{DateTime.Now:HH:mm:ss.fff}] {text}\n");
+        }
+        catch { }
     }
 
     // ────────────────────────── 旧版 hosts 残留 ──────────────────────────
@@ -421,7 +488,11 @@ public sealed class AppRuntime : IDisposable
         _session?.Dispose();
         _session = null;
 
+        Guard.Dispose();
+        Probe.Dispose();
         Coordinator.Dispose();
+        Devices.Dispose();
+        _portal.Dispose();   // 门户客户端是共用的，由这里统一释放
         Theme.Dispose();
         Tray?.Dispose();
         Tray = null;

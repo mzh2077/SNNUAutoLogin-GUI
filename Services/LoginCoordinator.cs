@@ -39,6 +39,18 @@ public sealed class LoginCoordinator : IDisposable
     private TaskCompletionSource<object?>? _wake;
     private bool _startupLoginPending;
 
+    /// <summary>有守卫要求强制重新认证：下一轮不能走「已在线」的快捷路径。</summary>
+    private int _forceRelogin;
+
+    /// <summary>当前这一轮使用的接入端口（验证码要发给同一个端口的门户）。</summary>
+    private int _currentPort = 8603;
+
+    /// <summary>解析当前生效的账号 / 密码 / 端口。没有它就只会用全局默认账号。</summary>
+    private readonly IConnectionProfileResolver? _resolver;
+
+    /// <summary>门户端口发现者：接入端口是服务端分配的，程序自己问门户要。</summary>
+    private readonly IPortalPortDiscovery? _ports;
+
     public ConnState State { get; private set; } = ConnState.Idle;
 
     /// <summary>待输入的验证码图片；为空表示当前不需要验证码。</summary>
@@ -58,9 +70,30 @@ public sealed class LoginCoordinator : IDisposable
     public event Action? CaptchaChanged;
 
     public LoginCoordinator(CredentialStore store, DispatcherQueue dispatcher, bool launchedAtStartup = false)
+        : this(store, dispatcher, null, null, launchedAtStartup)
+    {
+    }
+
+    public LoginCoordinator(
+        CredentialStore store,
+        DispatcherQueue dispatcher,
+        IConnectionProfileResolver? resolver,
+        bool launchedAtStartup = false)
+        : this(store, dispatcher, resolver, null, launchedAtStartup)
+    {
+    }
+
+    public LoginCoordinator(
+        CredentialStore store,
+        DispatcherQueue dispatcher,
+        IConnectionProfileResolver? resolver,
+        IPortalPortDiscovery? ports,
+        bool launchedAtStartup = false)
     {
         _store = store;
         _dispatcher = dispatcher;
+        _resolver = resolver;
+        _ports = ports;
         _startupLoginPending = launchedAtStartup && store.Settings.AutoStart;
     }
 
@@ -95,6 +128,20 @@ public sealed class LoginCoordinator : IDisposable
     /// </summary>
     public void RequestImmediateCheck()
     {
+        Interlocked.Exchange(ref _pendingCheck, 1);
+        Volatile.Read(ref _wake)?.TrySetResult(null);
+    }
+
+    /// <summary>
+    /// 请求重新认证（设备数守卫处置完本机连接后调用）。
+    ///
+    /// 刻意做成无锁：只置一个标志位 + 唤醒等待中的循环。
+    /// 守卫那边正拿着自己的锁，如果这里去取协调器的锁就会形成「守卫等协调器、协调器等守卫」的环，
+    /// 无锁唤醒从根上避免了这种死锁。
+    /// </summary>
+    public void RequestReauthenticate()
+    {
+        Interlocked.Exchange(ref _forceRelogin, 1);
         Interlocked.Exchange(ref _pendingCheck, 1);
         Volatile.Read(ref _wake)?.TrySetResult(null);
     }
@@ -138,7 +185,7 @@ public sealed class LoginCoordinator : IDisposable
 
         if (State == ConnState.Online)
         {
-            delay = TimeSpan.FromSeconds(Math.Max(5, _store.Settings.CheckIntervalSeconds));
+            delay = TimeSpan.FromSeconds(Math.Max(4, _store.Settings.CheckIntervalSeconds));
         }
         else if (!AutoReady)
         {
@@ -188,7 +235,11 @@ public sealed class LoginCoordinator : IDisposable
             var delayTask = Task.Delay(delay, ct);
             var done = await Task.WhenAny(delayTask, tcs.Task).ConfigureAwait(false);
 
-            if (done == tcs.Task) LogLine("网络状态变化，立即重新检测");
+            if (done == tcs.Task)
+            {
+                Interlocked.Exchange(ref _pendingCheck, 0);
+                LogLine("网络状态变化，立即重新检测");
+            }
             return !ct.IsCancellationRequested;
         }
         catch (OperationCanceledException)
@@ -201,22 +252,79 @@ public sealed class LoginCoordinator : IDisposable
         }
     }
 
+    /// <summary>
+    /// 取当前生效的登录档案：命中的连接规则优先，没命中就用全局默认。
+    /// 没有注入解析器时（老构造）行为与从前完全一致。
+    /// </summary>
+    private EffectiveProfile CurrentProfile()
+    {
+        if (_resolver is not null) return _resolver.Resolve();
+
+        var s = _store.Settings;
+        return new EffectiveProfile
+        {
+            Account = s.Account ?? "",
+            Password = _store.LoadPassword(),
+            Port = PortalClient.IsKnownPort(s.DefaultPort) ? s.DefaultPort : 8603,
+            Operator = s.Operator,
+            Rule = null,
+            IsDefault = true
+        };
+    }
+
+    /// <summary>
+    /// 解析当前生效档案，并确保接入端口是最新的。
+    ///
+    /// 端口由门户分配，所以每轮巡检前都要问一次门户「我该走哪个端口」；
+    /// 发现服务内部有 30 秒缓存，不会每次都真的发请求。
+    /// </summary>
+    private async Task<EffectiveProfile> ResolveProfileAsync(CancellationToken ct)
+    {
+        if (_ports is not null)
+        {
+            try
+            {
+                var discovered = await _ports.DiscoverAsync(ct).ConfigureAwait(false);
+                if (discovered is > 0) _resolver?.SetDiscoveredPort(discovered.Value);
+            }
+            catch
+            {
+                // 读不到端口不是致命错误：继续用兜底端口
+            }
+        }
+
+        return CurrentProfile();
+    }
+
     /// <summary>一次完整巡检：查状态 → 必要时登录。返回 (是否正常, Portal 是否不可达)。</summary>
     private async Task<(bool ok, bool portalDown)> TickAsync(CancellationToken ct)
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var status = await _client.GetStatusAsync(ct).ConfigureAwait(false);
+            var profile = await ResolveProfileAsync(ct).ConfigureAwait(false);
+            int port = profile.Port;
+            Interlocked.Exchange(ref _currentPort, port);
+
+            bool force = Interlocked.Exchange(ref _forceRelogin, 0) == 1;
+
+            var status = await _client.GetStatusAsync(port, ct).ConfigureAwait(false);
             LastCheckAt = DateTime.Now;
 
-            if (status.Success)
+            if (status.Success && !force)
             {
                 _startupLoginPending = false;
                 NoteIdleReason(null);
                 if (_awaitingCaptcha) ClearCaptcha();   // 用户在浏览器里登上了，面板该收起来
                 SetState(ConnState.Online, status);
                 return (true, false);
+            }
+
+            if (force)
+            {
+                // 守卫刚把本机连接断掉了：即使状态查询还看到旧的在线会话，也按重新认证处理
+                LogLine("收到重新认证请求，正在重新登录…");
+                NoteIdleReason(null);
             }
 
             bool portalDown = status.Message.Contains("Portal", StringComparison.Ordinal)
@@ -237,8 +345,8 @@ public sealed class LoginCoordinator : IDisposable
             }
 
             // 离线：是否允许自动登录
-            var account = _store.Settings.Account;
-            var password = _store.LoadPassword();
+            var account = profile.Account;
+            var password = profile.Password;
 
             if (_suppressAuto || !AutoLoginAllowed
                 || string.IsNullOrWhiteSpace(account) || string.IsNullOrEmpty(password))
@@ -252,7 +360,10 @@ public sealed class LoginCoordinator : IDisposable
             SetState(ConnState.Connecting, status);
             LogLine("检测到未认证，正在自动登录…");
 
-            var r = await _client.LoginAsync(account, password, _store.Settings.Operator, ct).ConfigureAwait(false);
+            var r = await _client
+                .LoginAsync(port, account, password, profile.Operator, ct, force)
+                .ConfigureAwait(false);
+
             if (r.Success)
             {
                 ClearCaptcha();
@@ -296,8 +407,12 @@ public sealed class LoginCoordinator : IDisposable
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            var account = _store.Settings.Account;
-            var password = _store.LoadPassword();
+            var profile = CurrentProfile();
+            int port = profile.Port;
+            Interlocked.Exchange(ref _currentPort, port);
+
+            var account = profile.Account;
+            var password = profile.Password;
 
             if (string.IsNullOrWhiteSpace(account) || string.IsNullOrEmpty(password))
             {
@@ -308,7 +423,7 @@ public sealed class LoginCoordinator : IDisposable
             SetState(ConnState.Connecting, null);
             LogLine("正在登录…");
 
-            var r = await _client.LoginAsync(account, password, _store.Settings.Operator).ConfigureAwait(false);
+            var r = await _client.LoginAsync(port, account, password, profile.Operator).ConfigureAwait(false);
             if (r.Success)
             {
                 _startupLoginPending = false;
@@ -343,7 +458,9 @@ public sealed class LoginCoordinator : IDisposable
 
         try
         {
-            PendingCaptcha = await _client.FetchCaptchaAsync(ct).ConfigureAwait(false);
+            PendingCaptcha = await _client
+                .FetchCaptchaAsync(Volatile.Read(ref _currentPort), ct)
+                .ConfigureAwait(false);
         }
         catch
         {
@@ -364,8 +481,12 @@ public sealed class LoginCoordinator : IDisposable
         if (string.IsNullOrWhiteSpace(code))
             return LoginResult.Captcha("请输入验证码");
 
-        var account = _store.Settings.Account;
-        var password = _store.LoadPassword();
+        var profile = CurrentProfile();
+        int port = profile.Port;
+        Interlocked.Exchange(ref _currentPort, port);
+
+        var account = profile.Account;
+        var password = profile.Password;
 
         if (string.IsNullOrWhiteSpace(account) || string.IsNullOrEmpty(password))
             return LoginResult.Fail("请先填写账号与密码");
@@ -377,11 +498,12 @@ public sealed class LoginCoordinator : IDisposable
             LogLine("正在提交验证码…");
 
             var r = await _client
-                .LoginAsync(account, password, _store.Settings.Operator, code.Trim())
+                .LoginAsync(port, account, password, profile.Operator, code.Trim())
                 .ConfigureAwait(false);
 
             if (r.Success)
             {
+                _startupLoginPending = false;
                 _failures = 0;
                 ClearCaptcha();
                 SetState(ConnState.Online, r);
@@ -393,7 +515,7 @@ public sealed class LoginCoordinator : IDisposable
             {
                 // 码错/过期：换一张，继续等输入
                 _awaitingCaptcha = true;
-                try { PendingCaptcha = await _client.FetchCaptchaAsync().ConfigureAwait(false); }
+                try { PendingCaptcha = await _client.FetchCaptchaAsync(Volatile.Read(ref _currentPort)).ConfigureAwait(false); }
                 catch { PendingCaptcha = null; }
 
                 SetState(ConnState.CaptchaRequired, r);
@@ -425,18 +547,26 @@ public sealed class LoginCoordinator : IDisposable
     /// <summary>换一张验证码。</summary>
     public async Task RefreshCaptchaAsync()
     {
-        if (!_awaitingCaptcha && State != ConnState.CaptchaRequired) return;
-
+        await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            PendingCaptcha = await _client.FetchCaptchaAsync().ConfigureAwait(false);
-        }
-        catch
-        {
-            PendingCaptcha = null;
-        }
+            if (!_awaitingCaptcha) return;
 
-        PushCaptcha();
+            try
+            {
+                PendingCaptcha = await _client.FetchCaptchaAsync(Volatile.Read(ref _currentPort)).ConfigureAwait(false);
+            }
+            catch
+            {
+                PendingCaptcha = null;
+            }
+
+            PushCaptcha();
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     private void ClearCaptcha()

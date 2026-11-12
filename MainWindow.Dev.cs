@@ -26,6 +26,8 @@ public sealed partial class MainWindow
         // 自检：把一张假验证码塞进来，检查面板布局与交互（配合 --snapshot 出图）
         if (argv.AsSpan().Contains("--captcha-demo")) Guard(RunCaptchaDemoAsync);
 
+        if (argv.AsSpan().Contains("--module-probe")) Guard(RunModuleProbeAsync);
+
         if (argv.AsSpan().Contains("--snapshot")) Guard(RunSnapshotAsync);
         else if (argv.AsSpan().Contains("--ui-test")) Guard(RunUiSelfTestAsync);
         else if (argv.AsSpan().Contains("--motion")) Guard(RunMotionTestAsync);
@@ -434,7 +436,7 @@ public sealed partial class MainWindow
                 $"logCard    = {LogCard.ActualWidth} x {LogCard.ActualHeight}\n" +
                 $"rtb        = {rtb.PixelWidth} x {rtb.PixelHeight}\n" +
                 $"operatorBox= {RectOf(OperatorBox)} sel={OperatorBox.SelectedIndex}\n" +
-                $"interval   = {RectOf(IntervalBox)} sel={IntervalBox.SelectedIndex}\n" +
+                $"interval   = {RectOf(IntervalBox)} val={IntervalBox.Value}\n" +
                 $"toggle     = {RectOf(AutoStartSwitch)} minW={AutoStartSwitch.MinWidth} pad={AutoStartSwitch.Padding}\n" +
                 $"opField    = {_operator} ({(int)_operator})\n" +
                 $"settingsOp = {_rt.Store.Settings.Operator} ({(int)_rt.Store.Settings.Operator})\n" +

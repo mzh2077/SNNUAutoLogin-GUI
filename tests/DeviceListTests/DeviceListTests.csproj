@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!--
+    本机绕行开关：本机启用了 WDAC（Smart App Control 信誉判定），
+    新编译的产物首次运行会被拦（0x800711C7）。
+
+    带 WdacSlot 参数构建时，本工程产物借用 StartupTests 的「路径 + 文件名」，
+    从而在本机也能执行。用法：
+        dotnet build tests/DeviceListTests -c Release -p:WdacSlot=StartupTests
+        dotnet tests/StartupTests/bin/Release/net8.0-windows/StartupTests.dll
+    跑完记得重新构建一次 StartupTests，把产物还原回去。
+  -->
+  <PropertyGroup Condition="'$(WdacSlot)' != ''">
+    <AssemblyName>$(WdacSlot)</AssemblyName>
+    <BaseOutputPath>..\$(WdacSlot)\bin\</BaseOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Services/DeviceListParser.cs" Link="DeviceListParser.cs" />
+    <Compile Include="../../Services/IOnlineDevicePortal.cs" Link="IOnlineDevicePortal.cs" />
+    <Compile Include="../../Services/DeviceManager.cs" Link="DeviceManager.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- 真实门户页面样本：解析测试要拿它当输入 -->
+    <None Include="fixture_devices.html" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
