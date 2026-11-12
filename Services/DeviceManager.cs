@@ -56,7 +56,31 @@ public sealed class DeviceManager : IDisposable
     public int Port { get; private set; } = 8603;
 
     /// <summary>在线控制页地址；下线时要用它拼 type=dm 的地址。</summary>
-    private string? _frameUrl;
+    private sealed record Snapshot(int Port, IReadOnlyList<OnlineDevice> Devices, string? FrameUrl);
+    private readonly object _snapshotGate = new();
+    private Snapshot? _snapshot;
+    private int _networkVersion;
+    private bool _canOperate;
+    private int _requestedPort = 8603;
+
+    public void Invalidate()
+    {
+        lock (_snapshotGate)
+        {
+            InvalidateSnapshot();
+        }
+        RaiseChanged();
+    }
+
+    private void InvalidateSnapshot()
+    {
+        _networkVersion++;
+        _snapshot = null;
+        _canOperate = false;
+        Devices = Array.Empty<OnlineDevice>();
+        State = DeviceListState.Idle;
+        Error = "";
+    }
 
     /// <summary>列表变化（内容、状态或错误有变动）。</summary>
     public event Action? Changed;
@@ -82,42 +106,39 @@ public sealed class DeviceManager : IDisposable
     public async Task RefreshAsync(int port = 0, CancellationToken ct = default)
     {
         if (_disposed) return;
+        int version;
+        bool portChanged;
+        lock (_snapshotGate)
+        {
+            portChanged = port > 0 && port != _requestedPort;
+            if (portChanged)
+            {
+                _requestedPort = port;
+                InvalidateSnapshot();
+            }
+            port = _requestedPort;
+            version = _networkVersion;
+        }
+        if (portChanged) RaiseChanged();
 
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (port > 0) Port = port;
-
-            SetState(DeviceListState.Loading, "");
-
-            var result = await _client.GetOnlineDevicesAsync(Port, ct).ConfigureAwait(false);
-
-            if (!result.Success)
+            lock (_snapshotGate)
             {
-                SetState(DeviceListState.Failed, result.Message);
-                return;
+                if (version != _networkVersion) return;
+                _canOperate = false;
             }
-
-            _frameUrl = result.FrameUrl;
-
-            // 把端口记到每台设备上：同一账号可以在多个接入端口上同时在线
-            var devices = new List<OnlineDevice>(result.Devices.Count);
-            foreach (var d in result.Devices)
-            {
-                d.Ports.Add(Port);
-                devices.Add(d);
-            }
-
-            Devices = devices;
-            SetState(DeviceListState.Ready, "");
+            SetState(DeviceListState.Loading, "", version);
+            await ReloadAsync(port, version, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
-            SetState(DeviceListState.Idle, "");
+            SetState(DeviceListState.Idle, "", version);
         }
         catch (Exception ex)
         {
-            SetState(DeviceListState.Failed, ex.Message);
+            SetState(DeviceListState.Failed, ex.Message, version);
         }
         finally
         {
@@ -132,10 +153,19 @@ public sealed class DeviceManager : IDisposable
     public async Task<bool> TakeOfflineAsync(OnlineDevice device, CancellationToken ct = default)
     {
         if (_disposed || device is null) return false;
+        int version = Volatile.Read(ref _networkVersion);
 
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            Snapshot snapshot;
+            lock (_snapshotGate)
+            {
+                if (version != _networkVersion || !_canOperate || _snapshot is null
+                    || !System.Linq.Enumerable.Contains(_snapshot.Devices, device)) return false;
+                snapshot = _snapshot;
+                _canOperate = false;
+            }
             device.Status = "下线中";
             RaiseChanged();
 
@@ -145,28 +175,30 @@ public sealed class DeviceManager : IDisposable
             if (device.IsCurrent || !device.CanForceOffline)
             {
                 // 本机这条连接：走 logoff 断开
-                ok = await _client.DisconnectAsync(Port, ct).ConfigureAwait(false);
+                if (version != Volatile.Read(ref _networkVersion)) return false;
+                ok = await _client.DisconnectAsync(snapshot.Port, ct).ConfigureAwait(false);
                 message = ok ? "已断开本机连接" : "断开失败";
             }
             else
             {
-                if (_frameUrl is null)
+                if (snapshot.FrameUrl is null)
                 {
                     device.Status = "在线";
-                    SetState(DeviceListState.Failed, "在线控制页地址失效，请刷新列表");
+                    SetState(DeviceListState.Failed, "在线控制页地址失效，请刷新列表", version);
                     return false;
                 }
 
-                ok = await _client.ForceOfflineAsync(_frameUrl, device.SessionId!, ct).ConfigureAwait(false);
+                if (version != Volatile.Read(ref _networkVersion)) return false;
+                ok = await _client.ForceOfflineAsync(snapshot.FrameUrl, device.SessionId!, ct).ConfigureAwait(false);
                 message = ok ? $"{device.DisplayName} 已下线" : "下线失败";
             }
 
             device.Status = ok ? "已下线" : "在线";
 
             // 下线后端口的在线控制页地址会变，重新拉一次列表
-            await ReloadAsync(ct).ConfigureAwait(false);
+            await ReloadAsync(snapshot.Port, version, ct).ConfigureAwait(false);
 
-            if (!ok) SetState(DeviceListState.Failed, message);
+            if (!ok) SetState(DeviceListState.Failed, message, version);
 
             return ok;
         }
@@ -179,7 +211,7 @@ public sealed class DeviceManager : IDisposable
         catch (Exception ex)
         {
             device.Status = "在线";
-            SetState(DeviceListState.Failed, ex.Message);
+            SetState(DeviceListState.Failed, ex.Message, version);
             return false;
         }
         finally
@@ -198,33 +230,42 @@ public sealed class DeviceManager : IDisposable
     public async Task<bool> DisconnectSelfAsync(CancellationToken ct = default)
     {
         if (_disposed) return false;
+        int version = Volatile.Read(ref _networkVersion);
 
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            SetState(DeviceListState.Loading, "");
+            int port;
+            lock (_snapshotGate)
+            {
+                if (version != _networkVersion || !_canOperate || _snapshot is null) return false;
+                port = _snapshot.Port;
+                _canOperate = false;
+            }
+            SetState(DeviceListState.Loading, "", version);
 
-            var ok = await _client.DisconnectAsync(Port, ct).ConfigureAwait(false);
+            if (version != Volatile.Read(ref _networkVersion)) return false;
+            var ok = await _client.DisconnectAsync(port, ct).ConfigureAwait(false);
 
             if (!ok)
             {
-                SetState(DeviceListState.Failed, "断开失败，请检查是否仍在校园网内");
+                SetState(DeviceListState.Failed, "断开失败，请检查是否仍在校园网内", version);
                 return false;
             }
 
             // 断开后本机已不在在线列表里；重新拉一次让界面反映真实状态
-            await ReloadAsync(ct).ConfigureAwait(false);
+            await ReloadAsync(port, version, ct).ConfigureAwait(false);
 
             return true;
         }
         catch (OperationCanceledException)
         {
-            SetState(DeviceListState.Idle, "");
+            SetState(DeviceListState.Idle, "", version);
             return false;
         }
         catch (Exception ex)
         {
-            SetState(DeviceListState.Failed, ex.Message);
+            SetState(DeviceListState.Failed, ex.Message, version);
             return false;
         }
         finally
@@ -234,32 +275,49 @@ public sealed class DeviceManager : IDisposable
     }
 
     /// <summary>重新拉列表（不释放 gate，调用方已经持有）。</summary>
-    private async Task ReloadAsync(CancellationToken ct)
+    private async Task ReloadAsync(int port, int version, CancellationToken ct)
     {
         try
         {
-            var result = await _client.GetOnlineDevicesAsync(Port, ct).ConfigureAwait(false);
-            if (!result.Success) return;
-
-            _frameUrl = result.FrameUrl;
+            if (version != Volatile.Read(ref _networkVersion)) return;
+            var result = await _client.GetOnlineDevicesAsync(port, ct).ConfigureAwait(false);
+            if (!result.Success)
+            {
+                SetState(DeviceListState.Failed, result.Message, version);
+                return;
+            }
 
             var devices = new List<OnlineDevice>(result.Devices.Count);
             foreach (var d in result.Devices)
             {
-                d.Ports.Add(Port);
+                d.Ports.Add(port);
                 devices.Add(d);
             }
 
-            Devices = devices;
-            SetState(DeviceListState.Ready, "");
+            lock (_snapshotGate)
+            {
+                if (version != _networkVersion) return;
+                _snapshot = new Snapshot(port, devices, result.FrameUrl);
+                _canOperate = true;
+                Port = port;
+                Devices = devices;
+                State = DeviceListState.Ready;
+                Error = "";
+            }
+            RaiseChanged();
         }
-        catch { /* 刷新失败保留原列表 */ }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) { SetState(DeviceListState.Failed, ex.Message, version); }
     }
 
-    private void SetState(DeviceListState state, string error)
+    private void SetState(DeviceListState state, string error, int version)
     {
-        State = state;
-        Error = error;
+        lock (_snapshotGate)
+        {
+            if (version != _networkVersion) return;
+            State = state;
+            Error = error;
+        }
         RaiseChanged();
     }
 

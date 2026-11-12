@@ -7,6 +7,7 @@ namespace SNNUAutoLogin.Services
         public static readonly int[] KnownPorts = { 8603, 8601, 8602, 8605, 8609, 8604, 8606, 8607, 8608, 8610, 8600 };
 
         public static bool IsKnownPort(int port) => Array.IndexOf(KnownPorts, port) >= 0;
+        public Task<int?> DiscoverAssignedPortAsync(CancellationToken ct) => Task.FromResult<int?>(null);
     }
 
     /// <summary>运营商出口（与主程序同名同值）。</summary>

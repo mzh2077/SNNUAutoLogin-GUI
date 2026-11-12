@@ -203,6 +203,7 @@ using var dm = new DeviceManager(new Microsoft.UI.Dispatching.DispatcherQueue(),
 
 // 5.1 成功断开
 fake.DisconnectResult = true;
+await dm.RefreshAsync();
 var ok = await dm.DisconnectSelfAsync();
 
 Check("断开成功返回 true", ok);
@@ -215,6 +216,7 @@ Check("断开后重新拉了一次列表", fake.GetCalls >= 1, $"拉列表 {fake
 var fake2 = new FakePortal { DisconnectResult = false };
 using var dm2 = new DeviceManager(new Microsoft.UI.Dispatching.DispatcherQueue(), fake2);
 
+await dm2.RefreshAsync();
 var disconnectFailed = await dm2.DisconnectSelfAsync();
 
 Check("断开失败返回 false", !disconnectFailed);
@@ -245,6 +247,13 @@ Check("拉取成功后状态是 Ready", dm3.State == DeviceListState.Ready, dm3.
 Check("拉取成功后清掉错误文案", dm3.Error.Length == 0, dm3.Error);
 Check("列表里有 2 台设备", dm3.Devices.Count == 2, $"实际 {dm3.Devices.Count}");
 Check("设备记录了接入端口", dm3.Devices.All(d => d.Ports.Contains(8603)));
+fake3.DevicesResult = DeviceListResult.Fail("刷新失败");
+await dm3.RefreshAsync();
+Check("同一网络刷新失败仍可查看旧设备", dm3.Devices.Count == 2);
+Check("刷新失败后旧设备不可操作", !await dm3.TakeOfflineAsync(otherDevice) && fake3.ForceOfflineCalls == 0);
+dm3.Invalidate();
+await dm3.RefreshAsync(8605);
+Check("换网后刷新失败不显示旧设备", dm3.Devices.Count == 0);
 
 // 5.5 行级「点击下线」走强制下线，不走 logoff
 var fake4 = new FakePortal

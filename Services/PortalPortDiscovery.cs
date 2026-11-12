@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -20,15 +21,21 @@ public sealed class PortalPortDiscovery : IPortalPortDiscovery, IDisposable
     /// <summary>发现结果的缓存时长。门户的分配在一次会话内基本不变，缓存 30 秒足够。</summary>
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(30);
 
-    private readonly PortalClient _client;
+    private readonly Func<CancellationToken, Task<int?>> _discover;
     private readonly SemaphoreSlim _gate = new(1, 1);
-
+    private readonly object _cacheGate = new();
     private int _port;
-    private DateTime _foundAt = DateTime.MinValue;
+    private long _foundAt;
+    private int _networkVersion;
 
     public PortalPortDiscovery(PortalClient client)
     {
-        _client = client;
+        _discover = client.DiscoverAssignedPortAsync;
+    }
+
+    internal PortalPortDiscovery(Func<CancellationToken, Task<int?>> discover)
+    {
+        _discover = discover;
     }
 
     /// <summary>
@@ -38,26 +45,32 @@ public sealed class PortalPortDiscovery : IPortalPortDiscovery, IDisposable
     /// </summary>
     public async Task<int?> DiscoverAsync(CancellationToken ct = default)
     {
-        // 缓存命中就直接返回，省掉一次网络往返
-        if (DateTime.Now - _foundAt < CacheTtl && _port > 0)
-            return _port;
-
+        ct.ThrowIfCancellationRequested();
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            // 双重检查：等锁期间可能已经有别的线程拿到了
-            if (DateTime.Now - _foundAt < CacheTtl && _port > 0)
-                return _port;
-
-            var port = await _client.DiscoverAssignedPortAsync(ct).ConfigureAwait(false);
-            if (port is > 0)
+            int version;
+            lock (_cacheGate)
             {
-                _port = port.Value;
-                _foundAt = DateTime.Now;
+                if (_port > 0 && Stopwatch.GetElapsedTime(_foundAt) < CacheTtl)
+                    return _port;
+                version = _networkVersion;
             }
 
-            return port;
+            var port = await _discover(ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            lock (_cacheGate)
+            {
+                if (version != _networkVersion) return null;
+                if (port is > 0)
+                {
+                    _port = port.Value;
+                    _foundAt = Stopwatch.GetTimestamp();
+                }
+                return port;
+            }
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch
         {
             return null;
@@ -71,11 +84,18 @@ public sealed class PortalPortDiscovery : IPortalPortDiscovery, IDisposable
     /// <summary>门户换了线路或重连后，缓存要作废。</summary>
     public void Invalidate()
     {
-        _foundAt = DateTime.MinValue;
+        lock (_cacheGate)
+        {
+            _networkVersion++;
+            _port = 0;
+        }
     }
 
     /// <summary>当前已知的端口（没发现过就是 null）。</summary>
-    public int? CurrentPort => _port > 0 ? _port : null;
+    public int? CurrentPort
+    {
+        get { lock (_cacheGate) return _port > 0 ? _port : null; }
+    }
 
     public void Dispose() => _gate.Dispose();
 }

@@ -232,6 +232,13 @@ try
     Check(concurrentPortal.ListCalls == 2, "多次触发只补做一次评估");
     Check(concurrentPortal.DisconnectCalls == 1, "旧网络评估不会重复断开");
 
+    var oldPort = new TaskCompletionSource<int?>(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var discovery = new PortalPortDiscovery(_ => oldPort.Task);
+    var discovering = discovery.DiscoverAsync();
+    discovery.Invalidate();
+    oldPort.SetResult(8605);
+    Check(await discovering is null && discovery.CurrentPort is null, "换网后的旧端口响应被丢弃");
+
     // ══════════════ 接入方式判定（真实网卡） ══════════════
     Console.WriteLine("\n接入方式判定");
 

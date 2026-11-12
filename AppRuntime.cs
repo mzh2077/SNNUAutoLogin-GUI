@@ -231,6 +231,7 @@ public sealed class AppRuntime : IDisposable
             AddLog("检测到网络状态变化，立即重新认证");
             Access.Invalidate();          // 网卡换了，接入方式要重新判定
             Ports.Invalidate();          // 线路可能变了，门户分配的端口也要重新问
+            Devices.Invalidate();
             Guard.NotifyNetworkChanged(); // 换网了，守卫顺手评估一次
             Coordinator.RequestImmediateCheck();
         });
@@ -327,6 +328,10 @@ public sealed class AppRuntime : IDisposable
         // 睡眠会丢掉执行状态请求，醒来先重新申领，再立刻补一次认证
         _stayAwake.Reassert();
         AddLog("系统从睡眠恢复，重新检测认证状态");
+        Access.Invalidate();
+        Ports.Invalidate();
+        Devices.Invalidate();
+        Guard.NotifyNetworkChanged();
         Coordinator.RequestImmediateCheck();
     }
 

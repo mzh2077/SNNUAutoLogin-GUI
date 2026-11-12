@@ -26,6 +26,7 @@
     <Compile Include="../../Services/ConnectionRules.cs" Link="ConnectionRules.cs" />
     <Compile Include="../../Services/NetworkAccessService.cs" Link="NetworkAccessService.cs" />
     <Compile Include="../../Services/ConnectionProfileResolver.cs" Link="ConnectionProfileResolver.cs" />
+    <Compile Include="../../Services/PortalPortDiscovery.cs" Link="PortalPortDiscovery.cs" />
     <Compile Include="../../Services/NetworkProbeService.cs" Link="NetworkProbeService.cs" />
     <Compile Include="../../Services/DeviceGuardService.cs" Link="DeviceGuardService.cs" />
     <Compile Include="../../Services/CredentialStore.cs" Link="CredentialStore.cs" />
