@@ -73,11 +73,15 @@ namespace SNNUAutoLogin.Services
         public int DisconnectPort { get; private set; } = -1;
         public int DisconnectCalls { get; set; }
         public int ForceOfflineCalls { get; private set; }
+        public Func<Task>? BeforeList { get; set; }
+        public int ListCalls { get; private set; }
 
-        public Task<DeviceListResult> GetOnlineDevicesAsync(int port, CancellationToken ct = default)
+        public async Task<DeviceListResult> GetOnlineDevicesAsync(int port, CancellationToken ct = default)
         {
+            ListCalls++;
             ListPort = port;
-            if (!ListSucceeds) return Task.FromResult(DeviceListResult.Fail(ListMessage));
+            if (BeforeList is not null) await BeforeList().WaitAsync(ct);
+            if (!ListSucceeds) return DeviceListResult.Fail(ListMessage);
 
             var devices = new List<OnlineDevice>();
             for (int i = 0; i < DeviceCount; i++)
@@ -92,7 +96,7 @@ namespace SNNUAutoLogin.Services
                 });
             }
 
-            return Task.FromResult(DeviceListResult.Ok(devices, "http://example/frame"));
+            return DeviceListResult.Ok(devices, "http://example/frame");
         }
 
         public Task<bool> ForceOfflineAsync(string frameUrl, string sessionId, CancellationToken ct = default)

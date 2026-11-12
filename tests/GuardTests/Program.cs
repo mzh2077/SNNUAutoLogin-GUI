@@ -211,6 +211,27 @@ try
     Check(probe.Calls == 0, "设备列表获取失败时不探测");
     guard2.Dispose();
 
+    var concurrentPortal = new FakePortal { DeviceCount = 3 };
+    using var concurrentGuard = new DeviceGuardService(
+        guardStore, concurrentPortal, probe, () => effectivePort, () => { }, _ => { });
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    concurrentPortal.BeforeList = () =>
+    {
+        entered.TrySetResult();
+        return release.Task;
+    };
+    var evaluation = concurrentGuard.EvaluateAsync();
+    await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    concurrentGuard.NotifyNetworkChanged();
+    concurrentGuard.NotifyNetworkChanged();
+    var pending = concurrentGuard.EvaluateAsync();
+    Check(concurrentPortal.ListCalls == 1, "换网期间不并发请求设备列表");
+    release.SetResult();
+    await Task.WhenAll(evaluation, pending).WaitAsync(TimeSpan.FromSeconds(5));
+    Check(concurrentPortal.ListCalls == 2, "多次触发只补做一次评估");
+    Check(concurrentPortal.DisconnectCalls == 1, "旧网络评估不会重复断开");
+
     // ══════════════ 接入方式判定（真实网卡） ══════════════
     Console.WriteLine("\n接入方式判定");
 

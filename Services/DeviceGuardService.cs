@@ -93,6 +93,10 @@ public sealed class DeviceGuardService : IDisposable
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _stateGate = new();
+    private readonly object _evaluationGate = new();
+    private Task _evaluation = Task.CompletedTask;
+    private bool _evaluationPending;
+    private int _networkVersion;
 
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -187,7 +191,11 @@ public sealed class DeviceGuardService : IDisposable
     }
 
     /// <summary>网络状态变化时触发即时评估。</summary>
-    public void NotifyNetworkChanged() => _ = Task.Run(EvaluateAsync);
+    public void NotifyNetworkChanged()
+    {
+        Interlocked.Increment(ref _networkVersion);
+        _ = EvaluateAsync();
+    }
 
     private async Task LoopAsync(CancellationToken ct)
     {
@@ -221,7 +229,44 @@ public sealed class DeviceGuardService : IDisposable
     /// <summary>
     /// 一轮评估：取设备数 → 判断阈值 → 探测 → 必要时处置。
     /// </summary>
-    public async Task EvaluateAsync()
+    public Task EvaluateAsync()
+    {
+        lock (_evaluationGate)
+        {
+            if (_disposed) return Task.CompletedTask;
+            _evaluationPending = true;
+            if (_evaluation.IsCompleted)
+                _evaluation = Task.Run(RunEvaluationsAsync);
+            return _evaluation;
+        }
+    }
+
+    private async Task RunEvaluationsAsync()
+    {
+        while (true)
+        {
+            lock (_evaluationGate)
+            {
+                if (!_evaluationPending || _disposed)
+                {
+                    _evaluation = Task.CompletedTask;
+                    return;
+                }
+                _evaluationPending = false;
+            }
+
+            try
+            {
+                await EvaluateOnceAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Write($"守卫评估异常：{ex.Message}");
+            }
+        }
+    }
+
+    private async Task EvaluateOnceAsync()
     {
         if (_disposed) return;
 
@@ -242,6 +287,7 @@ public sealed class DeviceGuardService : IDisposable
             return;
         }
 
+        int networkVersion = Volatile.Read(ref _networkVersion);
         int port = _effectivePort();
         int threshold = Threshold;
 
@@ -259,6 +305,7 @@ public sealed class DeviceGuardService : IDisposable
             return;
         }
 
+        if (networkVersion != Volatile.Read(ref _networkVersion)) return;
         if (!list.Success)
         {
             Write($"获取在线设备失败，本轮守卫跳过：{list.Message}");
@@ -288,7 +335,7 @@ public sealed class DeviceGuardService : IDisposable
 
         Write($"出网连通性检测失败：{probe.Detail}");
 
-        await DisposeAndReauthenticateAsync(count, port).ConfigureAwait(false);
+        await DisposeAndReauthenticateAsync(count, port, networkVersion: networkVersion).ConfigureAwait(false);
     }
 
     /// <summary>「立即检测一次」：只探测，不处置。</summary>
@@ -322,12 +369,18 @@ public sealed class DeviceGuardService : IDisposable
     }
 
     /// <summary>断开本机连接并唤醒重新认证。</summary>
-    private async Task<bool> DisposeAndReauthenticateAsync(int count, int port, bool manual = false)
+    private async Task<bool> DisposeAndReauthenticateAsync(int count, int port, bool manual = false, int networkVersion = 0)
     {
         // 守卫只持自己的锁；这里调用的门户请求与唤醒都是无锁的
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
+            if (_disposed) return false;
+            if (!manual && (!_store.Settings.DeviceGuardEnabled || IsCoolingDown()
+                || CurrentState() == DeviceGuardState.Stopped || count <= Threshold
+                || networkVersion != Volatile.Read(ref _networkVersion) || port != _effectivePort()))
+                return false;
+
             SetState(DeviceGuardState.Disposing, $"正在断开本机连接（端口 {port}）");
 
             bool disconnected = false;
