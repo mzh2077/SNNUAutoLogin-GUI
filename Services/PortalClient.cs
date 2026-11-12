@@ -650,7 +650,9 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
         if (string.IsNullOrWhiteSpace(url)) return null;
         url = url.Trim();
 
-        if (Uri.TryCreate(url, UriKind.Absolute, out var abs)) return abs.ToString();
+        if (!url.StartsWith("/", StringComparison.Ordinal)
+            && Uri.TryCreate(url, UriKind.Absolute, out var abs))
+            return abs.Scheme is "http" or "https" ? abs.ToString() : null;
         if (baseUri is null) return url;
 
         return Uri.TryCreate(baseUri, url, out var rel) ? rel.ToString() : url;
