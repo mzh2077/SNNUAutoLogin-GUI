@@ -749,11 +749,10 @@
                                 <NumberBox
                                     x:Name="DeviceGuardThresholdBox"
                                     Grid.Column="1"
-                                    Width="120"
+                                    Style="{StaticResource RowNumberBoxStyle}"
                                     Minimum="1"
                                     Maximum="50"
-                                    SmallChange="1"
-                                    SpinButtonPlacementMode="Compact" />
+                                    SmallChange="1" />
                             </Grid>
 
                             <Border Style="{StaticResource DividerStyle}" />
