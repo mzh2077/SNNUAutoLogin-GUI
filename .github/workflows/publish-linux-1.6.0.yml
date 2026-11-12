@@ -1,0 +1,31 @@
+name: Publish Linux 1.6.0 prerelease
+on:
+  push:
+    branches: [release/linux-1.6.0]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: a9b152f6ad7a1ee67d305fbd0b12ae22a19cb866
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet run --project tests/LinuxCoreTests -c Release
+      - run: bash Linux/packaging/build.sh 1.6.0
+      - name: Publish verified Linux assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd artifacts/linux && sha256sum -c SHA256SUMS.txt)
+          gh release create linux-1.6.0 \
+            artifacts/linux/snnuautologin_1.6.0_amd64.deb \
+            artifacts/linux/snnuautologin-desktop_1.6.0_amd64.deb \
+            artifacts/linux/SNNUAutoLogin-1.6.0-linux-x64.tar.gz \
+            artifacts/linux/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target a9b152f6ad7a1ee67d305fbd0b12ae22a19cb866 --prerelease --latest=false \
+            --title 'Linux 1.6.0 候选版' \
+            --notes '面向 Ubuntu 24.04 和 Debian 13 的 Linux x64 候选版。包含桌面客户端、命令行和用户级后台服务。校园网实机验收待完成。安装桌面包前请先安装同版本的命令行与服务包。'
