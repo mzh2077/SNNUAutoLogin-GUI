@@ -348,11 +348,11 @@ public sealed partial class MainWindow : Window
     {
         Trace($"close-requested exiting={_rt.Exiting} tray={(_rt.Store.Settings.MinimizeToTray ? 1 : 0)}");
 
-        if (_rt.Exiting) return false;
-        if (!_rt.Store.Settings.MinimizeToTray) return false;
-        if (_rt.Tray?.IsVisible != true) return false;
-
-        HideToTray();
+        if (_rt.Exiting) return !_rt.ShutdownComplete;
+        if (_rt.Store.Settings.MinimizeToTray && _rt.Tray?.IsVisible == true)
+            HideToTray();
+        else
+            _rt.Exit();
         return true;
     }
 
@@ -1574,6 +1574,7 @@ public sealed partial class MainWindow : Window
     /// <summary>把界面上的值写回运行时配置（关窗/退出前必须先调）。</summary>
     public void PersistToStore()
     {
+        if (_rt.Exiting) return;
         if (!_uiBuilt) return;
 
         var s = _rt.Store.Settings;

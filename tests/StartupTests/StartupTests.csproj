@@ -8,5 +8,6 @@
   <ItemGroup>
     <Compile Include="../../Services/StartupManager.cs" Link="StartupManager.cs" />
     <Compile Include="../../Services/LoginCoordinator.cs" Link="LoginCoordinator.cs" />
+    <Compile Include="../../Services/OperationLifetime.cs" Link="OperationLifetime.cs" />
   </ItemGroup>
 </Project>

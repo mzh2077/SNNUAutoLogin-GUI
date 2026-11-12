@@ -18,7 +18,7 @@ public sealed class LogEntry
 /// 窗口只是一个可随时拆卸的视图 —— 关窗到托盘时把 XAML 内容树整个丢掉，
 /// 工作集能从 ~160MB 掉到 11MB 左右，召回来再重新构建。
 /// </summary>
-public sealed class AppRuntime : IDisposable
+public sealed class AppRuntime : IAsyncDisposable
 {
     private const int MaxLogLines = 60;
 
@@ -64,6 +64,7 @@ public sealed class AppRuntime : IDisposable
     public ConnState State { get; private set; } = ConnState.Idle;
     public LoginResult? LastResult { get; private set; }
     public bool Exiting { get; private set; }
+    internal bool ShutdownComplete { get; private set; }
 
     /// <summary>状态中文标题（托盘提示与窗口共用）。</summary>
     public string StateLabel { get; private set; } = "待机";
@@ -222,6 +223,7 @@ public sealed class AppRuntime : IDisposable
 
     public void Start()
     {
+        if (Exiting || _disposed) return;
         Coordinator.Start();
         StartSessionWatch();
 
@@ -231,6 +233,7 @@ public sealed class AppRuntime : IDisposable
             AddLog("检测到网络状态变化，立即重新认证");
             Access.Invalidate();          // 网卡换了，接入方式要重新判定
             Ports.Invalidate();          // 线路可能变了，门户分配的端口也要重新问
+            Devices.Invalidate();
             Guard.NotifyNetworkChanged(); // 换网了，守卫顺手评估一次
             Coordinator.RequestImmediateCheck();
         });
@@ -327,6 +330,10 @@ public sealed class AppRuntime : IDisposable
         // 睡眠会丢掉执行状态请求，醒来先重新申领，再立刻补一次认证
         _stayAwake.Reassert();
         AddLog("系统从睡眠恢复，重新检测认证状态");
+        Access.Invalidate();
+        Ports.Invalidate();
+        Devices.Invalidate();
+        Guard.NotifyNetworkChanged();
         Coordinator.RequestImmediateCheck();
     }
 
@@ -459,24 +466,27 @@ public sealed class AppRuntime : IDisposable
         if (ReferenceEquals(_window, window)) _window = null;
     }
 
-    public void Exit()
+    public async void Exit()
     {
         if (Exiting) return;
-        Exiting = true;
-
         _window?.PersistToStore();
-
-        Tray?.Dispose();
-        Tray = null;
-
-        // 退出前把「不睡眠」的申领撤掉。这里只撤销请求，不做整体 Dispose：
-        // 关窗回调还会再走一次 PersistToStore，把已经释放的等待句柄重新 Set 会抛异常。
-        _stayAwake.Set(false);
-
-        try { Application.Current.Exit(); } catch { }
+        Exiting = true;
+        try
+        {
+            await DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            AddLog($"退出清理失败：{ex.Message}");
+        }
+        finally
+        {
+            ShutdownComplete = true;
+            Application.Current.Exit();
+        }
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
         _disposed = true;
@@ -484,17 +494,24 @@ public sealed class AppRuntime : IDisposable
         _netWatch?.Dispose();
         _netWatch = null;
 
-        _stayAwake.Dispose();
         _session?.Dispose();
         _session = null;
-
-        Guard.Dispose();
-        Probe.Dispose();
-        Coordinator.Dispose();
-        Devices.Dispose();
-        _portal.Dispose();   // 门户客户端是共用的，由这里统一释放
-        Theme.Dispose();
+        _stayAwake.Set(false);
         Tray?.Dispose();
         Tray = null;
+
+        try
+        {
+            await Task.WhenAll(Guard.DisposeAsync().AsTask(),
+                Coordinator.DisposeAsync().AsTask(), Devices.DisposeAsync().AsTask());
+        }
+        finally
+        {
+            _stayAwake.Dispose();
+            Ports.Dispose();
+            Probe.Dispose();
+            _portal.Dispose();
+            Theme.Dispose();
+        }
     }
 }

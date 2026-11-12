@@ -33,12 +33,14 @@ namespace SNNUAutoLogin.Services
 
         /// <summary>最近一次强制下线用到的会话标识。</summary>
         public string? LastSessionId { get; private set; }
+        public Func<CancellationToken, Task<DeviceListResult>>? LoadDevices { get; set; }
+        public bool Disposed { get; private set; }
 
         public Task<DeviceListResult> GetOnlineDevicesAsync(int port, CancellationToken ct = default)
         {
             GetCalls++;
             LastPort = port;
-            return Task.FromResult(DevicesResult);
+            return LoadDevices?.Invoke(ct) ?? Task.FromResult(DevicesResult);
         }
 
         public Task<bool> ForceOfflineAsync(string frameUrl, string sessionId, CancellationToken ct = default)
@@ -55,6 +57,6 @@ namespace SNNUAutoLogin.Services
             return Task.FromResult(DisconnectResult);
         }
 
-        public void Dispose() { }
+        public void Dispose() => Disposed = true;
     }
 }
