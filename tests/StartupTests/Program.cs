@@ -10,31 +10,64 @@ void Check(bool condition, string name)
     checks++;
 }
 
-// Exercise Windows registry operations in a disposable key, never the real Run key.
-string runKey = @"Software\SNNUAutoLogin.Tests\" + Guid.NewGuid().ToString("N");
 string path = @"C:\Portable App\SNNUAutoLogin.exe";
-if (!args.Contains("--skip-registry"))
+void CheckRegistration(Func<bool, string, bool> setEnabled, Func<string, bool> isEnabled,
+    Func<string?> readEntry, Action<string> writeLegacyEntry)
 {
-try
-{
-    Check(StartupManager.SetEnabled(false, path, runKey), "disable absent key");
-    Check(StartupManager.SetEnabled(true, path, runKey), "create missing key");
-    using (var key = Registry.CurrentUser.OpenSubKey(runKey))
-        Check((string?)key?.GetValue("SNNUAutoLogin") == $"\"{path}\" --tray", "quoted path and tray argument");
+    Check(setEnabled(false, path), "disable absent entry");
+    Check(setEnabled(true, path), "register absent entry");
+    Check(readEntry() == $"\"{path}\" --tray", "quoted path and tray argument");
     string moved = @"C:\Moved App\SNNUAutoLogin.exe";
-    Check(!StartupManager.IsEnabled(moved, runKey), "same filename at old path is invalid");
-    Check(StartupManager.SetEnabled(true, moved, runKey), "repair moved portable path");
-    Check(!StartupManager.IsEnabled(path, runKey), "old path no longer matches");
-    using (var key = Registry.CurrentUser.OpenSubKey(runKey, true))
-        key!.SetValue("SNNUAutoLogin", $"\"{moved}\"");
-    Check(!StartupManager.IsEnabled(moved, runKey), "missing tray argument is invalid");
-    Check(StartupManager.SetEnabled(true, moved, runKey), "repair legacy command");
-    Check(!StartupManager.SetEnabled(true, "", runKey), "empty path rejected");
-    Check(StartupManager.SetEnabled(false, moved, runKey), "disable removes entry");
+    Check(!isEnabled(moved), "same filename at old path is invalid");
+    Check(setEnabled(true, moved), "repair moved portable path");
+    Check(!isEnabled(path), "old path no longer matches");
+    writeLegacyEntry($"\"{moved}\"");
+    Check(!isEnabled(moved), "missing tray argument is invalid");
+    Check(setEnabled(true, moved), "repair legacy command");
+    Check(!setEnabled(true, ""), "empty path rejected");
+    Check(setEnabled(false, moved) && readEntry() is null, "disable removes entry");
 }
-finally { Registry.CurrentUser.DeleteSubKeyTree(runKey, false); }
+
+string? entry = null;
+CheckRegistration(
+    (enabled, executable) => StartupManager.SetEnabled(enabled, executable, () => entry, value => entry = value),
+    executable => StartupManager.IsEnabled(executable, () => entry),
+    () => entry,
+    value => entry = value);
+
+Check(!StartupManager.SetEnabled(true, path, () => entry, _ => throw new UnauthorizedAccessException()),
+    "registry write denial is reported");
+Check(!StartupManager.SetEnabled(false, path, () => throw new UnauthorizedAccessException(), _ => { }),
+    "registry read denial does not confirm removal");
+Check(!StartupManager.SetEnabled(true, path, () => entry, _ => { }),
+    "registration must be verified after writing");
+
+if (args.Contains("--registry-integration") && !args.Contains("--skip-registry"))
+{
+    // Use a unique test key and leave the user's Run key untouched.
+    string runKey = @"Software\SNNUAutoLogin.Tests\" + Guid.NewGuid().ToString("N");
+    Console.WriteLine("Windows registry integration");
+    try
+    {
+        CheckRegistration(
+            (enabled, executable) => StartupManager.SetEnabled(enabled, executable, runKey),
+            executable => StartupManager.IsEnabled(executable, runKey),
+            () =>
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(runKey);
+                return key?.GetValue("SNNUAutoLogin") as string;
+            },
+            value =>
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(runKey, true);
+                key!.SetValue("SNNUAutoLogin", value);
+            });
+    }
+    finally
+    {
+        Registry.CurrentUser.DeleteSubKeyTree(runKey, false);
+    }
 }
-else Console.WriteLine("SKIP registry integration (restricted environment)");
 
 async Task Scenario(string name, bool startup, Action<CredentialStore>? configure,
     LoginResult status, LoginResult login, params int[] expectedCalls)

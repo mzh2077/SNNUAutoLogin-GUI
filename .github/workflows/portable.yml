@@ -15,7 +15,7 @@ jobs:
         with:
           dotnet-version: 8.0.x
       - name: Startup registration and login regression tests
-        run: dotnet run --project tests/StartupTests -c Release
+        run: dotnet run --project tests/StartupTests -c Release -- --registry-integration
       - name: Credential persistence regression tests
         run: dotnet run --project tests/CredentialTests -c Release
       - name: Online device list parsing regression tests
