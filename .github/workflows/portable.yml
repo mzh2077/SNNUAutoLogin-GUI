@@ -1,7 +1,7 @@
 name: Windows release build
 on:
   push:
-    branches: [main, fix/startup-login]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:

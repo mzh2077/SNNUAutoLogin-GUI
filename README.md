@@ -303,6 +303,27 @@ Portal 偶发要求验证码（连续快速重连、换出口、学校开风控�
 **托盘图标不见了？**
 Windows 会把不常用图标折叠进「^」溢出区，拖出来固定一下即可。
 
+## 参与开发
+
+`main` 开启了分支保护，改动走 Pull Request 合并：
+
+1. 从 `main` 切一个分支，例如 `fix/retry-backoff`，改完推到自己的分支上
+2. 在 GitHub 上开 PR 指向 `main`，说明改了什么、为什么这么改
+3. 等 `portable` 这项检查跑绿（Windows release build 里的构建与回归测试任务），再点 Merge
+
+直接往 `main` 推送会被拒绝，强推和删除分支都已关闭。检查没跑完时 Merge 按钮是灰的，有未解决的评论也合不了。
+
+提交前本地跑一遍两套回归测试，CI 里也是这两套：
+
+```bat
+dotnet run --project tests/StartupTests -c Release
+dotnet run --project tests/CredentialTests -c Release
+```
+
+动了界面的，再跑 `--snapshot` 和 `--ui-test` 确认布局没塌。运行前先退掉已经在跑的实例，程序有单实例互斥量，第二个进程会直接退出、什么都看不到。
+
+有几条约束容易踩，写在上面「构建」一节里：版本号要在 `SNNUAutoLogin.csproj` 和 `installer/SNNUAutoLogin.iss` 两处同步改，`AppId` 发布之后不能动，`WinUIEdit.dll` 不能从发布目录里删掉。
+
 ## 更新记录
 
 各版本的安装包都在 [Releases](../../releases) 页面按版本号归档，可以直接下载对应版本，不需要逐级升级。
@@ -423,6 +444,8 @@ Windows 会把不常用图标折叠进「^」溢出区，拖出来固定一下�
 ## 致谢
 
 界面规范参考 Windows 11 系统应用；托盘与关窗拦截走纯 Win32（WinUI 3 的 `AppWindow.Closing` 在程序内 `Close()` 时不触发，只能子类化拦 `WM_CLOSE`）。
+
+[@marike86](https://github.com/marike86) 在 PR #1 里修好了开机自启的注册与校验、开机自动登录对重连开关的依赖、凭据写入失败的静默吞掉，另外带来了 `tests/StartupTests`、`tests/CredentialTests` 两套回归测试和 `tools/build_release.ps1` 发布脚本，1.5.1 的改动主要来自这里。
 
 ---
 
