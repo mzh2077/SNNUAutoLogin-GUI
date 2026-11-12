@@ -24,6 +24,7 @@
     <Compile Include="../../Services/DeviceListParser.cs" Link="DeviceListParser.cs" />
     <Compile Include="../../Services/IOnlineDevicePortal.cs" Link="IOnlineDevicePortal.cs" />
     <Compile Include="../../Services/DeviceManager.cs" Link="DeviceManager.cs" />
+    <Compile Include="../../Services/OperationLifetime.cs" Link="OperationLifetime.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- 真实门户页面样本：解析测试要拿它当输入 -->

@@ -33,14 +33,14 @@ public enum DeviceListState
 ///
 /// 界面只管读状态、发命令；网络操作都在后台线程跑。
 /// </summary>
-public sealed class DeviceManager : IDisposable
+public sealed class DeviceManager : IDisposable, IAsyncDisposable
 {
     private readonly IOnlineDevicePortal _client;
     private readonly bool _ownsClient;
     private readonly DispatcherQueue _dispatcher;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    private CancellationTokenSource? _cts;
+    private readonly OperationLifetime _operations = new();
     private bool _disposed;
 
     /// <summary>在线设备列表。</summary>
@@ -106,6 +106,9 @@ public sealed class DeviceManager : IDisposable
     public async Task RefreshAsync(int port = 0, CancellationToken ct = default)
     {
         if (_disposed) return;
+        using var operation = _operations.TryEnter(ct);
+        if (operation is null) return;
+        ct = operation.Token;
         int version;
         bool portChanged;
         lock (_snapshotGate)
@@ -121,7 +124,7 @@ public sealed class DeviceManager : IDisposable
         }
         if (portChanged) RaiseChanged();
 
-        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        if (!await WaitForGateAsync(ct).ConfigureAwait(false)) return;
         try
         {
             lock (_snapshotGate)
@@ -153,9 +156,12 @@ public sealed class DeviceManager : IDisposable
     public async Task<bool> TakeOfflineAsync(OnlineDevice device, CancellationToken ct = default)
     {
         if (_disposed || device is null) return false;
+        using var operation = _operations.TryEnter(ct);
+        if (operation is null) return false;
+        ct = operation.Token;
         int version = Volatile.Read(ref _networkVersion);
 
-        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        if (!await WaitForGateAsync(ct).ConfigureAwait(false)) return false;
         try
         {
             Snapshot snapshot;
@@ -230,9 +236,12 @@ public sealed class DeviceManager : IDisposable
     public async Task<bool> DisconnectSelfAsync(CancellationToken ct = default)
     {
         if (_disposed) return false;
+        using var operation = _operations.TryEnter(ct);
+        if (operation is null) return false;
+        ct = operation.Token;
         int version = Volatile.Read(ref _networkVersion);
 
-        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        if (!await WaitForGateAsync(ct).ConfigureAwait(false)) return false;
         try
         {
             int port;
@@ -281,6 +290,7 @@ public sealed class DeviceManager : IDisposable
         {
             if (version != Volatile.Read(ref _networkVersion)) return;
             var result = await _client.GetOnlineDevicesAsync(port, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
             if (!result.Success)
             {
                 SetState(DeviceListState.Failed, result.Message, version);
@@ -338,13 +348,24 @@ public sealed class DeviceManager : IDisposable
         }
     }
 
-    public void Dispose()
+    private async Task<bool> WaitForGateAsync(CancellationToken ct)
+    {
+        try
+        {
+            await _gate.WaitAsync(ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { return false; }
+    }
+
+    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
+
+    public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
         _disposed = true;
 
-        _cts?.Cancel();
-        _cts = null;
+        await _operations.StopAsync().ConfigureAwait(false);
 
         if (_ownsClient) _client.Dispose();
         _gate.Dispose();

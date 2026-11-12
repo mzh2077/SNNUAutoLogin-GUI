@@ -19,7 +19,7 @@ public enum ConnState
 }
 
 /// <summary>连接状态机：定时巡检出口认证状态，掉线自动重新登录，开机网络未就绪时指数退避。</summary>
-public sealed class LoginCoordinator : IDisposable
+public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
 {
     private const int IdleDelaySeconds = 30;      // 没配账号 / 关了自动重连时的慢速巡检
     private const int PortalDownDelayMax = 60;    // Portal 不可达（多半不在校园网）
@@ -30,7 +30,9 @@ public sealed class LoginCoordinator : IDisposable
     private readonly DispatcherQueue _dispatcher;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    private CancellationTokenSource? _cts;
+    private readonly OperationLifetime _operations = new();
+    private Task? _loop;
+    private bool _disposed;
     private bool _suppressAuto;
     private int _failures;
     private bool _portalDown;
@@ -108,16 +110,16 @@ public sealed class LoginCoordinator : IDisposable
 
     public void Start()
     {
-        _cts?.Cancel();
-        _cts = new CancellationTokenSource();
+        if (_disposed || _loop is not null) return;
         _failures = 0;
-        _ = RunAsync(_cts.Token);
+        _loop = RunUntilShutdownAsync();
     }
 
-    public void Stop()
+    private async Task RunUntilShutdownAsync()
     {
-        _cts?.Cancel();
-        _cts = null;
+        using var operation = _operations.TryEnter();
+        if (operation is not null)
+            await RunAsync(operation.Token).ConfigureAwait(false);
     }
 
     public void SuppressAuto(bool suppress) => _suppressAuto = suppress;
@@ -287,6 +289,7 @@ public sealed class LoginCoordinator : IDisposable
                 var discovered = await _ports.DiscoverAsync(ct).ConfigureAwait(false);
                 if (discovered is > 0) _resolver?.SetDiscoveredPort(discovered.Value);
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch
             {
                 // 读不到端口不是致命错误：继续用兜底端口
@@ -404,7 +407,9 @@ public sealed class LoginCoordinator : IDisposable
     /// <summary>用户手动点击登录/重连。</summary>
     public async Task ManualConnectAsync()
     {
-        await _gate.WaitAsync().ConfigureAwait(false);
+        using var operation = _operations.TryEnter();
+        if (operation is null || !await WaitForGateAsync(operation.Token).ConfigureAwait(false)) return;
+        var ct = operation.Token;
         try
         {
             var profile = CurrentProfile();
@@ -423,7 +428,8 @@ public sealed class LoginCoordinator : IDisposable
             SetState(ConnState.Connecting, null);
             LogLine("正在登录…");
 
-            var r = await _client.LoginAsync(port, account, password, profile.Operator).ConfigureAwait(false);
+            var r = await _client.LoginAsync(port, account, password, profile.Operator, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
             if (r.Success)
             {
                 _startupLoginPending = false;
@@ -434,7 +440,7 @@ public sealed class LoginCoordinator : IDisposable
             }
             else if (r.NeedCaptcha)
             {
-                await EnterCaptchaAsync(r, CancellationToken.None).ConfigureAwait(false);
+                await EnterCaptchaAsync(r, ct).ConfigureAwait(false);
             }
             else
             {
@@ -442,6 +448,7 @@ public sealed class LoginCoordinator : IDisposable
                 LogLine($"登录失败：{r.Message}");
             }
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         finally
         {
             _gate.Release();
@@ -478,6 +485,9 @@ public sealed class LoginCoordinator : IDisposable
     /// <summary>提交用户输入的验证码。</summary>
     public async Task<LoginResult> SubmitCaptchaAsync(string code)
     {
+        using var operation = _operations.TryEnter();
+        if (operation is null) return LoginResult.Fail("程序正在退出");
+        var ct = operation.Token;
         if (string.IsNullOrWhiteSpace(code))
             return LoginResult.Captcha("请输入验证码");
 
@@ -491,15 +501,16 @@ public sealed class LoginCoordinator : IDisposable
         if (string.IsNullOrWhiteSpace(account) || string.IsNullOrEmpty(password))
             return LoginResult.Fail("请先填写账号与密码");
 
-        await _gate.WaitAsync().ConfigureAwait(false);
+        if (!await WaitForGateAsync(ct).ConfigureAwait(false)) return LoginResult.Fail("程序正在退出");
         try
         {
             SetState(ConnState.Connecting, null);
             LogLine("正在提交验证码…");
 
             var r = await _client
-                .LoginAsync(port, account, password, profile.Operator, code.Trim())
+                .LoginAsync(port, account, password, profile.Operator, code.Trim(), ct)
                 .ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
 
             if (r.Success)
             {
@@ -515,7 +526,7 @@ public sealed class LoginCoordinator : IDisposable
             {
                 // 码错/过期：换一张，继续等输入
                 _awaitingCaptcha = true;
-                try { PendingCaptcha = await _client.FetchCaptchaAsync(Volatile.Read(ref _currentPort)).ConfigureAwait(false); }
+                try { PendingCaptcha = await _client.FetchCaptchaAsync(Volatile.Read(ref _currentPort), ct).ConfigureAwait(false); }
                 catch { PendingCaptcha = null; }
 
                 SetState(ConnState.CaptchaRequired, r);
@@ -529,6 +540,7 @@ public sealed class LoginCoordinator : IDisposable
             LogLine($"登录失败：{r.Message}");
             return r;
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { return LoginResult.Fail("程序正在退出"); }
         finally
         {
             _gate.Release();
@@ -547,14 +559,15 @@ public sealed class LoginCoordinator : IDisposable
     /// <summary>换一张验证码。</summary>
     public async Task RefreshCaptchaAsync()
     {
-        await _gate.WaitAsync().ConfigureAwait(false);
+        using var operation = _operations.TryEnter();
+        if (operation is null || !await WaitForGateAsync(operation.Token).ConfigureAwait(false)) return;
         try
         {
             if (!_awaitingCaptcha) return;
 
             try
             {
-                PendingCaptcha = await _client.FetchCaptchaAsync(Volatile.Read(ref _currentPort)).ConfigureAwait(false);
+                PendingCaptcha = await _client.FetchCaptchaAsync(Volatile.Read(ref _currentPort), operation.Token).ConfigureAwait(false);
             }
             catch
             {
@@ -579,6 +592,8 @@ public sealed class LoginCoordinator : IDisposable
     /// <summary>配置变更后立即重新巡检一次。</summary>
     public async Task RefreshAsync()
     {
+        using var operation = _operations.TryEnter();
+        if (operation is null) return;
         // Wait(0) 是原子的：巡检正忙时不再插一脚，改为让下一轮提前跑
         if (!_gate.Wait(0))
         {
@@ -589,7 +604,7 @@ public sealed class LoginCoordinator : IDisposable
 
         try
         {
-            await TickAsync(_cts?.Token ?? CancellationToken.None).ConfigureAwait(false);
+            await TickAsync(operation.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { }
     }
@@ -613,12 +628,26 @@ public sealed class LoginCoordinator : IDisposable
         try { CaptchaChanged?.Invoke(); } catch { }
     });
 
-    public void Dispose()
+    private async Task<bool> WaitForGateAsync(CancellationToken ct)
     {
-        Stop();
+        try
+        {
+            await _gate.WaitAsync(ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { return false; }
+    }
 
-        // 唤醒可能还挂在 SleepAsync 上等消息的循环，避免带着已释放的 gate 继续跑
+    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        var stopping = _operations.StopAsync();
         Volatile.Read(ref _wake)?.TrySetResult(null);
+        await stopping.ConfigureAwait(false);
+        if (_loop is not null) await _loop.ConfigureAwait(false);
 
         _client.Dispose();
         _gate.Dispose();

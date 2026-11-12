@@ -73,7 +73,7 @@ public sealed record DeviceGuardStatus
 ///   3. 取设备数自己向门户要，不经过 DeviceManager —— 否则会把用户在
 ///      「在线设备」卡片上选的端口冲掉，还会跟那边抢锁。
 /// </summary>
-public sealed class DeviceGuardService : IDisposable
+public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
 {
     /// <summary>守卫评估间隔（秒）。</summary>
     public const int GuardIntervalSeconds = 60;
@@ -94,6 +94,7 @@ public sealed class DeviceGuardService : IDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _stateGate = new();
     private readonly object _evaluationGate = new();
+    private readonly OperationLifetime _operations = new();
     private Task _evaluation = Task.CompletedTask;
     private bool _evaluationPending;
     private int _networkVersion;
@@ -184,12 +185,6 @@ public sealed class DeviceGuardService : IDisposable
     }
 
     /// <summary>停止后台循环。</summary>
-    public void Stop()
-    {
-        _cts?.Cancel();
-        _cts = null;
-    }
-
     /// <summary>网络状态变化时触发即时评估。</summary>
     public void NotifyNetworkChanged()
     {
@@ -243,6 +238,9 @@ public sealed class DeviceGuardService : IDisposable
 
     private async Task RunEvaluationsAsync()
     {
+        using var operation = _operations.TryEnter();
+        if (operation is null) return;
+        var ct = operation.Token;
         while (true)
         {
             lock (_evaluationGate)
@@ -257,8 +255,9 @@ public sealed class DeviceGuardService : IDisposable
 
             try
             {
-                await EvaluateOnceAsync().ConfigureAwait(false);
+                await EvaluateOnceAsync(ct).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
             catch (Exception ex)
             {
                 Write($"守卫评估异常：{ex.Message}");
@@ -266,7 +265,7 @@ public sealed class DeviceGuardService : IDisposable
         }
     }
 
-    private async Task EvaluateOnceAsync()
+    private async Task EvaluateOnceAsync(CancellationToken ct)
     {
         if (_disposed) return;
 
@@ -296,8 +295,9 @@ public sealed class DeviceGuardService : IDisposable
         DeviceListResult list;
         try
         {
-            list = await _portal.GetOnlineDevicesAsync(port).ConfigureAwait(false);
+            list = await _portal.GetOnlineDevicesAsync(port, ct).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             Write($"获取在线设备失败，本轮守卫跳过：{ex.Message}");
@@ -305,6 +305,7 @@ public sealed class DeviceGuardService : IDisposable
             return;
         }
 
+        ct.ThrowIfCancellationRequested();
         if (networkVersion != Volatile.Read(ref _networkVersion)) return;
         if (!list.Success)
         {
@@ -324,7 +325,9 @@ public sealed class DeviceGuardService : IDisposable
 
         Write($"在线设备 {count} 台，超过阈值 {threshold}，开始检测出网连通性（统计端口 {port}）");
 
-        var probe = await RunProbeAsync().ConfigureAwait(false);
+        var probe = await RunProbeAsync(ct).ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
+        if (networkVersion != Volatile.Read(ref _networkVersion)) return;
 
         if (probe.Success)
         {
@@ -335,20 +338,23 @@ public sealed class DeviceGuardService : IDisposable
 
         Write($"出网连通性检测失败：{probe.Detail}");
 
-        await DisposeAndReauthenticateAsync(count, port, networkVersion: networkVersion).ConfigureAwait(false);
+        await DisposeAndReauthenticateAsync(count, port, ct, networkVersion: networkVersion).ConfigureAwait(false);
     }
 
     /// <summary>「立即检测一次」：只探测，不处置。</summary>
     public async Task<ProbeResult> ProbeNowAsync()
     {
         if (_disposed) return new ProbeResult { Success = false, Detail = "守卫未启动" };
+        using var operation = _operations.TryEnter();
+        if (operation is null) return new ProbeResult { Success = false, Detail = "守卫未启动" };
 
         SetState(DeviceGuardState.Probing, "正在检测出网连通性…");
 
         int port = _effectivePort();
         SetDeviceCount(_deviceCount, port);
 
-        var probe = await RunProbeAsync().ConfigureAwait(false);
+        var probe = await RunProbeAsync(operation.Token).ConfigureAwait(false);
+        if (operation.Token.IsCancellationRequested) return probe;
 
         SetState(probe.Success ? DeviceGuardState.Idle : DeviceGuardState.Idle,
             probe.Success ? $"出网正常（{probe.Detail}）" : $"出网异常（{probe.Detail}）");
@@ -360,19 +366,22 @@ public sealed class DeviceGuardService : IDisposable
     public async Task<bool> DisposeNowAsync()
     {
         if (_disposed) return false;
+        using var operation = _operations.TryEnter();
+        if (operation is null) return false;
 
         int port = _effectivePort();
         int count = _deviceCount;
 
         // 手动触发不受冷却与上限限制 —— 用户明确要求了
-        return await DisposeAndReauthenticateAsync(count, port, manual: true).ConfigureAwait(false);
+        return await DisposeAndReauthenticateAsync(count, port, operation.Token, manual: true).ConfigureAwait(false);
     }
 
     /// <summary>断开本机连接并唤醒重新认证。</summary>
-    private async Task<bool> DisposeAndReauthenticateAsync(int count, int port, bool manual = false, int networkVersion = 0)
+    private async Task<bool> DisposeAndReauthenticateAsync(int count, int port, CancellationToken ct, bool manual = false, int networkVersion = 0)
     {
         // 守卫只持自己的锁；这里调用的门户请求与唤醒都是无锁的
-        await _gate.WaitAsync().ConfigureAwait(false);
+        try { await _gate.WaitAsync(ct).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { return false; }
         try
         {
             if (_disposed) return false;
@@ -386,13 +395,15 @@ public sealed class DeviceGuardService : IDisposable
             bool disconnected = false;
             try
             {
-                disconnected = await _portal.DisconnectAsync(port).ConfigureAwait(false);
+                disconnected = await _portal.DisconnectAsync(port, ct).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return false; }
             catch (Exception ex)
             {
                 Write($"断开本机连接异常：{ex.Message}");
             }
 
+            if (ct.IsCancellationRequested) return false;
             if (disconnected)
             {
                 Write("已断开本机连接，正在重新认证");
@@ -430,7 +441,7 @@ public sealed class DeviceGuardService : IDisposable
     }
 
     /// <summary>执行一次探测，异常一律吞掉转成失败结果。</summary>
-    private async Task<ProbeResult> RunProbeAsync()
+    private async Task<ProbeResult> RunProbeAsync(CancellationToken ct)
     {
         var settings = _store.Settings;
         string target = NetworkProbeService.NormalizeTarget(settings.DeviceGuardProbeTarget);
@@ -441,7 +452,7 @@ public sealed class DeviceGuardService : IDisposable
 
         try
         {
-            var result = await _probe.ProbeAsync(target, timeout, CancellationToken.None).ConfigureAwait(false);
+            var result = await _probe.ProbeAsync(target, timeout, ct).ConfigureAwait(false);
             SetProbeResult(result.Success, result.Detail);
             return result;
         }
@@ -542,13 +553,18 @@ public sealed class DeviceGuardService : IDisposable
         try { _log?.Invoke(text); } catch { }
     }
 
-    public void Dispose()
+    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
+
+    public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
         _disposed = true;
 
-        Stop();
-
-        try { _gate.Dispose(); } catch { }
+        _cts?.Cancel();
+        await _operations.StopAsync().ConfigureAwait(false);
+        if (_loop is not null) await _loop.ConfigureAwait(false);
+        await _evaluation.ConfigureAwait(false);
+        _cts?.Dispose();
+        _gate.Dispose();
     }
 }

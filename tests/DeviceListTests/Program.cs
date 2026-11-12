@@ -255,6 +255,28 @@ dm3.Invalidate();
 await dm3.RefreshAsync(8605);
 Check("换网后刷新失败不显示旧设备", dm3.Devices.Count == 0);
 
+var slowResult = new TaskCompletionSource<DeviceListResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+var shutdownObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+var slowPortal = new FakePortal
+{
+    LoadDevices = async ct =>
+    {
+        using var registration = ct.Register(() => shutdownObserved.TrySetResult());
+        return await slowResult.Task;
+    }
+};
+var closingManager = new DeviceManager(new Microsoft.UI.Dispatching.DispatcherQueue(), slowPortal);
+var runningRefresh = closingManager.RefreshAsync();
+var closing = closingManager.DisposeAsync().AsTask();
+await shutdownObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
+Check("退出先取消请求，等待完成后才释放门户", !closing.IsCompleted && !slowPortal.Disposed);
+await closingManager.RefreshAsync();
+Check("退出后不再接受设备请求", slowPortal.GetCalls == 1);
+slowResult.SetResult(DeviceListResult.Ok(new[] { otherDevice }, null));
+await Task.WhenAll(closing, runningRefresh).WaitAsync(TimeSpan.FromSeconds(5));
+Check("请求结束后释放门户", slowPortal.Disposed);
+Check("退出取消的请求不提交列表", closingManager.Devices.Count == 0);
+
 // 5.5 行级「点击下线」走强制下线，不走 logoff
 var fake4 = new FakePortal
 {

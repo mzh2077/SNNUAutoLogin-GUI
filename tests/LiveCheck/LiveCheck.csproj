@@ -29,6 +29,7 @@
     <Compile Include="../../Services/ConnectionProfileResolver.cs" Link="ConnectionProfileResolver.cs" />
     <Compile Include="../../Services/NetworkProbeService.cs" Link="NetworkProbeService.cs" />
     <Compile Include="../../Services/DeviceGuardService.cs" Link="DeviceGuardService.cs" />
+    <Compile Include="../../Services/OperationLifetime.cs" Link="OperationLifetime.cs" />
     <Compile Include="../../Services/CredentialStore.cs" Link="CredentialStore.cs" />
     <Compile Include="../../Services/DeviceListParser.cs" Link="DeviceListParser.cs" />
     <Compile Include="../../Services/IOnlineDevicePortal.cs" Link="IOnlineDevicePortal.cs" />
