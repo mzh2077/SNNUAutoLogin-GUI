@@ -56,7 +56,10 @@ using (var guard = new DeviceGuardService(guardStore, guardPortal, new FailedPro
     guard.NotifyNetworkChanged();
     guardPortal.Release.TrySetResult();
     await evaluation.WaitAsync(TimeSpan.FromSeconds(5));
-    Check(guardPortal.Disconnects == 1, "coalesced guard disconnects once on current network");
+    Check(guardPortal.Disconnects == 0, "old network does not count toward the failure streak");
+    await guard.EvaluateAsync();
+    await guard.EvaluateAsync();
+    Check(guardPortal.Disconnects == 1, "third failure disconnects once on the current network");
 }
 
 var closingPortal = new DeviceFixture();

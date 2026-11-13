@@ -23,6 +23,7 @@ public sealed class AppSettings
 
     /// <summary>探测目标地址。IP 字面量走 ICMP，域名或 URL 走 HTTP。</summary>
     public string DeviceGuardProbeTarget { get; set; } = NetworkProbeService.DefaultTarget;
+    public string DeviceGuardExternalProbeTarget { get; set; } = NetworkProbeService.DefaultExternalTarget;
 
     /// <summary>探测超时（秒）。</summary>
     public int DeviceGuardProbeTimeoutSeconds { get; set; } = NetworkProbeService.DefaultTimeoutSeconds;

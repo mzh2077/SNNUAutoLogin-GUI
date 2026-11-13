@@ -170,14 +170,25 @@ try
     portal.DeviceCount = 3;
     probe.Result = true;
     await guard.EvaluateAsync();
-    Check(probe.Calls == 1, "设备数超过阈值时探测");
+    Check(probe.Calls == 2, "设备数超过阈值时探测两个目标");
     Check(portal.DisconnectCalls == 0, "探测通过时不处置");
 
     // 探测失败 → 断开 + 重登
     probe.Result = false;
     portal.DeviceCount = 3;
     await guard.EvaluateAsync();
-    Check(portal.DisconnectCalls == 1, "探测失败时断开本机连接");
+    Check(portal.DisconnectCalls == 0, "第一轮双失败不断开");
+    await guard.EvaluateAsync();
+    Check(portal.DisconnectCalls == 0, "第二轮双失败不断开");
+    probe.ResultForTarget = target => target == NetworkProbeService.DefaultExternalTarget;
+    await guard.EvaluateAsync();
+    Check(portal.DisconnectCalls == 0, "仅校外可达也不处置");
+    probe.ResultForTarget = null;
+    await guard.EvaluateAsync();
+    await guard.EvaluateAsync();
+    Check(portal.DisconnectCalls == 0, "任一目标恢复后重新计数");
+    await guard.EvaluateAsync();
+    Check(portal.DisconnectCalls == 1, "第三轮双失败断开本机连接");
     Check(reauthCalls == 1, "探测失败时触发重新认证");
     Check(portal.DisconnectPort == 8605, "断开用的是生效端口");
     Check(guard.Status.State == DeviceGuardState.Cooldown, "处置后进入冷却");
@@ -230,7 +241,11 @@ try
     release.SetResult();
     await Task.WhenAll(evaluation, pending).WaitAsync(TimeSpan.FromSeconds(5));
     Check(concurrentPortal.ListCalls == 2, "多次触发只补做一次评估");
-    Check(concurrentPortal.DisconnectCalls == 1, "旧网络评估不会重复断开");
+    Check(concurrentPortal.DisconnectCalls == 0, "换网后旧结果不计入连续失败");
+    await concurrentGuard.EvaluateAsync();
+    Check(concurrentPortal.DisconnectCalls == 0, "新网络第二轮失败不处置");
+    await concurrentGuard.EvaluateAsync();
+    Check(concurrentPortal.DisconnectCalls == 1, "新网络第三轮失败只处置一次");
 
     var oldPort = new TaskCompletionSource<int?>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var discovery = new PortalPortDiscovery(_ => oldPort.Task);

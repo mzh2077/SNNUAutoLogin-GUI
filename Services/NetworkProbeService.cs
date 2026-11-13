@@ -65,6 +65,7 @@ public sealed class NetworkProbeService : INetworkProbe, IDisposable
     /// 「能不能上网」这件事本身。
     /// </summary>
     public const string DefaultTarget = "www.snnu.edu.cn";
+    public const string DefaultExternalTarget = "www.baidu.com";
 
     /// <summary>
     /// 旧版默认探测目标（公网 DNS）。留着只为识别「还没自定义过」的老配置，

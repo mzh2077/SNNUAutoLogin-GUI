@@ -371,6 +371,14 @@
                                     <FontIcon FontSize="14" Glyph="&#xE72C;" />
                                 </Button>
                             </Grid>
+                            <Button
+                                Margin="0,8,0,0"
+                                Height="34"
+                                HorizontalAlignment="Stretch"
+                                Background="{ThemeResource SystemFillColorCriticalBrush}"
+                                Foreground="White"
+                                Content="切换出口"
+                                Click="OnSwitchOutletClicked" />
                         </StackPanel>
                     </Grid>
                 </Border>
@@ -727,7 +735,7 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel VerticalAlignment="Center" Spacing="2">
                                     <TextBlock Style="{StaticResource RowTitleStyle}" Text="启用设备数守卫" />
-                                    <TextBlock Style="{StaticResource RowDescStyle}" Text="在线设备数超过阈值时检测出网，失败则断开并重新登录" />
+                                    <TextBlock Style="{StaticResource RowDescStyle}" Text="设备数超过阈值，校内和校外连续三轮均不可达才重连" />
                                 </StackPanel>
                                 <ToggleSwitch
                                     x:Name="DeviceGuardSwitch"
@@ -763,7 +771,7 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel VerticalAlignment="Center" Spacing="2">
-                                    <TextBlock Style="{StaticResource RowTitleStyle}" Text="探测目标地址" />
+                                    <TextBlock Style="{StaticResource RowTitleStyle}" Text="校内探测地址" />
                                     <TextBlock Style="{StaticResource RowDescStyle}" Text="IP 地址走 ping，域名或网址走 HTTP" />
                                 </StackPanel>
                                 <TextBox
@@ -772,6 +780,17 @@
                                     Style="{StaticResource RowTextBoxStyle}"
                                     MaxLength="255"
                                     PlaceholderText="www.snnu.edu.cn" />
+                            </Grid>
+
+                            <Border Style="{StaticResource DividerStyle}" />
+                            <Grid MinHeight="42" ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock VerticalAlignment="Center" Style="{StaticResource RowTitleStyle}" Text="校外探测地址" />
+                                <TextBox x:Name="DeviceGuardExternalProbeTargetBox" Grid.Column="1"
+                                    Style="{StaticResource RowTextBoxStyle}" MaxLength="255" PlaceholderText="www.baidu.com" />
                             </Grid>
 
                             <Border Style="{StaticResource DividerStyle}" />
@@ -919,6 +938,11 @@
                                 Margin="0,8,0,0"
                                 Style="{StaticResource HintStyle}"
                                 Text="没有匹配到规则时，使用「默认账号与出口」里的账号与端口。" />
+                            <TextBlock
+                                Margin="0,4,0,0"
+                                Style="{StaticResource HintStyle}"
+                                Text="充分利用教学区有线接入则不记流量这一规则"
+                                TextWrapping="Wrap" />
                         </StackPanel>
                     </Border>
 

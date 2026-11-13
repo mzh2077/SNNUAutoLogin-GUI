@@ -121,6 +121,7 @@ internal static class LinuxCli
                 case "guard": settings.DeviceGuardEnabled = ParseBool(value); break;
                 case "guard-threshold": settings.DeviceGuardThreshold = ParseNumber(value); break;
                 case "probe-target": settings.DeviceGuardProbeTarget = value; break;
+                case "external-probe-target": settings.DeviceGuardExternalProbeTarget = value; break;
                 case "probe-timeout": settings.DeviceGuardProbeTimeoutSeconds = ParseNumber(value); break;
                 default: throw new ArgumentException("未知配置项，请查看 Linux 使用说明。");
             }

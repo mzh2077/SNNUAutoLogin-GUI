@@ -99,16 +99,27 @@ internal sealed class LinuxCredentials : ICredentialSource
         if (!Enum.IsDefined(settings.Operator)) throw new InvalidOperationException("运营商出口无效");
         if (settings.CheckIntervalSeconds is < 4 or > 120) throw new InvalidOperationException("巡检间隔应为 4–120 秒");
         if (settings.DeviceGuardThreshold is < 1 or > 50) throw new InvalidOperationException("设备数阈值应为 1–50");
-        string target = (settings.DeviceGuardProbeTarget ?? "").Trim();
+        settings.DeviceGuardProbeTarget = ValidateProbeTarget(settings.DeviceGuardProbeTarget);
+        settings.DeviceGuardExternalProbeTarget = ValidateProbeTarget(settings.DeviceGuardExternalProbeTarget);
+        if (settings.DeviceGuardProbeTimeoutSeconds is < 1 or > 30)
+            throw new InvalidOperationException("探测超时应为 1–30 秒");
+        ValidateRules(settings);
+    }
+
+    private static string ValidateProbeTarget(string? value)
+    {
+        string target = (value ?? "").Trim();
         if (!NetworkProbeService.IsValidTarget(target)
             || (!System.Net.IPAddress.TryParse(target, out _)
                 && (!Uri.TryCreate(target.Contains("://", StringComparison.Ordinal) ? target : "http://" + target,
                         UriKind.Absolute, out var address)
                     || address.Scheme is not ("http" or "https") || address.UserInfo.Length != 0 || address.Host.Length == 0)))
             throw new InvalidOperationException("探测地址无效");
-        settings.DeviceGuardProbeTarget = target;
-        if (settings.DeviceGuardProbeTimeoutSeconds is < 1 or > 30)
-            throw new InvalidOperationException("探测超时应为 1–30 秒");
+        return target;
+    }
+
+    private static void ValidateRules(AppSettings settings)
+    {
         if (settings.ConnectionRules is null || settings.ConnectionRules.Count > ConnectionRuleSet.MaxRules)
             throw new InvalidOperationException("连接规则数量无效");
         var accepted = new List<ConnectionRule>();

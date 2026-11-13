@@ -43,6 +43,7 @@ namespace SNNUAutoLogin.Services
     public sealed class FakeNetworkProbe : INetworkProbe
     {
         public bool Result { get; set; } = true;
+        public Func<string, bool>? ResultForTarget { get; set; }
         public string Detail { get; set; } = "假探测";
         public int Calls { get; set; }
         public string LastTarget { get; private set; } = "";
@@ -55,7 +56,7 @@ namespace SNNUAutoLogin.Services
             LastTimeout = timeout;
             return Task.FromResult(new ProbeResult
             {
-                Success = Result,
+                Success = ResultForTarget?.Invoke(target) ?? Result,
                 Detail = Detail,
                 LatencyMs = 1,
                 Transport = ProbeTransport.Icmp

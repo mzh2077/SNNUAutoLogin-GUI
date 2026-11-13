@@ -33,13 +33,13 @@ jobs:
       - run: |
           bash -n Linux/packaging/build.sh
           bash -n Linux/packaging/install-user-service.sh
-      - run: bash Linux/packaging/build.sh 1.6.0
+      - run: bash Linux/packaging/build.sh 1.6.2
       - name: Check package metadata and checksums
         working-directory: artifacts/linux
         run: |
           sha256sum -c SHA256SUMS.txt
-          dpkg-deb -f snnuautologin_1.6.0_amd64.deb Package Version Architecture
-          dpkg-deb -f snnuautologin-desktop_1.6.0_amd64.deb Package Version Architecture Depends
+          dpkg-deb -f snnuautologin_1.6.2_amd64.deb Package Version Architecture
+          dpkg-deb -f snnuautologin-desktop_1.6.2_amd64.deb Package Version Architecture Depends
       - name: Install, start and remove the packages
         working-directory: artifacts/linux
         shell: bash
@@ -52,8 +52,8 @@ jobs:
           result=0
           timeout 8s xvfb-run -a snnuautologin-desktop || result=$?
           test "$result" = 124
-          tar -xzf SNNUAutoLogin-1.6.0-linux-x64.tar.gz
-          ./SNNUAutoLogin-1.6.0-linux-x64/cli/snnuautologin --help
+          tar -xzf SNNUAutoLogin-1.6.2-linux-x64.tar.gz
+          ./SNNUAutoLogin-1.6.2-linux-x64/cli/snnuautologin --help
           apt-get purge -y snnuautologin-desktop snnuautologin
           test ! -e /usr/bin/snnuautologin
           test ! -e /usr/bin/snnuautologin-desktop
