@@ -29,6 +29,7 @@ internal sealed class MainWindow : Window
     private readonly CheckBox _enableGuard = new() { Content = "启用设备数守卫" };
     private readonly TextBox _threshold = new() { PlaceholderText = "在线设备数阈值" };
     private readonly TextBox _target = new() { PlaceholderText = "探测地址" };
+    private readonly TextBox _externalTarget = new() { PlaceholderText = "www.baidu.com" };
     private readonly TextBox _timeout = new() { PlaceholderText = "探测超时（秒）" };
     private readonly ListBox _rules = new() { MinHeight = 120, MaxHeight = 180 };
     private readonly ComboBox _ruleType = Choices<ConnectionMatchType>();
@@ -74,7 +75,8 @@ internal sealed class MainWindow : Window
                 Tab("设备与守卫", Form(
                     _devices, Row(Button("刷新列表", () => DeviceCommandAsync("devices")),
                         Button("下线所选设备", OfflineAsync), Button("断开本机", () => DeviceCommandAsync("disconnect"))),
-                    _guardStatus, _enableGuard, Label("设备数阈值", _threshold), Label("探测地址", _target),
+                    _guardStatus, _enableGuard, Label("设备数阈值", _threshold), Label("校内探测地址", _target),
+                    Label("校外探测地址", _externalTarget),
                     Label("探测超时（秒）", _timeout), Row(Button("保存守卫设置", SaveGuardAsync),
                         Button("立即检测一次", () => CommandAsync("probe"))))),
                 Tab("自动化", Form(
@@ -157,6 +159,7 @@ internal sealed class MainWindow : Window
         _enableGuard.IsChecked = settings.DeviceGuardEnabled;
         _threshold.Text = settings.DeviceGuardThreshold.ToString();
         _target.Text = settings.DeviceGuardProbeTarget;
+        _externalTarget.Text = settings.DeviceGuardExternalProbeTarget;
         _timeout.Text = settings.DeviceGuardProbeTimeoutSeconds.ToString();
         _rules.ItemsSource = settings.ConnectionRules.Select(r => $"{r.MatchType}  {r.Ssid}  {r.Account}").ToArray();
         EditRule();
@@ -210,6 +213,7 @@ internal sealed class MainWindow : Window
         settings.DeviceGuardEnabled = _enableGuard.IsChecked == true;
         settings.DeviceGuardThreshold = Number(_threshold);
         settings.DeviceGuardProbeTarget = _target.Text ?? "";
+        settings.DeviceGuardExternalProbeTarget = _externalTarget.Text ?? "";
         settings.DeviceGuardProbeTimeoutSeconds = Number(_timeout);
         return SaveAsync(settings);
     }

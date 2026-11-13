@@ -99,6 +99,8 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
     private Task _evaluation = Task.CompletedTask;
     private bool _evaluationPending;
     private int _networkVersion;
+    private int _failedProbeRounds;
+    private (int Network, int Port, int Threshold, string Internal, string External, int Timeout) _probeSeries;
 
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -275,13 +277,18 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
 
     private async Task EvaluateOnceAsync(CancellationToken ct)
     {
-        if (!_canEvaluate()) return;
         if (_disposed) return;
 
         var settings = _store.Settings;
         if (!settings.DeviceGuardEnabled)
         {
+            _failedProbeRounds = 0;
             SetState(DeviceGuardState.Disabled, "设备数守卫已关闭");
+            return;
+        }
+        if (!_canEvaluate())
+        {
+            _failedProbeRounds = 0;
             return;
         }
 
@@ -298,6 +305,13 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
         int networkVersion = Volatile.Read(ref _networkVersion);
         int port = _effectivePort();
         int threshold = Threshold;
+        var targets = ProbeTargets();
+        var series = (networkVersion, port, threshold, targets.Internal, targets.External, targets.Timeout);
+        if (series != _probeSeries)
+        {
+            _probeSeries = series;
+            _failedProbeRounds = 0;
+        }
 
         // 取设备数。失败必须跳过本轮 —— 拿不到列表不等于「0 台」，
         // 把它当成 0 台会在门户异常时触发一通无意义的断开重连。
@@ -309,6 +323,7 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
+            _failedProbeRounds = 0;
             Write($"获取在线设备失败，本轮守卫跳过：{ex.Message}");
             SetState(DeviceGuardState.Idle, "获取在线设备失败，本轮跳过");
             return;
@@ -318,6 +333,7 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
         if (networkVersion != Volatile.Read(ref _networkVersion)) return;
         if (!list.Success)
         {
+            _failedProbeRounds = 0;
             Write($"获取在线设备失败，本轮守卫跳过：{list.Message}");
             SetState(DeviceGuardState.Idle, $"获取在线设备失败，本轮跳过（{list.Message}）");
             return;
@@ -328,24 +344,38 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
 
         if (count <= threshold)
         {
+            _failedProbeRounds = 0;
             SetState(DeviceGuardState.Idle, $"在线设备 {count} 台，未超过阈值 {threshold}");
             return;
         }
 
         Write($"在线设备 {count} 台，超过阈值 {threshold}，开始检测出网连通性（统计端口 {port}）");
 
-        var probe = await RunProbeAsync(networkVersion, ct).ConfigureAwait(false);
+        var probe = await RunProbeAsync(targets, networkVersion, ct).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
         if (networkVersion != Volatile.Read(ref _networkVersion)) return;
 
         if (probe.Success)
         {
+            _failedProbeRounds = 0;
             Write($"出网连通性正常（{probe.Detail}）");
             SetState(DeviceGuardState.Idle, $"设备 {count} 台 · 出网正常");
             return;
         }
 
-        Write($"出网连通性检测失败：{probe.Detail}");
+        if (targets != ProbeTargets())
+        {
+            _failedProbeRounds = 0;
+            return;
+        }
+        _failedProbeRounds++;
+        Write($"校内和校外均不可达（连续 {_failedProbeRounds}/3 轮）：{probe.Detail}");
+        if (_failedProbeRounds < 3)
+        {
+            SetState(DeviceGuardState.Idle, $"校内和校外均不可达（{_failedProbeRounds}/3）");
+            return;
+        }
+        _failedProbeRounds = 0;
 
         await DisposeAndReauthenticateAsync(count, port, ct, networkVersion: networkVersion).ConfigureAwait(false);
     }
@@ -363,7 +393,7 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
         int port = _effectivePort();
         SetDeviceCount(_deviceCount, port);
 
-        var probe = await RunProbeAsync(networkVersion, operation.Token).ConfigureAwait(false);
+        var probe = await RunProbeAsync(ProbeTargets(), networkVersion, operation.Token).ConfigureAwait(false);
         if (networkVersion != Volatile.Read(ref _networkVersion))
             return new ProbeResult { Success = false, Detail = "网络已切换，请重新检测" };
         if (operation.Token.IsCancellationRequested) return probe;
@@ -453,26 +483,42 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
     }
 
     /// <summary>执行一次探测，异常一律吞掉转成失败结果。</summary>
-    private async Task<ProbeResult> RunProbeAsync(int networkVersion, CancellationToken ct)
+    private (string Internal, string External, int Timeout) ProbeTargets()
     {
         var settings = _store.Settings;
-        string target = NetworkProbeService.NormalizeTarget(settings.DeviceGuardProbeTarget);
-        int seconds = NetworkProbeService.NormalizeTimeoutSeconds(settings.DeviceGuardProbeTimeoutSeconds);
-        var timeout = TimeSpan.FromSeconds(seconds);
+        return (NetworkProbeService.NormalizeTarget(settings.DeviceGuardProbeTarget),
+            NetworkProbeService.IsValidTarget(settings.DeviceGuardExternalProbeTarget)
+                ? settings.DeviceGuardExternalProbeTarget.Trim() : NetworkProbeService.DefaultExternalTarget,
+            NetworkProbeService.NormalizeTimeoutSeconds(settings.DeviceGuardProbeTimeoutSeconds));
+    }
 
-        SetState(DeviceGuardState.Probing, $"正在检测出网连通性（{target}，{seconds} 秒）…");
+    private async Task<ProbeResult> RunProbeAsync((string Internal, string External, int Timeout) targets,
+        int networkVersion, CancellationToken ct)
+    {
+        var timeout = TimeSpan.FromSeconds(targets.Timeout);
+        SetState(DeviceGuardState.Probing, "正在检测校内和校外连通性…");
+        var results = await Task.WhenAll(ProbeTargetAsync(targets.Internal, timeout, ct),
+            ProbeTargetAsync(targets.External, timeout, ct)).ConfigureAwait(false);
+        var result = new ProbeResult
+        {
+            Success = results[0].Success || results[1].Success,
+            LatencyMs = Math.Max(results[0].LatencyMs, results[1].LatencyMs),
+            Detail = $"校内 {results[0].Detail} · 校外 {results[1].Detail}"
+        };
+        SetProbeResult(result.Success, result.Detail, networkVersion);
+        return result;
+    }
 
+    private async Task<ProbeResult> ProbeTargetAsync(string target, TimeSpan timeout, CancellationToken ct)
+    {
         try
         {
-            var result = await _probe.ProbeAsync(target, timeout, ct).ConfigureAwait(false);
-            SetProbeResult(result.Success, result.Detail, networkVersion);
-            return result;
+            return await _probe.ProbeAsync(target, timeout, ct).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            var failed = new ProbeResult { Success = false, Detail = $"探测失败：{ex.Message}" };
-            SetProbeResult(false, failed.Detail, networkVersion);
-            return failed;
+            return new ProbeResult { Success = false, Detail = $"探测失败：{ex.Message}" };
         }
     }
 

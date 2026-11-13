@@ -236,7 +236,7 @@ public sealed class AppRuntime : IAsyncDisposable
             Ports.Invalidate();          // 线路可能变了，门户分配的端口也要重新问
             Devices.Invalidate();
             Guard.NotifyNetworkChanged(); // 换网了，守卫顺手评估一次
-            Coordinator.RequestImmediateCheck();
+            Coordinator.InvalidateNetwork();
         });
         _netWatch.Start();
 

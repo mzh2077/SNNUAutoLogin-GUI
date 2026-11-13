@@ -43,6 +43,9 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
     private int _networkVersion;
     private int _captchaNetworkVersion;
     private EffectiveProfile? _captchaProfile;
+    private EffectiveProfile? _outletProfile;
+    private EffectiveProfile? _outletSource;
+    private int _outletNetwork;
 
     /// <summary>有守卫要求强制重新认证：下一轮不能走「已在线」的快捷路径。</summary>
     private int _forceRelogin;
@@ -54,6 +57,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
     private readonly IPortalPortDiscovery? _ports;
 
     public ConnState State { get; private set; } = ConnState.Idle;
+    public Operator ActiveOperator => CurrentProfile().Operator;
 
     /// <summary>待输入的验证码图片；为空表示当前不需要验证码。</summary>
     public CaptchaImage? PendingCaptcha { get; private set; }
@@ -276,8 +280,17 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
     /// </summary>
     private EffectiveProfile CurrentProfile()
     {
-        if (_resolver is not null) return _resolver.Resolve();
+        var profile = _resolver?.Resolve() ?? DefaultProfile();
+        var source = _outletSource;
+        return source is not null && _outletNetwork == Volatile.Read(ref _networkVersion)
+            && source.Account == profile.Account && source.Rule?.Id == profile.Rule?.Id
+            && source.Operator.Equals(profile.Operator) && _outletProfile is { } outlet
+            ? profile with { Operator = outlet.Operator, Account = outlet.Account }
+            : profile;
+    }
 
+    private EffectiveProfile DefaultProfile()
+    {
         var s = _store.Settings;
         return new EffectiveProfile
         {
@@ -425,7 +438,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
     }
 
     /// <summary>用户手动点击登录/重连。</summary>
-    public async Task ManualConnectAsync()
+    public async Task ManualConnectAsync(Operator? switchOutlet = null, bool reconnect = false)
     {
         using var operation = _operations.TryEnter();
         if (operation is null || !await WaitForGateAsync(operation.Token).ConfigureAwait(false)) return;
@@ -435,6 +448,16 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
             int networkVersion = Volatile.Read(ref _networkVersion);
             var profile = await ResolveProfileAsync(ct).ConfigureAwait(false);
             if (networkVersion != Volatile.Read(ref _networkVersion)) return;
+            var source = _resolver?.Resolve() ?? DefaultProfile();
+            if (switchOutlet is { } selected)
+            {
+                string accountWithoutSuffix = profile.Account;
+                int separator = accountWithoutSuffix.IndexOf('@');
+                if (separator > 0 && accountWithoutSuffix[(separator + 1)..].Trim().ToLowerInvariant()
+                    is "mobile" or "unicom" or "telecom" or "campus" or "edu")
+                    accountWithoutSuffix = accountWithoutSuffix[..separator];
+                profile = profile with { Account = accountWithoutSuffix, Operator = selected };
+            }
             int port = profile.Port;
 
             var account = profile.Account;
@@ -447,9 +470,28 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
             }
 
             SetState(ConnState.Connecting, null);
+            if (reconnect || switchOutlet is not null)
+            {
+                if (!await _client.DisconnectAsync(port, ct).ConfigureAwait(false))
+                {
+                    string message = switchOutlet is null ? "断开原连接失败，未重新登录" : "断开原连接失败，未切换出口";
+                    SetState(ConnState.Failed, LoginResult.Fail(message));
+                    LogLine(message);
+                    return;
+                }
+                if (networkVersion != Volatile.Read(ref _networkVersion)) return;
+                ClearCaptcha();
+                if (switchOutlet is not null)
+                {
+                    _outletProfile = profile;
+                    _outletNetwork = networkVersion;
+                    _outletSource = source;
+                }
+            }
             LogLine("正在登录…");
 
-            var r = await _client.LoginAsync(port, account, password, profile.Operator, ct).ConfigureAwait(false);
+            var r = await _client.LoginAsync(port, account, password, profile.Operator, ct,
+                force: reconnect || switchOutlet is not null).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
             if (networkVersion != Volatile.Read(ref _networkVersion)) return;
             if (r.Success)

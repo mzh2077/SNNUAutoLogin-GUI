@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
@@ -488,6 +489,7 @@ public sealed partial class MainWindow : Window
         DeviceGuardSwitch.IsOn = s.DeviceGuardEnabled;
         DeviceGuardThresholdBox.Value = s.DeviceGuardThreshold;
         DeviceGuardProbeTargetBox.Text = s.DeviceGuardProbeTarget;
+        DeviceGuardExternalProbeTargetBox.Text = s.DeviceGuardExternalProbeTarget;
         DeviceGuardTimeoutBox.Value = s.DeviceGuardProbeTimeoutSeconds;
         UpdateGuardUiEnabledState();
 
@@ -506,6 +508,7 @@ public sealed partial class MainWindow : Window
         bool on = DeviceGuardSwitch.IsOn;
         DeviceGuardThresholdBox.IsEnabled = on;
         DeviceGuardProbeTargetBox.IsEnabled = on;
+        DeviceGuardExternalProbeTargetBox.IsEnabled = on;
         DeviceGuardTimeoutBox.IsEnabled = on;
         DeviceGuardProbeNowBtn.IsEnabled = on;
     }
@@ -973,6 +976,7 @@ public sealed partial class MainWindow : Window
         };
         DeviceGuardThresholdBox.ValueChanged += (_, _) => ScheduleSave();
         DeviceGuardProbeTargetBox.TextChanged += (_, _) => ScheduleSave();
+        DeviceGuardExternalProbeTargetBox.TextChanged += (_, _) => ScheduleSave();
         DeviceGuardTimeoutBox.ValueChanged += (_, _) => ScheduleSave();
         // 「立即检测一次」与「添加规则」的点击在 XAML 里直接绑到处理器，这里不再重复接线
 
@@ -1490,19 +1494,48 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void OnSwitchOutletClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button) return;
+        button.IsEnabled = false;
+        try
+        {
+            PersistToStore();
+            var options = Enum.GetValues<Operator>();
+            var picker = new ComboBox { ItemsSource = options.Select(OperatorName).ToArray(),
+                SelectedIndex = Array.IndexOf(options, _rt.Coordinator.ActiveOperator) };
+            var dialog = new ContentDialog
+            {
+                XamlRoot = Root.XamlRoot,
+                Title = "切换出口",
+                Content = new StackPanel { Spacing = 12, Children =
+                    { new TextBlock { Text = "确定后将断开本机连接，并使用所选出口重新登录。" }, picker } },
+                PrimaryButtonText = "断开并重新登录",
+                CloseButtonText = "取消"
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || picker.SelectedIndex < 0) return;
+            var selected = options[picker.SelectedIndex];
+            await _rt.Coordinator.ManualConnectAsync(selected);
+            _rt.Devices.Invalidate();
+        }
+        catch (Exception ex) { _rt.AddLog($"切换出口失败：{ex.Message}"); }
+        finally { if (_uiBuilt) button.IsEnabled = true; }
+    }
+
     private async Task OnConnectClicked()
     {
+        bool reconnect = _rt.State == ConnState.Online;
         PersistToStore();
 
-        // 空字段直接给焦点，比只在日志里写一句「请先填写账号与密码」有用
-        if (string.IsNullOrWhiteSpace(AccountBox.Text))
+        var profile = _rt.Profiles.Resolve();
+        if (string.IsNullOrWhiteSpace(profile.Account))
         {
             _rt.AddLog("请先填写学号");
             AccountBox.Focus(FocusState.Programmatic);
             return;
         }
 
-        if (string.IsNullOrEmpty(PwdBox.Password))
+        if (string.IsNullOrEmpty(profile.Password))
         {
             _rt.AddLog("请先填写密码");
             PwdBox.Focus(FocusState.Programmatic);
@@ -1512,7 +1545,8 @@ public sealed partial class MainWindow : Window
         ConnectBtn.IsEnabled = false;
         try
         {
-            await _rt.Coordinator.ManualConnectAsync();
+            await _rt.Coordinator.ManualConnectAsync(reconnect: reconnect);
+            if (reconnect) _rt.Devices.Invalidate();
         }
         finally
         {
@@ -1596,6 +1630,8 @@ public sealed partial class MainWindow : Window
         s.DeviceGuardThreshold = double.IsNaN(threshold) ? 2 : Math.Clamp((int)Math.Round(threshold), 1, 50);
 
         s.DeviceGuardProbeTarget = NetworkProbeService.NormalizeTarget(DeviceGuardProbeTargetBox.Text);
+        s.DeviceGuardExternalProbeTarget = NetworkProbeService.IsValidTarget(DeviceGuardExternalProbeTargetBox.Text)
+            ? DeviceGuardExternalProbeTargetBox.Text.Trim() : NetworkProbeService.DefaultExternalTarget;
 
         double timeout = DeviceGuardTimeoutBox.Value;
         s.DeviceGuardProbeTimeoutSeconds = double.IsNaN(timeout)

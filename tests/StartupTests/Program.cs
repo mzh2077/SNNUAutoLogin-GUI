@@ -123,4 +123,24 @@ using (var coordinator = new LoginCoordinator(new CredentialStore(), new Dispatc
     await coordinator.RefreshAsync();
     Check(PortalClient.LoginCalls == 0, "already online completes startup login");
 }
+var switchStore = new CredentialStore();
+switchStore.Settings.Account = "test@mobile";
+using (var coordinator = new LoginCoordinator(switchStore, new DispatcherQueue()))
+{
+    PortalClient.LoginCalls = 0;
+    PortalClient.Login = ok;
+    PortalClient.DisconnectSucceeds = false;
+    await coordinator.ManualConnectAsync(Operator.Telecom);
+    Check(PortalClient.LoginCalls == 0, "failed disconnect does not attempt outlet login");
+    PortalClient.DisconnectSucceeds = true;
+    await coordinator.ManualConnectAsync(Operator.Telecom);
+    Check(PortalClient.LastOperator == Operator.Telecom && PortalClient.LastAccount == "test" && PortalClient.LastForce,
+        "explicit outlet overrides the account suffix and forces login");
+    await coordinator.ManualConnectAsync();
+    Check(PortalClient.LastOperator == Operator.Telecom, "subsequent login keeps the temporary outlet");
+    int previousDisconnects = PortalClient.DisconnectCalls;
+    await coordinator.ManualConnectAsync(reconnect: true);
+    Check(PortalClient.DisconnectCallsAtLogin == previousDisconnects + 1 && PortalClient.LastForce
+        && PortalClient.LastOperator == Operator.Telecom, "reconnect disconnects before forcing login on the current outlet");
+}
 Console.WriteLine($"{checks} checks passed.");

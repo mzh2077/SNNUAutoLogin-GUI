@@ -10,12 +10,14 @@ namespace Microsoft.UI.Dispatching
 
 namespace SNNUAutoLogin.Services
 {
+    public enum Operator { Campus, Mobile, Unicom, Telecom }
+
     public sealed class AppSettings
     {
         public bool AutoStart { get; set; } = true;
         public bool AutoReconnect { get; set; }
         public string Account { get; set; } = "test";
-        public int Operator { get; set; }
+        public Operator Operator { get; set; }
         public int CheckIntervalSeconds { get; set; } = 8;
 
         // 设备数守卫与连接规则相关的新字段
@@ -34,7 +36,7 @@ namespace SNNUAutoLogin.Services
         public ConnectionMatchType MatchType { get; set; }
         public string Ssid { get; set; } = "";
         public string Account { get; set; } = "";
-        public int Operator { get; set; }
+        public Operator Operator { get; set; }
         public bool Enabled { get; set; } = true;
         public string PasswordRef { get; set; } = "";
     }
@@ -76,7 +78,7 @@ namespace SNNUAutoLogin.Services
         public string Account { get; init; } = "";
         public string Password { get; init; } = "";
         public int Port { get; init; } = 8603;
-        public int Operator { get; init; }
+        public Operator Operator { get; init; }
         public ConnectionRule? Rule { get; init; }
         public bool IsDefault { get; init; } = true;
     }
@@ -107,6 +109,17 @@ namespace SNNUAutoLogin.Services
 
         public static readonly int[] KnownPorts = { 8603, 8601, 8602, 8605, 8609, 8604, 8606, 8607, 8608, 8610, 8600 };
         public static bool IsKnownPort(int port) => Array.IndexOf(KnownPorts, port) >= 0;
+        public static bool DisconnectSucceeds { get; set; } = true;
+        public static Operator LastOperator { get; private set; }
+        public static string LastAccount { get; private set; } = "";
+        public static bool LastForce { get; private set; }
+        public static int DisconnectCalls { get; set; }
+        public static int DisconnectCallsAtLogin { get; private set; }
+        public Task<bool> DisconnectAsync(int port, CancellationToken ct = default)
+        {
+            DisconnectCalls++;
+            return Task.FromResult(DisconnectSucceeds);
+        }
 
         public Task<LoginResult> GetStatusAsync(int port, CancellationToken ct = default)
         {
@@ -114,15 +127,19 @@ namespace SNNUAutoLogin.Services
             return Task.FromResult(Status);
         }
 
-        public Task<LoginResult> LoginAsync(int port, string account, string password, int op,
+        public Task<LoginResult> LoginAsync(int port, string account, string password, Operator op,
             CancellationToken ct = default, bool force = false)
         {
             LoginCalls++;
             LastPort = port;
+            LastOperator = op;
+            LastAccount = account;
+            LastForce = force;
+            DisconnectCallsAtLogin = DisconnectCalls;
             return Task.FromResult(Login);
         }
 
-        public Task<LoginResult> LoginAsync(int port, string account, string password, int op, string captcha,
+        public Task<LoginResult> LoginAsync(int port, string account, string password, Operator op, string captcha,
             CancellationToken ct = default, bool force = false)
         {
             LoginCalls++;

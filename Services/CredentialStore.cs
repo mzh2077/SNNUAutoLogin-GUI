@@ -187,6 +187,8 @@ public sealed class CredentialStore : ICredentialSource
         // 直接当成「没自定义过」迁到新默认上，免得用户以为改设置没生效。
         if (Settings.DeviceGuardProbeTarget == NetworkProbeService.LegacyDefaultTarget)
             Settings.DeviceGuardProbeTarget = NetworkProbeService.DefaultTarget;
+        Settings.DeviceGuardExternalProbeTarget = NetworkProbeService.IsValidTarget(Settings.DeviceGuardExternalProbeTarget)
+            ? Settings.DeviceGuardExternalProbeTarget.Trim() : NetworkProbeService.DefaultExternalTarget;
 
         if (Settings.DeviceGuardProbeTimeoutSeconds is < 1 or > 30)
             Settings.DeviceGuardProbeTimeoutSeconds = NetworkProbeService.DefaultTimeoutSeconds;
