@@ -368,7 +368,11 @@
                                     Height="34"
                                     Padding="0"
                                     ToolTipService.ToolTip="刷新状态">
-                                    <FontIcon FontSize="14" Glyph="&#xE72C;" />
+                                    <Grid>
+                                        <FontIcon x:Name="StatusRefreshIcon" FontSize="14" Glyph="&#xE72C;" />
+                                        <ProgressRing x:Name="StatusRefreshProgress" Width="16" Height="16"
+                                            IsActive="False" Visibility="Collapsed" />
+                                    </Grid>
                                 </Button>
                             </Grid>
                             <Button
@@ -379,6 +383,9 @@
                                 Foreground="White"
                                 Content="切换出口"
                                 Click="OnSwitchOutletClicked" />
+                            <TextBlock x:Name="StatusRefreshMessage" Style="{StaticResource HintStyle}"
+                                Margin="0,6,0,0" TextWrapping="Wrap" Visibility="Collapsed"
+                                AutomationProperties.LiveSetting="Polite" />
                         </StackPanel>
                     </Grid>
                 </Border>
@@ -530,19 +537,11 @@
                                             <!--  第一行：设备名 + IP + 状态  -->
                                             <Grid ColumnSpacing="8">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto" />
                                                     <ColumnDefinition Width="*" />
                                                     <ColumnDefinition Width="Auto" />
                                                 </Grid.ColumnDefinitions>
 
-                                                <Ellipse
-                                                    Width="6"
-                                                    Height="6"
-                                                    VerticalAlignment="Center"
-                                                    Fill="{ThemeResource SystemFillColorSuccessBrush}" />
-
                                                 <TextBlock
-                                                    Grid.Column="1"
                                                     VerticalAlignment="Center"
                                                     FontSize="13"
                                                     FontWeight="SemiBold"
@@ -550,7 +549,7 @@
                                                     Text="{Binding DisplayName}" />
 
                                                 <TextBlock
-                                                    Grid.Column="2"
+                                                    Grid.Column="1"
                                                     VerticalAlignment="Center"
                                                     FontSize="11.5"
                                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
@@ -560,7 +559,7 @@
                                             <!--  第二行：明细 + 操作  -->
                                             <Grid
                                                 Grid.Row="1"
-                                                Margin="14,5,0,0"
+                                                Margin="0,5,0,0"
                                                 ColumnSpacing="8">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*" />
@@ -606,16 +605,6 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
-
-                            <!--  空态 / 错误态  -->
-                            <TextBlock
-                                x:Name="DeviceEmptyText"
-                                Margin="0,12,0,4"
-                                HorizontalAlignment="Center"
-                                FontSize="12"
-                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                Text="暂无在线设备"
-                                Visibility="Collapsed" />
 
                             <Border Style="{StaticResource DividerStyle}" />
 
@@ -719,6 +708,10 @@
                     <!--  设备数守卫：设备数超阈值时确认还能不能出网  -->
                     <Border x:Name="DeviceGuardCard" Style="{StaticResource CardStyle}">
                         <StackPanel Padding="20,14,20,14" Spacing="0">
+                            <StackPanel.Resources>
+                                <StaticResource x:Key="TextControlBorderBrush" ResourceKey="ControlStrokeColorDefaultBrush" />
+                                <StaticResource x:Key="TextControlBorderBrushPointerOver" ResourceKey="ControlStrokeColorSecondaryBrush" />
+                            </StackPanel.Resources>
 
                             <StackPanel
                                 Margin="0,0,0,10"
@@ -755,7 +748,7 @@
                                     <TextBlock Style="{StaticResource RowDescStyle}" Text="在线设备数（含本机）大于此值才检测" />
                                 </StackPanel>
                                 <NumberBox
-                                    x:Name="DeviceGuardThresholdBox"
+                                    x:Name="DeviceGuardThresholdBox" CornerRadius="4"
                                     Grid.Column="1"
                                     Style="{StaticResource RowNumberBoxStyle}"
                                     Minimum="1"
@@ -772,10 +765,10 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel VerticalAlignment="Center" Spacing="2">
                                     <TextBlock Style="{StaticResource RowTitleStyle}" Text="校内探测地址" />
-                                    <TextBlock Style="{StaticResource RowDescStyle}" Text="IP 地址走 ping，域名或网址走 HTTP" />
+                                    <TextBlock Style="{StaticResource RowDescStyle}" Text="IP 地址走 ping，域名默认走 HTTPS" />
                                 </StackPanel>
                                 <TextBox
-                                    x:Name="DeviceGuardProbeTargetBox"
+                                    x:Name="DeviceGuardProbeTargetBox" CornerRadius="4"
                                     Grid.Column="1"
                                     Style="{StaticResource RowTextBoxStyle}"
                                     MaxLength="255"
@@ -789,7 +782,7 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock VerticalAlignment="Center" Style="{StaticResource RowTitleStyle}" Text="校外探测地址" />
-                                <TextBox x:Name="DeviceGuardExternalProbeTargetBox" Grid.Column="1"
+                                <TextBox x:Name="DeviceGuardExternalProbeTargetBox" CornerRadius="4" Grid.Column="1"
                                     Style="{StaticResource RowTextBoxStyle}" MaxLength="255" PlaceholderText="www.baidu.com" />
                             </Grid>
 
@@ -802,11 +795,11 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel VerticalAlignment="Center" Spacing="2">
                                     <TextBlock Style="{StaticResource RowTitleStyle}" Text="探测超时" />
-                                    <TextBlock Style="{StaticResource RowDescStyle}" Text="超过这个时间就判定为出网失败" />
+                                    <TextBlock Style="{StaticResource RowDescStyle}" Text="每个地址最多等待此时长" />
                                 </StackPanel>
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
                                     <NumberBox
-                                        x:Name="DeviceGuardTimeoutBox"
+                                        x:Name="DeviceGuardTimeoutBox" CornerRadius="4"
                                         Style="{StaticResource RowNumberBoxStyle}"
                                         Minimum="1"
                                         Maximum="30"
@@ -1265,11 +1258,13 @@
                                     FontSize="12"
                                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                     Text="认证门户" />
-                                <TextBlock
+                                <HyperlinkButton
                                     Grid.Column="1"
                                     HorizontalAlignment="Right"
-                                    Style="{StaticResource ValueTextStyle}"
-                                    Text="202.117.144.205:8603" />
+                                    VerticalAlignment="Center"
+                                    Padding="0"
+                                    Content="202.117.144.205"
+                                    NavigateUri="http://202.117.144.205/" />
                             </Grid>
 
                             <Border Style="{StaticResource DividerStyle}" />

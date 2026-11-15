@@ -665,7 +665,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
         PushCaptcha();
     }
 
-    /// <summary>配置变更后立即重新巡检一次。</summary>
+    /// <summary>执行一轮巡检，包括配置允许的自动登录。</summary>
     public async Task RefreshAsync()
     {
         using var operation = _operations.TryEnter();
@@ -683,6 +683,51 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
             await TickAsync(operation.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { }
+    }
+
+    public async Task<string?> RefreshStatusAsync()
+    {
+        using var operation = _operations.TryEnter();
+        if (operation is null) return null;
+        if (!_gate.Wait(0)) return "后台正在检查连接或认证，请稍后刷新";
+
+        try
+        {
+            if (HasPendingCaptcha) return "认证进行中，请先完成验证码";
+            int networkVersion = Volatile.Read(ref _networkVersion);
+            int configuredPort = _store.Settings.DefaultPort;
+            int port = _ports?.CurrentPort ?? (PortalClient.IsKnownPort(configuredPort) ? configuredPort : 8603);
+            if (networkVersion != Volatile.Read(ref _networkVersion)) return null;
+
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(operation.Token);
+            budget.CancelAfter(TimeSpan.FromSeconds(3));
+            LoginResult status;
+            try
+            {
+                status = await _client.GetStatusAsync(port, budget.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (budget.IsCancellationRequested)
+            {
+                status = LoginResult.Fail("连接超时");
+            }
+            if (operation.Token.IsCancellationRequested
+                || networkVersion != Volatile.Read(ref _networkVersion)) return null;
+            if (budget.IsCancellationRequested) return "刷新超时，请稍后重试";
+            if (!status.Success && status.Message != "未认证")
+                return $"刷新失败：{status.Message}";
+
+            LastCheckAt = DateTime.Now;
+            SetState(status.Success ? ConnState.Online : ConnState.Offline, status);
+            return null;
+        }
+        catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
+        {
+            return null;
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     private void SetState(ConnState state, LoginResult? result)
