@@ -222,6 +222,9 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
         {
             using var resp = await ClientFor(port)
                 .GetAsync(RootFor(port) + "userstatus.jsp", ct).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+                return LoginResult.Fail($"Portal 状态查询返回 HTTP {(int)resp.StatusCode}");
+
             var html = await ReadHtmlAsync(resp, ct).ConfigureAwait(false);
 
             if (html.Contains("当前登录账号", StringComparison.Ordinal))

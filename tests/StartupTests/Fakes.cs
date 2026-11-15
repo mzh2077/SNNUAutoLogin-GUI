@@ -103,6 +103,7 @@ namespace SNNUAutoLogin.Services
     public sealed class PortalClient : IDisposable
     {
         public static LoginResult Status { get; set; } = LoginResult.Fail("offline");
+        public static Func<CancellationToken, Task<LoginResult>>? StatusRequest { get; set; }
         public static LoginResult Login { get; set; } = new() { Success = true };
         public static int LoginCalls { get; set; }
         public static int LastPort { get; set; }
@@ -124,7 +125,7 @@ namespace SNNUAutoLogin.Services
         public Task<LoginResult> GetStatusAsync(int port, CancellationToken ct = default)
         {
             LastPort = port;
-            return Task.FromResult(Status);
+            return StatusRequest?.Invoke(ct) ?? Task.FromResult(Status);
         }
 
         public Task<LoginResult> LoginAsync(int port, string account, string password, Operator op,

@@ -531,7 +531,6 @@ public sealed partial class MainWindow : Window
     private void FillDevicePorts()
     {
         int port = _rt.Devices.Port;
-        DevicePortText.Text = $"端口 {port}";
         DefaultPortText.Text = $"{port}";
     }
 
@@ -576,6 +575,7 @@ public sealed partial class MainWindow : Window
 
         try
         {
+            UpdateGuardProbeSettings();
             var result = await _rt.Guard.ProbeNowAsync();
             DeviceGuardLastText.Text = result.Success
                 ? $"出网正常（{result.Detail}）"
@@ -977,7 +977,13 @@ public sealed partial class MainWindow : Window
         DeviceGuardThresholdBox.ValueChanged += (_, _) => ScheduleSave();
         DeviceGuardProbeTargetBox.TextChanged += (_, _) => ScheduleSave();
         DeviceGuardExternalProbeTargetBox.TextChanged += (_, _) => ScheduleSave();
-        DeviceGuardTimeoutBox.ValueChanged += (_, _) => ScheduleSave();
+        DeviceGuardTimeoutBox.ValueChanged += (_, args) =>
+        {
+            if (!_uiReady) return;
+            if (!double.IsNaN(args.NewValue))
+                _rt.Store.Settings.DeviceGuardProbeTimeoutSeconds = Math.Clamp((int)Math.Round(args.NewValue), 1, 30);
+            ScheduleSave();
+        };
         // 「立即检测一次」与「添加规则」的点击在 XAML 里直接绑到处理器，这里不再重复接线
 
         // 验证码：点按钮或直接回车提交
@@ -1232,24 +1238,20 @@ public sealed partial class MainWindow : Window
         {
             case DeviceListState.Loading:
                 DeviceSummary.Text = "正在读取在线设备…";
-                DeviceEmptyText.Visibility = Visibility.Collapsed;
                 break;
 
             case DeviceListState.Ready:
                 DeviceSummary.Text = dm.Devices.Count == 0
-                    ? $"端口 {dm.Port} 下没有其他在线设备"
-                    : $"端口 {dm.Port} · 共 {dm.Devices.Count} 台在线设备";
-                DeviceEmptyText.Visibility = dm.Devices.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+                    ? "暂无在线设备"
+                    : $"共 {dm.Devices.Count} 台在线设备";
                 break;
 
             case DeviceListState.Failed:
                 DeviceSummary.Text = "在线设备读取失败";
-                DeviceEmptyText.Visibility = Visibility.Collapsed;
                 break;
 
             default:
                 DeviceSummary.Text = "尚未加载";
-                DeviceEmptyText.Visibility = Visibility.Collapsed;
                 break;
         }
 
@@ -1556,9 +1558,32 @@ public sealed partial class MainWindow : Window
 
     private async Task OnRefreshClicked()
     {
-        _rt.AddLog("手动刷新状态");
-        ApplyState(ConnState.Checking, null, animate: true);
-        await _rt.Coordinator.RefreshAsync();
+        RefreshBtn.IsEnabled = false;
+        StatusRefreshIcon.Visibility = Visibility.Collapsed;
+        StatusRefreshProgress.Visibility = Visibility.Visible;
+        StatusRefreshProgress.IsActive = true;
+        StatusRefreshMessage.Visibility = Visibility.Collapsed;
+
+        try
+        {
+            var message = await _rt.Coordinator.RefreshStatusAsync();
+            if (message is null || _rt.Exiting) return;
+            StatusRefreshMessage.Text = message;
+            StatusRefreshMessage.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex)
+        {
+            if (_rt.Exiting) return;
+            StatusRefreshMessage.Text = $"刷新失败：{ex.Message}";
+            StatusRefreshMessage.Visibility = Visibility.Visible;
+        }
+        finally
+        {
+            StatusRefreshProgress.IsActive = false;
+            StatusRefreshProgress.Visibility = Visibility.Collapsed;
+            StatusRefreshIcon.Visibility = Visibility.Visible;
+            RefreshBtn.IsEnabled = true;
+        }
     }
 
     private void SelectOperator(Operator op)
@@ -1605,6 +1630,24 @@ public sealed partial class MainWindow : Window
         _saveTimer.Start();
     }
 
+    private int ReadGuardProbeTimeout()
+    {
+        // 文本在 NumberBox 提交 Value 前也可能已被编辑。
+        return int.TryParse(DeviceGuardTimeoutBox.Text, out int seconds)
+            ? Math.Clamp(seconds, 1, 30)
+            : _rt.Store.Settings.DeviceGuardProbeTimeoutSeconds;
+    }
+
+    private void UpdateGuardProbeSettings()
+    {
+        var s = _rt.Store.Settings;
+        s.DeviceGuardProbeTarget = NetworkProbeService.NormalizeTarget(DeviceGuardProbeTargetBox.Text);
+        s.DeviceGuardExternalProbeTarget = NetworkProbeService.IsValidTarget(DeviceGuardExternalProbeTargetBox.Text)
+            ? DeviceGuardExternalProbeTargetBox.Text.Trim() : NetworkProbeService.DefaultExternalTarget;
+
+        s.DeviceGuardProbeTimeoutSeconds = ReadGuardProbeTimeout();
+    }
+
     /// <summary>把界面上的值写回运行时配置（关窗/退出前必须先调）。</summary>
     public void PersistToStore()
     {
@@ -1629,14 +1672,7 @@ public sealed partial class MainWindow : Window
         double threshold = DeviceGuardThresholdBox.Value;
         s.DeviceGuardThreshold = double.IsNaN(threshold) ? 2 : Math.Clamp((int)Math.Round(threshold), 1, 50);
 
-        s.DeviceGuardProbeTarget = NetworkProbeService.NormalizeTarget(DeviceGuardProbeTargetBox.Text);
-        s.DeviceGuardExternalProbeTarget = NetworkProbeService.IsValidTarget(DeviceGuardExternalProbeTargetBox.Text)
-            ? DeviceGuardExternalProbeTargetBox.Text.Trim() : NetworkProbeService.DefaultExternalTarget;
-
-        double timeout = DeviceGuardTimeoutBox.Value;
-        s.DeviceGuardProbeTimeoutSeconds = double.IsNaN(timeout)
-            ? 3
-            : Math.Clamp((int)Math.Round(timeout), 1, 30);
+        UpdateGuardProbeSettings();
 
         bool settingsSaved = _rt.Store.Save();
         bool passwordSaved = _rt.Store.SavePassword(PwdBox.Password);

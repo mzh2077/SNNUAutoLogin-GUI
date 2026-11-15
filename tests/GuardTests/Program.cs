@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.NetworkInformation;
 using SNNUAutoLogin.Services;
 
@@ -128,6 +129,33 @@ try
     Check(NetworkProbeService.NormalizeTimeoutSeconds(0) == 3, "超时越界回落默认");
     Check(NetworkProbeService.NormalizeTimeoutSeconds(99) == 3, "超时越界回落默认");
     Check(NetworkProbeService.NormalizeTimeoutSeconds(10) == 10, "合法超时保持不变");
+
+    var handler = new ProbeHttpHandler();
+    using var httpProbe = new NetworkProbeService(handler);
+    var shortBudget = TimeSpan.FromMilliseconds(100);
+    var longBudget = TimeSpan.FromSeconds(5);
+
+    var https = await httpProbe.ProbeAsync("example.test", longBudget, CancellationToken.None);
+    Check(https.Success && handler.Requests[^1].Scheme == "https", "裸域名默认使用 HTTPS");
+
+    var upgraded = await httpProbe.ProbeAsync("http://example.test/upgrade", longBudget, CancellationToken.None);
+    Check(upgraded.Success && handler.Requests[^2].Scheme == "http" && handler.Requests[^1].Scheme == "https",
+        "允许一次同主机 HTTP 到 HTTPS 跳转");
+
+    int beforePortal = handler.Requests.Count;
+    var portalRedirect = await httpProbe.ProbeAsync("http://example.test/portal", longBudget, CancellationToken.None);
+    Check(!portalRedirect.Success && portalRedirect.Detail.Contains("302") && handler.Requests.Count == beforePortal + 1,
+        "跨主机门户跳转判失败");
+
+    var slow = await httpProbe.ProbeAsync("example.test/slow", shortBudget, CancellationToken.None);
+    Check(!slow.Success && slow.Detail.Contains("超时"), "短预算使慢响应超时");
+    slow = await httpProbe.ProbeAsync("example.test/slow", longBudget, CancellationToken.None);
+    Check(slow.Success, "延长预算后慢响应通过");
+
+    using var canceledProbe = new CancellationTokenSource();
+    canceledProbe.Cancel();
+    var canceled = await httpProbe.ProbeAsync("example.test/slow", longBudget, canceledProbe.Token);
+    Check(!canceled.Success && canceled.Detail.Contains("取消"), "主动取消与探测超时分开显示");
 
     // ══════════════ 守卫状态机 ══════════════
     Console.WriteLine("\n设备数守卫");
@@ -318,3 +346,26 @@ finally
 
 Console.WriteLine(failed == 0 ? $"\n全部通过（{checks} 项）" : $"\n{failed} 项失败（共 {checks} 项）");
 return failed == 0 ? 0 : 1;
+
+sealed class ProbeHttpHandler : HttpMessageHandler
+{
+    public List<Uri> Requests { get; } = new();
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        var uri = request.RequestUri!;
+        Requests.Add(uri);
+        if (uri.AbsolutePath == "/slow")
+            await Task.Delay(TimeSpan.FromMilliseconds(350), ct);
+
+        if (uri.AbsolutePath == "/portal" || (uri.AbsolutePath == "/upgrade" && uri.Scheme == "http"))
+        {
+            var redirect = new HttpResponseMessage(HttpStatusCode.Redirect);
+            redirect.Headers.Location = new Uri(uri.AbsolutePath == "/portal"
+                ? "https://portal.test/login" : "https://example.test/upgrade");
+            return redirect;
+        }
+
+        return new HttpResponseMessage(HttpStatusCode.OK);
+    }
+}

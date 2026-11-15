@@ -87,6 +87,35 @@ async Task Scenario(string name, bool startup, Action<CredentialStore>? configur
 
 var offline = LoginResult.Fail("offline");
 var ok = new LoginResult { Success = true };
+using (var coordinator = new LoginCoordinator(new CredentialStore(), new DispatcherQueue(), true))
+{
+    PortalClient.LoginCalls = 0;
+    PortalClient.Status = ok;
+    Check(await coordinator.RefreshStatusAsync() is null && coordinator.State == ConnState.Online,
+        "status refresh confirms online session");
+
+    PortalClient.Status = LoginResult.Fail("Portal unreachable");
+    Check(await coordinator.RefreshStatusAsync() is not null && coordinator.State == ConnState.Online,
+        "failed status refresh preserves verified state");
+
+    var reply = new TaskCompletionSource<LoginResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+    PortalClient.StatusRequest = ct => reply.Task.WaitAsync(ct);
+    var inFlight = coordinator.RefreshStatusAsync();
+    Check(await coordinator.RefreshStatusAsync() is not null, "status refresh skips occupied coordinator");
+    coordinator.InvalidateNetwork();
+    reply.SetResult(LoginResult.Fail("未认证"));
+    Check(await inFlight is null && coordinator.State == ConnState.Online,
+        "status refresh discards the previous network response");
+
+    PortalClient.StatusRequest = ct => new TaskCompletionSource<LoginResult>().Task.WaitAsync(ct);
+    Check((await coordinator.RefreshStatusAsync())?.Contains("超时") == true
+        && coordinator.State == ConnState.Online, "status refresh times out without clearing verified state");
+
+    PortalClient.StatusRequest = null;
+    PortalClient.Status = LoginResult.Fail("未认证");
+    Check(await coordinator.RefreshStatusAsync() is null && coordinator.State == ConnState.Offline
+        && PortalClient.LoginCalls == 0, "status refresh confirms offline without logging in");
+}
 await Scenario("startup logs in once with reconnect off", true, null, offline, ok, 1, 1);
 await Scenario("manual launch respects reconnect off", false, null, offline, ok, 0);
 await Scenario("disabled startup does not log in", true, s => s.Settings.AutoStart = false, offline, ok, 0);

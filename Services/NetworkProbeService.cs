@@ -79,14 +79,18 @@ public sealed class NetworkProbeService : INetworkProbe, IDisposable
     private readonly HttpClient _http;
     private bool _disposed;
 
-    public NetworkProbeService()
-    {
-        _http = new HttpClient(new SocketsHttpHandler
+    public NetworkProbeService() : this(new SocketsHttpHandler
         {
             AllowAutoRedirect = false,   // 门户会把请求 302 到登录页，跟随重定向会把「被劫持」当成「能出网」
             UseProxy = false,             // 校园网门户在内网，走代理反而连不上
-            ConnectTimeout = TimeSpan.FromSeconds(5)
+            ConnectTimeout = Timeout.InfiniteTimeSpan
         })
+    {
+    }
+
+    internal NetworkProbeService(HttpMessageHandler handler)
+    {
+        _http = new HttpClient(handler)
         {
             Timeout = Timeout.InfiniteTimeSpan   // 超时由我们自己按预算控制
         };
@@ -141,13 +145,6 @@ public sealed class NetworkProbeService : INetworkProbe, IDisposable
             : await ProbeHttpAsync(t, timeout, ct).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// ICMP 探测。
-    ///
-    /// .NET 8 的 Ping 没有带 CancellationToken 的重载，光靠 timeout 参数
-    /// 不够 —— 那只是「等多久算超时」，底层 socket 还可能挂着。
-    /// 这里用 WhenAny 兜一层，保证调用方取消后能立刻返回。
-    /// </summary>
     private async Task<ProbeResult> ProbeIcmpAsync(string target, TimeSpan timeout, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
@@ -155,26 +152,8 @@ public sealed class NetworkProbeService : INetworkProbe, IDisposable
         try
         {
             using var ping = new Ping();
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(timeout);
-
-            var task = ping.SendPingAsync(target, (int)timeout.TotalMilliseconds);
-            var delay = Task.Delay(timeout, CancellationToken.None);
-            var done = await Task.WhenAny(task, delay).ConfigureAwait(false);
-
-            if (done != task)
-            {
-                // 超时或被取消：Ping 任务还在后台跑，直接放弃它
-                return new ProbeResult
-                {
-                    Success = false,
-                    LatencyMs = sw.ElapsedMilliseconds,
-                    Transport = ProbeTransport.Icmp,
-                    Detail = ct.IsCancellationRequested ? "探测已取消" : $"探测超时（{timeout.TotalSeconds:0.#} 秒无响应）"
-                };
-            }
-
-            var reply = await task.ConfigureAwait(false);
+            var reply = await ping.SendPingAsync(System.Net.IPAddress.Parse(target), timeout,
+                Array.Empty<byte>(), null, ct).ConfigureAwait(false);
             sw.Stop();
 
             return reply.Status switch
@@ -191,7 +170,7 @@ public sealed class NetworkProbeService : INetworkProbe, IDisposable
                     Success = false,
                     LatencyMs = sw.ElapsedMilliseconds,
                     Transport = ProbeTransport.Icmp,
-                    Detail = "探测超时，目标不可达"
+                    Detail = $"探测超时（{timeout.TotalSeconds:0.#} 秒无响应）"
                 },
                 _ => new ProbeResult
                 {
@@ -224,79 +203,62 @@ public sealed class NetworkProbeService : INetworkProbe, IDisposable
         }
     }
 
-    /// <summary>
-    /// HTTP 探测：只有 2xx 才算通过。
-    /// 3xx 一律判失败 —— 校园网的 Web 认证门户会把任意请求重定向到登录页，
-    /// 跟随重定向会把「被门户劫持」误判成「能出网」。
-    /// </summary>
     private async Task<ProbeResult> ProbeHttpAsync(string target, TimeSpan timeout, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
+        string url = target.Contains("://") ? target : "https://" + target;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            || uri.UserInfo.Length != 0)
+        {
+            return new ProbeResult { Transport = ProbeTransport.Http, Detail = "探测地址无效" };
+        }
+
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(timeout);
+
+        ProbeResult Result(bool success, string detail) => new()
+        {
+            Success = success,
+            LatencyMs = sw.ElapsedMilliseconds,
+            Transport = ProbeTransport.Http,
+            Detail = $"{uri.Scheme.ToUpperInvariant()} {detail}"
+        };
 
         try
         {
-            string url = target.Contains("://") ? target : "http://" + target;
-
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(timeout);
-
-            using var req = new HttpRequestMessage(HttpMethod.Get, url);
-            using var resp = await _http
-                .SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token)
-                .ConfigureAwait(false);
-
-            sw.Stop();
-
-            bool ok = (int)resp.StatusCode is >= 200 and < 300;
-            return new ProbeResult
+            using var response = await _http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead,
+                budget.Token).ConfigureAwait(false);
+            int status = (int)response.StatusCode;
+            // 只接受同主机的 HTTP 到 HTTPS 升级，门户重定向仍判失败。
+            if (status is 301 or 302 or 303 or 307 or 308
+                && uri.Scheme == Uri.UriSchemeHttp
+                && Uri.TryCreate(uri, response.Headers.Location, out var redirect)
+                && redirect.Scheme == Uri.UriSchemeHttps
+                && redirect.UserInfo.Length == 0
+                && string.Equals(uri.IdnHost, redirect.IdnHost, StringComparison.OrdinalIgnoreCase))
             {
-                Success = ok,
-                LatencyMs = sw.ElapsedMilliseconds,
-                Transport = ProbeTransport.Http,
-                Detail = ok
-                    ? $"出网正常（HTTP {(int)resp.StatusCode} · {sw.ElapsedMilliseconds} ms）"
-                    : $"出网异常（HTTP {(int)resp.StatusCode}）"
-            };
+                uri = redirect;
+                using var upgraded = await _http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead,
+                    budget.Token).ConfigureAwait(false);
+                status = (int)upgraded.StatusCode;
+            }
+
+            return status is >= 200 and < 300
+                ? Result(true, $"正常（{status} · {sw.ElapsedMilliseconds} ms）")
+                : Result(false, $"响应异常（{status}）");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            return new ProbeResult
-            {
-                Success = false,
-                LatencyMs = sw.ElapsedMilliseconds,
-                Transport = ProbeTransport.Http,
-                Detail = "探测已取消"
-            };
+            return Result(false, "探测已取消");
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (budget.IsCancellationRequested)
         {
-            return new ProbeResult
-            {
-                Success = false,
-                LatencyMs = sw.ElapsedMilliseconds,
-                Transport = ProbeTransport.Http,
-                Detail = $"探测超时（{timeout.TotalSeconds:0.#} 秒无响应）"
-            };
+            return Result(false, $"探测超时（{timeout.TotalSeconds:0.#} 秒无响应）");
         }
         catch (HttpRequestException ex)
         {
-            return new ProbeResult
-            {
-                Success = false,
-                LatencyMs = sw.ElapsedMilliseconds,
-                Transport = ProbeTransport.Http,
-                Detail = $"探测失败：{ex.Message}"
-            };
-        }
-        catch (Exception ex)
-        {
-            return new ProbeResult
-            {
-                Success = false,
-                LatencyMs = sw.ElapsedMilliseconds,
-                Transport = ProbeTransport.Http,
-                Detail = $"探测失败：{ex.Message}"
-            };
+            return Result(false, $"连接失败：{ex.Message}");
         }
     }
 
