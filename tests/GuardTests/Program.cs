@@ -58,6 +58,14 @@ try
           && sorted[1].MatchType == ConnectionMatchType.WirelessAny
           && sorted[2].MatchType == ConnectionMatchType.WirelessSsid, "排序：有线 → 无线任意 → 无线指定");
 
+    // 空规则集 / 只有无关规则时，绝不能去读 SSID（读 SSID 要敲 WLAN 服务）
+    Check(!ConnectionRuleSet.NeedsSsid(null), "空规则指针不需要 SSID");
+    Check(!ConnectionRuleSet.NeedsSsid(new List<ConnectionRule>()), "空规则集不需要 SSID");
+    Check(!ConnectionRuleSet.NeedsSsid(new List<ConnectionRule> { wired, any }), "只有有线/无线任意时不需要 SSID");
+    Check(ConnectionRuleSet.NeedsSsid(new List<ConnectionRule> { wired, any, ssid1 }), "出现指定 SSID 规则时需要 SSID");
+    Check(!ConnectionRuleSet.NeedsSsid(new List<ConnectionRule> { new ConnectionRule { Id = "off", MatchType = ConnectionMatchType.WirelessSsid, Ssid = "x", Account = "a", Operator = Operator.Campus, Enabled = false } }),
+        "停用的指定 SSID 规则不算需要 SSID");
+
     // ══════════════ 匹配优先级 ══════════════
     Console.WriteLine("\n匹配优先级");
 

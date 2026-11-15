@@ -599,7 +599,7 @@ public sealed partial class MainWindow : Window
         if (!_uiBuilt) return;
 
         var s = _rt.Store.Settings;
-        var access = _rt.Access.GetCurrent();
+        var access = _rt.Access.GetCurrentWithSsid();   // 这里要展示 SSID，明确要求带上
         var profile = _rt.Profiles.Resolve();
 
         RulesCurrentLinkText.Text = access.Kind switch
@@ -732,7 +732,7 @@ public sealed partial class MainWindow : Window
 
         // 新建时用当前的实际接入状态预填：选「无线」就带上当前 SSID，
         // 账号 / 密码 / 出口也都沿用当前生效的那一套，用户改成别的即可。
-        var currentAccess = _rt.Access.GetCurrent();
+        var currentAccess = _rt.Access.GetCurrentWithSsid();   // 预填要用当前 SSID
         var currentProfile = _rt.Profiles.Resolve();
 
         var rule = existing is null
