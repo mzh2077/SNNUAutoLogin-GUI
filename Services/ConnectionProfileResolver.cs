@@ -175,6 +175,12 @@ public sealed class ConnectionProfileResolver : IConnectionProfileResolver
         var access = ConnectionRuleSet.NeedsSsid(settings.ConnectionRules)
             ? _access.GetCurrentWithSsid()
             : _access.GetCurrent();
+        return Resolve(access);
+    }
+
+    public EffectiveProfile Resolve(NetworkAccessInfo access)
+    {
+        var settings = _store.Settings;
         var rule = Match(access.Kind, access.Ssid, access.SsidReliable, settings.ConnectionRules);
 
         // 端口是门户分配的，跟规则无关；这里只是兜底默认值
