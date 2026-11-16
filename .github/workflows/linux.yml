@@ -152,6 +152,8 @@ jobs:
           export XDG_RUNTIME_DIR="$(mktemp -d)"
           chmod 700 "$XDG_RUNTIME_DIR"
           chmod +x ./artifacts/linux/SNNUAutoLogin-*-x86_64.AppImage
+          # 容器里没有 FUSE，AppImage 挂不上，只能解压后再跑
+          export APPIMAGE_EXTRACT_AND_RUN=1
           timeout 240 dbus-run-session -- xvfb-run -a \
               ./artifacts/linux/SNNUAutoLogin-*-x86_64.AppImage \
               --page settings --screenshot /tmp/appimage.png
