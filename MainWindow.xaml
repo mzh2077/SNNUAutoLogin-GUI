@@ -15,6 +15,11 @@
     -->
     <Grid x:Name="Root">
         <Grid.Resources>
+            <StaticResource x:Key="TextControlBorderBrush" ResourceKey="ControlStrokeColorDefaultBrush" />
+            <StaticResource x:Key="TextControlBorderBrushPointerOver" ResourceKey="ControlStrokeColorSecondaryBrush" />
+            <StaticResource x:Key="TextControlBorderBrushFocused" ResourceKey="SystemControlHighlightAccentBrush" />
+            <StaticResource x:Key="ComboBoxBorderBrush" ResourceKey="ControlStrokeColorDefaultBrush" />
+            <StaticResource x:Key="ComboBoxBorderBrushPointerOver" ResourceKey="ControlStrokeColorSecondaryBrush" />
 
             <!--  bool → Visibility：设备行里「点击下线」与「断开连接」按会话类型二选一  -->
             <local:BoolToVisibilityConverter x:Key="BoolToVisibility" />
@@ -99,6 +104,8 @@
             </Style>
 
             <Style x:Key="FormInputStyle" TargetType="Control">
+                <Setter Property="BorderBrush" Value="{ThemeResource ControlStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
                 <Setter Property="CornerRadius" Value="4" />
                 <Setter Property="MinHeight" Value="32" />
                 <Setter Property="VerticalAlignment" Value="Center" />
