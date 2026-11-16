@@ -1328,9 +1328,15 @@
                                     FontSize="12"
                                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                     Text="问题反馈" />
-                                <HyperlinkButton Grid.Column="1" HorizontalAlignment="Right"
-                                    Style="{StaticResource InlineLinkStyle}" Content="提交 Issue"
-                                    NavigateUri="https://github.com/mzh2077/SNNUAutoLogin-GUI/issues/new" />
+                                <StackPanel Grid.Column="1" HorizontalAlignment="Right"
+                                    VerticalAlignment="Center" Orientation="Horizontal" Spacing="12">
+                                    <HyperlinkButton Style="{StaticResource InlineLinkStyle}"
+                                        Content="GitHub Issues"
+                                        NavigateUri="https://github.com/mzh2077/SNNUAutoLogin-GUI/issues" />
+                                    <HyperlinkButton Style="{StaticResource InlineLinkStyle}"
+                                        Content="Gitee Issues"
+                                        NavigateUri="https://gitee.com/marike_86/SNNUAutoLogin-GUI/issues" />
+                                </StackPanel>
                             </Grid>
                         </StackPanel>
                     </Border>
