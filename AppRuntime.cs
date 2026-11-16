@@ -71,6 +71,8 @@ public sealed class AppRuntime : IAsyncDisposable
 
     public event Action<ConnState, LoginResult?>? StateChanged;
     public event Action<string>? Logged;
+    public event Action? UpdateAvailable;
+    public string? NewReleaseTag { get; private set; }
 
     /// <summary>托盘菜单里改了配置（窗口若开着需要回读）。</summary>
     public event Action? SettingsChanged;
@@ -129,6 +131,30 @@ public sealed class AppRuntime : IAsyncDisposable
         AddLog(Store.Settings.AutoStart && StartupManager.IsEnabled()
             ? "开机自启已注册"
             : "开机自启未启用");
+        _ = CheckForUpdateAsync();
+    }
+
+    private async Task CheckForUpdateAsync()
+    {
+        var installed = typeof(AppRuntime).Assembly.GetName().Version;
+        if (installed is null) return;
+
+        try
+        {
+            var tag = await ReleaseUpdateCheck.FindUpdateAsync(installed).ConfigureAwait(false);
+            if (tag is null) return;
+
+            Dispatcher.TryEnqueue(() =>
+            {
+                if (Exiting) return;
+                NewReleaseTag = tag;
+                AddLog($"发现新版本 {tag}");
+                UpdateAvailable?.Invoke();
+            });
+        }
+        catch (System.Net.Http.HttpRequestException) { }
+        catch (OperationCanceledException) { }
+        catch (System.Text.Json.JsonException) { }
     }
 
     public MainWindow? Window => _window;

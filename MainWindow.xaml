@@ -119,11 +119,6 @@
             </Style>
 
             <Style
-                x:Key="RowComboBoxStyle"
-                BasedOn="{StaticResource RowInputBase}"
-                TargetType="ComboBox" />
-
-            <Style
                 x:Key="RowNumberBoxStyle"
                 BasedOn="{StaticResource RowInputBase}"
                 TargetType="NumberBox">
@@ -330,9 +325,27 @@
                                     VerticalAlignment="Center"
                                     FontSize="12"
                                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                    Text="出口 IP" />
+                                    Text="本机 IP" />
                                 <TextBlock
                                     x:Name="IpText"
+                                    Grid.Column="1"
+                                    HorizontalAlignment="Right"
+                                    Style="{StaticResource ValueTextStyle}"
+                                    Text="—" />
+                            </Grid>
+
+                            <Grid Height="30">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock
+                                    VerticalAlignment="Center"
+                                    FontSize="12"
+                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                    Text="出口 IP" />
+                                <TextBlock
+                                    x:Name="PublicIpText"
                                     Grid.Column="1"
                                     HorizontalAlignment="Right"
                                     Style="{StaticResource ValueTextStyle}"
@@ -383,6 +396,8 @@
                                 Foreground="White"
                                 Content="切换出口"
                                 Click="OnSwitchOutletClicked" />
+                            <HyperlinkButton x:Name="UpdateLink" Margin="0,6,0,0"
+                                Padding="0" Visibility="Collapsed" />
                             <TextBlock x:Name="StatusRefreshMessage" Style="{StaticResource HintStyle}"
                                 Margin="0,6,0,0" TextWrapping="Wrap" Visibility="Collapsed"
                                 AutomationProperties.LiveSetting="Polite" />
@@ -575,7 +590,7 @@
                                                     <TextBlock
                                                         FontSize="11"
                                                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                                        Text="{Binding Detail}" />
+                                                        Text="{Binding Detail}" TextWrapping="Wrap" />
                                                 </StackPanel>
 
                                                 <StackPanel
@@ -930,7 +945,7 @@
                                 x:Name="RulesFallbackHint"
                                 Margin="0,8,0,0"
                                 Style="{StaticResource HintStyle}"
-                                Text="没有匹配到规则时，使用「默认账号与出口」里的账号与端口。" />
+                                Text="没有匹配到规则时，使用「默认账号」中的账号。" />
                             <TextBlock
                                 Margin="0,4,0,0"
                                 Style="{StaticResource HintStyle}"
@@ -939,7 +954,7 @@
                         </StackPanel>
                     </Border>
 
-                    <!--  默认账号与出口  -->
+                    <!--  默认账号  -->
                     <Border x:Name="AccountCard" Style="{StaticResource CardStyle}">
                         <StackPanel Padding="20,14,20,14" Spacing="0">
                             <StackPanel
@@ -947,7 +962,7 @@
                                 Orientation="Horizontal"
                                 Spacing="8">
                                 <FontIcon Style="{StaticResource SectionIconStyle}" Glyph="&#xE77B;" />
-                                <TextBlock Style="{StaticResource CardTitleStyle}" Text="默认账号与出口" />
+                                <TextBlock Style="{StaticResource CardTitleStyle}" Text="默认账号" />
                             </StackPanel>
 
                             <Grid MinHeight="42">
@@ -991,28 +1006,6 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock
-                                    VerticalAlignment="Center"
-                                    Style="{StaticResource RowTitleStyle}"
-                                    Text="网络出口" />
-                                <ComboBox
-                                    x:Name="OperatorBox"
-                                    Grid.Column="1"
-                                    Style="{StaticResource RowComboBoxStyle}">
-                                    <ComboBoxItem Content="校园网直连" />
-                                    <ComboBoxItem Content="中国移动" />
-                                    <ComboBoxItem Content="中国联通" />
-                                    <ComboBoxItem Content="中国电信" />
-                                </ComboBox>
-                            </Grid>
-
-                            <Border Style="{StaticResource DividerStyle}" />
-
-                            <Grid MinHeight="42">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
                                 <StackPanel VerticalAlignment="Center" Spacing="1">
                                     <TextBlock
                                         Style="{StaticResource RowTitleStyle}"
@@ -1029,12 +1022,6 @@
                                     Style="{StaticResource RowTitleStyle}"
                                     Text="—" />
                             </Grid>
-
-                            <TextBlock
-                                x:Name="OpHint"
-                                Margin="0,8,0,0"
-                                Style="{StaticResource HintStyle}"
-                                Text="未命中任何连接规则时使用这里的账号与出口；校园网为校内直连出口，移动 / 联通 / 电信为运营商代拨出口。" />
 
                             <!--  验证码：只在 Portal 要求时出现  -->
                             <StackPanel

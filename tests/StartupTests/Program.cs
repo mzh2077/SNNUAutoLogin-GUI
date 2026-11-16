@@ -10,6 +10,21 @@ void Check(bool condition, string name)
     checks++;
 }
 
+const string releases = """
+    [
+      {"tag_name":"v1.6.3","draft":false,"prerelease":false},
+      {"tag_name":"1.7.0","draft":false,"prerelease":false},
+      {"tag_name":"1.6.2-fix","draft":false,"prerelease":false},
+      {"tag_name":"linux-2.0.0","draft":false,"prerelease":false},
+      {"tag_name":"2.0.0","draft":false,"prerelease":true},
+      {"tag_name":"3.0.0","draft":true,"prerelease":false}
+    ]
+    """;
+Check(ReleaseUpdateCheck.FindNewerTag(releases, new Version(1, 6, 2, 0)) == "1.7.0",
+    "update check picks highest stable application version");
+Check(ReleaseUpdateCheck.FindNewerTag(releases, new Version(1, 7, 0, 0)) is null,
+    "update check skips current, draft, preview and platform-specific releases");
+
 string path = @"C:\Portable App\SNNUAutoLogin.exe";
 void CheckRegistration(Func<bool, string, bool> setEnabled, Func<string, bool> isEnabled,
     Func<string?> readEntry, Action<string> writeLegacyEntry)

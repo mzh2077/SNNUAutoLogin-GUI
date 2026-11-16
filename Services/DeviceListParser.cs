@@ -36,7 +36,7 @@ public sealed class OnlineDevice : INotifyPropertyChanged
     /// <summary>能否强制下线：只有别人（或别的出口）的会话才有会话标识。</summary>
     public bool CanForceOffline => !string.IsNullOrEmpty(SessionId);
 
-    /// <summary>第二行的明细：MAC、接入端口、位置。</summary>
+    /// <summary>第二行的明细：MAC、接入端口或位置，以及门户记录的上线时间。</summary>
     public string Detail
     {
         get
@@ -49,6 +49,7 @@ public sealed class OnlineDevice : INotifyPropertyChanged
             else if (!string.IsNullOrWhiteSpace(Location))
                 parts.Add(Location);
 
+            if (!string.IsNullOrWhiteSpace(LoginTime)) parts.Add("上线时间 " + LoginTime);
             return string.Join(" · ", parts);
         }
     }

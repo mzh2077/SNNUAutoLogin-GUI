@@ -77,6 +77,7 @@ if (devices.Count == 2)
     Check("IP 正确", phone.Ip == "10.139.31.240", phone.Ip);
     Check("MAC 正确", phone.Mac == "06:3b:96:c0:c4:4a", phone.Mac);
     Check("上线时间正确", phone.LoginTime == "2026-10-30 17:36:39", phone.LoginTime);
+    Check("设备明细显示门户上线时间", phone.Detail.Contains("上线时间 2026-10-30 17:36:39"), phone.Detail);
     Check("位置正确", phone.Location == "雁塔校区无线用户", phone.Location);
 
     Check("别的会话可以强制下线", phone.CanForceOffline);

@@ -36,7 +36,6 @@ public sealed partial class MainWindow : Window
 
     private AppWindow? _appWindow;
     private WindowCloseHook? _closeHook;
-    private Operator _operator = Operator.Mobile;
     private ConnState _lastState = ConnState.Idle;
     private bool _uiReady;
     private bool _uiBuilt;
@@ -76,6 +75,7 @@ public sealed partial class MainWindow : Window
         _rt.StateChanged += OnRuntimeState;
         _rt.Coordinator.CaptchaChanged += OnCaptchaChanged;
         _rt.Logged += OnRuntimeLog;
+        _rt.UpdateAvailable += ShowUpdateLink;
         _rt.SettingsChanged += OnRuntimeSettings;
         _rt.LegacyHostsChanged += OnLegacyHostsChanged;
         _rt.Devices.Changed += OnDeviceListChanged;
@@ -199,8 +199,9 @@ public sealed partial class MainWindow : Window
 
         LogList.ItemsSource = Logs;
         ShowVersion();
+        ShowUpdateLink();
 
-        // 先置位再灌值：SyncOperatorUi / ApplyState 都会检查 _uiBuilt
+        // 先置位再灌值：ApplyState 都会检查 _uiBuilt
         _uiBuilt = true;
 
         LoadSettingsToUi();
@@ -232,6 +233,7 @@ public sealed partial class MainWindow : Window
         if (!_uiBuilt) return;
 
         PersistToStore();
+        ClearPublicIp();
         _uiBuilt = false;
 
         try { LogList.ItemsSource = null; } catch { }
@@ -256,6 +258,15 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>关于卡片里的版本号直接读程序集，别再手写一份（以前写死 1.0.0，升级后就对不上了）。</summary>
+    private void ShowUpdateLink()
+    {
+        if (UpdateLink is null || _rt.NewReleaseTag is not { } tag) return;
+
+        UpdateLink.Content = $"发现新版本 {tag} · 前往下载";
+        UpdateLink.NavigateUri = new Uri(ReleaseUpdateCheck.ReleaseUrl(tag));
+        UpdateLink.Visibility = Visibility.Visible;
+    }
+
     private void ShowVersion()
     {
         try
@@ -453,17 +464,12 @@ public sealed partial class MainWindow : Window
 
     // ────────────────────────── 初始化 ──────────────────────────
 
-    /// <summary>开发期用：--op=N 强制指定出口，--dark 强制深色，配合 --snapshot 验证界面。</summary>
+    /// <summary>开发期用：--dark 强制深色，配合 --snapshot 验证界面。</summary>
     private void ApplyCommandLineOverrides()
     {
         foreach (var arg in Environment.GetCommandLineArgs())
         {
-            if (arg.StartsWith("--op=", StringComparison.OrdinalIgnoreCase)
-                && int.TryParse(arg.AsSpan(5), out int op) && op is >= 0 and <= 3)
-            {
-                _operator = (Operator)op;
-            }
-            else if (arg.Equals("--dark", StringComparison.OrdinalIgnoreCase))
+            if (arg.Equals("--dark", StringComparison.OrdinalIgnoreCase))
             {
                 Root.RequestedTheme = ElementTheme.Dark;
             }
@@ -492,9 +498,6 @@ public sealed partial class MainWindow : Window
         DeviceGuardExternalProbeTargetBox.Text = s.DeviceGuardExternalProbeTarget;
         DeviceGuardTimeoutBox.Value = s.DeviceGuardProbeTimeoutSeconds;
         UpdateGuardUiEnabledState();
-
-        _operator = s.Operator;
-        SyncOperatorUi();
 
         SyncLegacyHostsBar();
         _uiReady = ready;
@@ -950,12 +953,6 @@ public sealed partial class MainWindow : Window
         RepoLinkButton.Click += (_, _) => OpenExternal(RepoUrl);
         IssueLinkButton.Click += (_, _) => OpenExternal(IssueUrl);
 
-        OperatorBox.SelectionChanged += (_, _) =>
-        {
-            if (!_uiReady || OperatorBox.SelectedIndex < 0) return;
-            SelectOperator((Operator)OperatorBox.SelectedIndex);
-        };
-
         AccountBox.TextChanged += (_, _) => ScheduleSave();
         PwdBox.PasswordChanged += (_, _) => ScheduleSave();
 
@@ -1125,11 +1122,61 @@ public sealed partial class MainWindow : Window
         return null;
     }
 
+    private static readonly System.Net.Http.HttpClient PublicIpClient = new(
+        new System.Net.Http.SocketsHttpHandler { UseProxy = false })
+    {
+        Timeout = TimeSpan.FromSeconds(4)
+    };
+
+    private System.Threading.CancellationTokenSource? _publicIpRequest;
+    private (string? Account, string? Ip, string? LoginTime)? _publicIpSession;
+    private long _publicIpCheckedAt;
+
+    private void ClearPublicIp()
+    {
+        _publicIpRequest?.Cancel();
+        _publicIpRequest = null;
+        _publicIpSession = null;
+        if (PublicIpText is { } text) text.Text = "—";
+    }
+
+    private async Task UpdatePublicIpAsync(LoginResult? result, bool force = false)
+    {
+        var session = (result?.Account, result?.Ip, result?.LoginTime);
+        if (_publicIpSession == session && (_publicIpRequest is not null
+            || (!force && Environment.TickCount64 - _publicIpCheckedAt < 300_000))) return;
+
+        ClearPublicIp();
+        _publicIpSession = session;
+        PublicIpText.Text = "查询中…";
+        using var request = new System.Threading.CancellationTokenSource();
+        _publicIpRequest = request;
+        string value = "暂不可用";
+        try
+        {
+            string body = await PublicIpClient.GetStringAsync("https://ipinfo.io/ip", request.Token);
+            if (System.Net.IPAddress.TryParse(body.Trim(), out var address))
+                value = address.ToString();
+        }
+        catch (System.Net.Http.HttpRequestException) { }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            if (ReferenceEquals(_publicIpRequest, request))
+            {
+                _publicIpRequest = null;
+                _publicIpCheckedAt = Environment.TickCount64;
+                if (_uiBuilt) PublicIpText.Text = value;
+            }
+        }
+    }
+
     private void ApplyState(ConnState state, LoginResult? result, bool animate)
     {
         if (!_uiBuilt) return;
 
         _lastState = state;
+        if (state != ConnState.Online) ClearPublicIp();
 
         string title;
         string subtitle;
@@ -1144,6 +1191,7 @@ public sealed partial class MainWindow : Window
                     : $"当前出口已通过认证 · {rhythm}";
                 AccText.Text = result?.Account ?? (string.IsNullOrWhiteSpace(AccountBox.Text) ? "—" : AccountBox.Text.Trim());
                 IpText.Text = result?.Ip ?? "—";
+                _ = UpdatePublicIpAsync(result);
                 break;
 
             case ConnState.Connecting:
@@ -1576,7 +1624,13 @@ public sealed partial class MainWindow : Window
         try
         {
             var message = await _rt.Coordinator.RefreshStatusAsync();
-            if (message is null || _rt.Exiting) return;
+            if (_rt.Exiting) return;
+            if (message is null)
+            {
+                if (_rt.State == ConnState.Online)
+                    _ = UpdatePublicIpAsync(_rt.LastResult, force: true);
+                return;
+            }
             StatusRefreshMessage.Text = message;
             StatusRefreshMessage.Visibility = Visibility.Visible;
         }
@@ -1595,20 +1649,6 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void SelectOperator(Operator op)
-    {
-        if (_operator == op)
-        {
-            SyncOperatorUi();
-            return;
-        }
-
-        _operator = op;
-        SyncOperatorUi();
-        _rt.AddLog($"出口切换为 {OperatorName(op)}");
-        ScheduleSave();
-    }
-
     private static string OperatorName(Operator op) => op switch
     {
         Operator.Mobile => "中国移动",
@@ -1616,20 +1656,6 @@ public sealed partial class MainWindow : Window
         Operator.Telecom => "中国电信",
         _ => "校园网直连"
     };
-
-    /// <summary>把字段值同步到下拉框（守卫再入，避免 SelectionChanged 递归）。</summary>
-    private void SyncOperatorUi()
-    {
-        if (!_uiBuilt) return;
-
-        int index = Math.Clamp((int)_operator, 0, 3);
-        if (OperatorBox.SelectedIndex == index) return;
-
-        bool ready = _uiReady;
-        _uiReady = false;
-        OperatorBox.SelectedIndex = index;
-        _uiReady = ready;
-    }
 
     // ────────────────────────── 持久化 ──────────────────────────
 
@@ -1665,7 +1691,6 @@ public sealed partial class MainWindow : Window
 
         var s = _rt.Store.Settings;
         s.Account = AccountBox.Text.Trim();
-        s.Operator = _operator;
         s.AutoReconnect = AutoReconnectSwitch.IsOn;
         s.MinimizeToTray = TraySwitch.IsOn;
         s.KeepAliveOnLock = LockKeepSwitch.IsOn;
@@ -1702,11 +1727,13 @@ public sealed partial class MainWindow : Window
         PersistToStore();
 
         _saveTimer.Stop();
+        ClearPublicIp();
         _uiBuilt = false;
 
         _theme.Changed -= OnThemeChanged;
         _rt.StateChanged -= OnRuntimeState;
         _rt.Logged -= OnRuntimeLog;
+        _rt.UpdateAvailable -= ShowUpdateLink;
         _rt.SettingsChanged -= OnRuntimeSettings;
         _rt.LegacyHostsChanged -= OnLegacyHostsChanged;
         _rt.Coordinator.CaptchaChanged -= OnCaptchaChanged;
