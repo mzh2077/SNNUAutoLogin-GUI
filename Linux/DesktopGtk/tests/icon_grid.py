@@ -33,14 +33,14 @@ CANDIDATES = (
     "network-wireless-symbolic",
     "network-workgroup-symbolic",
     "network-transmit-receive-symbolic",
-    "network-server-symbolic",
     "network-wired-symbolic",
+    "network-server-symbolic",
     "video-display-symbolic",
-    "device-desktop-symbolic",
-    "smartphone-symbolic",
     "preferences-system-symbolic",
     "document-edit-symbolic",
-    "edit-symbolic",
+    "document-open-symbolic",
+    "applications-system-symbolic",
+    "emblem-synchronizing-symbolic",
     "image-missing-symbolic",
 )
 
@@ -49,25 +49,27 @@ class Grid(Adw.ApplicationWindow):
     def __init__(self, target: str, **kwargs: object) -> None:
         # 必须把 application 传下去：不然这个窗口不算在程序名下，GtkApplication
         # 看到「一个窗口都没有」会立刻退出，连定时器都来不及跑。
-        super().__init__(title="图标对照表", default_width=760, default_height=340, **kwargs)
+        super().__init__(title="图标对照表", default_width=760, default_height=620, **kwargs)
         self._target = target
-        self._box = Gtk.FlowBox(
-            max_children_per_line=4,
-            min_children_per_line=4,
-            row_spacing=12,
-            column_spacing=12,
-            margin_top=18,
-            margin_bottom=18,
-            margin_start=18,
-            margin_end=18,
-            selection_mode=Gtk.SelectionMode.NONE,
-        )
-        for name in CANDIDATES:
-            cell = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-            cell.append(Gtk.Image(icon_name=name, pixel_size=24))
-            cell.append(Gtk.Label(label=name.replace("-symbolic", ""), wrap=True, max_width_chars=18))
-            self._box.append(cell)
-        self.set_content(self._box)
+        # 同一个图标分别按 16px 和 24px 画一遍：标签栏里用的是 16px，而
+        # 大尺寸能画出来不代表小尺寸也能。
+        rows = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin_top=14, margin_bottom=14)
+        for size in (16, 24):
+            rows.append(Gtk.Label(label=f"{size}px", xalign=0, margin_start=16))
+            box = Gtk.FlowBox(
+                max_children_per_line=8,
+                min_children_per_line=8,
+                margin_start=16,
+                margin_end=16,
+                selection_mode=Gtk.SelectionMode.NONE,
+            )
+            for name in CANDIDATES:
+                cell = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                cell.append(Gtk.Image(icon_name=name, pixel_size=size))
+                cell.append(Gtk.Label(label=name.replace("-symbolic", ""), wrap=True, max_width_chars=12))
+                box.append(cell)
+            rows.append(box)
+        self.set_content(rows)
 
     def save(self) -> bool:
         try:

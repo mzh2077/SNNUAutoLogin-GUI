@@ -95,6 +95,7 @@ jobs:
           # 不然只能对着截图猜为什么有个方框。librsvg 这轮确认是装着的，
           # 所以顺带把 svg 文件本身也丢进来看能不能解码。
           dpkg -l | grep -Ei 'adwaita-icon|rsvg|librsvg' || true
+          ls /usr/share/icons/Adwaita/symbolic-up-to-32/ | head -20 || true
           echo "SVG 数：$(find /usr/share/icons/Adwaita -name '*.svg' 2>/dev/null | wc -l)  PNG 数：$(find /usr/share/icons/Adwaita -name '*.png' 2>/dev/null | wc -l)"
           dbus-run-session -- python3 Linux/DesktopGtk/tests/icon_probe.py \
               computer-symbolic network-wireless-signal-good-symbolic view-list-symbolic \
