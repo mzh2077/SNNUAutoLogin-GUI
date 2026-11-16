@@ -92,20 +92,20 @@ jobs:
           sleep 3
           export DISPLAY=:99
           # 主题里有没有这个图标 vs 画不画得出来是两回事，先把这个摸清楚，
-          # 不然只能对着截图猜为什么有个方框。
+          # 不然只能对着截图猜为什么有个方框。librsvg 这轮确认是装着的，
+          # 所以顺带把 svg 文件本身也丢进来看能不能解码。
           dpkg -l | grep -Ei 'adwaita-icon|rsvg|librsvg' || true
-          ls /usr/share/icons/Adwaita/symbolic-up-to-32/ | head -20 || true
           echo "SVG 数：$(find /usr/share/icons/Adwaita -name '*.svg' 2>/dev/null | wc -l)  PNG 数：$(find /usr/share/icons/Adwaita -name '*.png' 2>/dev/null | wc -l)"
           dbus-run-session -- python3 Linux/DesktopGtk/tests/icon_probe.py \
-              computer-symbolic network-wireless-signal-good-symbolic edit-symbolic \
-              document-edit-symbolic view-list-symbolic emblem-system-symbolic || true
-          # 对照组：容器里没有 SVG 栅格化器时，adwaita 的图标是不是全废
-          dbus-run-session -- bash Linux/DesktopGtk/tests/capture.sh artifacts/linux/shots-before
-          apt-get install -y --no-install-recommends librsvg2-common
-          dbus-run-session -- python3 Linux/DesktopGtk/tests/icon_probe.py computer-symbolic || true
+              computer-symbolic network-wireless-signal-good-symbolic view-list-symbolic \
+              document-edit-symbolic \
+              /usr/share/icons/Adwaita/symbolic/devices/computer-symbolic.svg \
+              /usr/share/icons/Adwaita/symbolic/status/network-wireless-signal-good-symbolic.svg \
+              /usr/share/icons/Adwaita/symbolic/actions/view-list-symbolic.svg \
+              /usr/share/icons/Adwaita/symbolic/actions/document-edit-symbolic.svg || true
           dbus-run-session -- bash Linux/DesktopGtk/tests/capture.sh artifacts/linux/shots
           kill "$agent" "$xvfb" 2>/dev/null || true
-          ls -l artifacts/linux/shots artifacts/linux/shots-before
+          ls -l artifacts/linux/shots
           # 纯黑屏只有几百字节；四张一模一样说明后面的窗口根本没画出来
           for shot in artifacts/linux/shots/ui-*.png; do
             test "$(stat -c%s "$shot")" -gt 5000
