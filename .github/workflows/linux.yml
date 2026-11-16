@@ -78,7 +78,7 @@ jobs:
         if: matrix.distro == 'ubuntu-24.04'
         shell: bash
         run: |
-          apt-get install -y --no-install-recommends fonts-noto-cjk imagemagick dbus
+          apt-get install -y --no-install-recommends fonts-noto-cjk dbus
           # 上一步已经把包装上又卸掉验证干净了，这里重新装一遍再截图。
           apt-get install -y --no-install-recommends ./artifacts/linux/snnuautologin_*.deb ./artifacts/linux/snnuautologin-desktop_*.deb
           command -v snnuautologin-desktop
@@ -91,30 +91,7 @@ jobs:
           xvfb=$!
           sleep 3
           export DISPLAY=:99
-          # 主题里有没有这个图标 vs 画不画得出来是两回事，先把这个摸清楚，
-          # 不然只能对着截图猜为什么有个方框。librsvg 这轮确认是装着的，
-          # 所以顺带把 svg 文件本身也丢进来看能不能解码。
-          dpkg -l | grep -Ei 'adwaita-icon|rsvg|librsvg' || true
-          ls /usr/share/icons/Adwaita/symbolic-up-to-32/ | head -20 || true
-          echo "SVG 数：$(find /usr/share/icons/Adwaita -name '*.svg' 2>/dev/null | wc -l)  PNG 数：$(find /usr/share/icons/Adwaita -name '*.png' 2>/dev/null | wc -l)"
-          dbus-run-session -- python3 Linux/DesktopGtk/tests/icon_probe.py \
-              computer-symbolic network-wireless-signal-good-symbolic view-list-symbolic \
-              document-edit-symbolic \
-              /usr/share/icons/Adwaita/symbolic/devices/computer-symbolic.svg \
-              /usr/share/icons/Adwaita/symbolic/status/network-wireless-signal-good-symbolic.svg \
-              /usr/share/icons/Adwaita/symbolic/actions/view-list-symbolic.svg \
-              /usr/share/icons/Adwaita/symbolic/actions/document-edit-symbolic.svg || true
           dbus-run-session -- bash Linux/DesktopGtk/tests/capture.sh artifacts/linux/shots
-          # 图标文件本身没问题，那问题就在控件上：把含图标的控件打出来看看
-          # 它们到底是「设了名字但没取到图标」还是别的。
-          timeout 30s dbus-run-session -- snnuautologin-desktop --page settings --dump-widgets \
-              --screenshot /tmp/dump.png > /tmp/dump.log 2>&1 || true
-          cp /tmp/dump.log artifacts/linux/dump.log
-          wc -l artifacts/linux/dump.log
-          # 控件那边图标名是对的，那就是有些图标在这台机器上画不出来：
-          # 把候选摆一排拍下来，谁能画出来看图和日志就行。
-          dbus-run-session -- python3 -u Linux/DesktopGtk/tests/icon_grid.py \
-              artifacts/linux/shots/icons.png || echo "对照表没跑成，退出码 $?"
           kill "$agent" "$xvfb" 2>/dev/null || true
           ls -l artifacts/linux/shots
           # 纯黑屏只有几百字节；四张一模一样说明后面的窗口根本没画出来
@@ -135,4 +112,4 @@ jobs:
         if: always() && matrix.distro == 'ubuntu-24.04'
         with:
           name: SNNUAutoLogin-linux-ui-shots
-          path: artifacts/linux/shots*/*.png
+          path: artifacts/linux/shots/*.png

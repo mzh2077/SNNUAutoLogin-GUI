@@ -54,6 +54,24 @@ PYTHONPATH=Linux/DesktopGtk python3 -m snnuautologin_desktop
 
 `--page rules|devices|settings` 可以直接打开某个页面，`tests/fake_agent.py --captcha` 把状态切成等待验证码。这两个开关是给截图和人工核对用的。
 
+界面外观靠 `tests/capture.sh` 逐页截图核对（CI 里跑，图在 `SNNUAutoLogin-linux-ui-shots` 这个 artifact 里）：
+
+```bash
+Xvfb :99 -screen 0 1280x1300x24 &
+DISPLAY=:99 bash Linux/DesktopGtk/tests/capture.sh /tmp/shots
+```
+
+图标上踩过一次坑，记在这里省得再查：标签栏的图标是在窗口构造时就设好的，那会儿图标主题的索引还没铺开，`Gtk.IconTheme.has_icon()` 说有、SVG 也能解码，可 `Adw.ViewSwitcherButton` 里就是个「图标缺失」的方框。所以 `MainWindow` 在 `map` 之后会把图标名清空再写回去，逼标签重查一次。同类的 `Adw.EntryRow` 行尾小铅笔也一样，等行真画出来才存在，要在这时候再扫一遍控件树。排查工具：
+
+```bash
+# 控件树（含每个图标的名字、有没有拿到 paintable）
+DISPLAY=:99 snnuautologin-desktop --page settings --dump-widgets --screenshot /tmp/x.png
+# 某个图标名能不能用：查得到 / 匹配到哪个文件 / 那个 svg 能不能解
+DISPLAY=:99 python3 Linux/DesktopGtk/tests/icon_probe.py computer-symbolic
+# 候选图标摆一排（16px 与 24px，外加真的 ViewSwitcher），看谁画得出来
+DISPLAY=:99 python3 Linux/DesktopGtk/tests/icon_grid.py /tmp/icons.png
+```
+
 ## 构建与测试
 
 在 Linux 上安装 .NET 10 SDK、`dpkg-deb` 和桌面的 GTK 依赖。共享库的 .NET 8 目标包会随 NuGet 还原。
