@@ -32,6 +32,15 @@ class Widget:
         self.visible = True
         self.sensitive = True
 
+    def get_display(self):
+        return DISPLAY
+
+    def get_first_child(self):
+        return self.children[0] if self.children else None
+
+    def get_next_sibling(self):
+        return None
+
     def append(self, child):
         self.children.append(child)
 
@@ -243,6 +252,50 @@ class Menu(Widget):
         self.items.append((label, action or ""))
 
 
+# 图标主题的替身：可用图标集合可以整个换掉，用来测「主题里没有这个图标」的分支。
+DEFAULT_ICONS = {
+    "network-wireless-signal-good-symbolic",
+    "view-list-symbolic",
+    "computer-symbolic",
+    "emblem-system-symbolic",
+    "edit-symbolic",
+    "document-edit-symbolic",
+    "media-record-symbolic",
+}
+
+
+class Display:
+    pass
+
+
+class IconTheme:
+    def __init__(self):
+        self.available = set(DEFAULT_ICONS)
+
+    def has_icon(self, name):
+        return name in self.available
+
+    @classmethod
+    def get_for_display(cls, _display):
+        return ICON_THEME
+
+
+DISPLAY = Display()
+ICON_THEME = IconTheme()
+
+
+class Image(Widget):
+    def __init__(self, icon_name=None, **props):
+        super().__init__(**props)
+        self.icon_name = icon_name
+
+    def get_icon_name(self):
+        return self.icon_name
+
+    def set_from_icon_name(self, name):
+        self.icon_name = name
+
+
 def _build_gi() -> types.ModuleType:
     adw = types.ModuleType("gi.repository.Adw")
     gtk = types.ModuleType("gi.repository.Gtk")
@@ -271,7 +324,8 @@ def _build_gi() -> types.ModuleType:
     adw.AboutDialog = Widget
 
     gtk.Box = Widget
-    gtk.Image = Widget
+    gtk.Image = Image
+    gtk.IconTheme = IconTheme
     gtk.Picture = Widget
     gtk.Label = Widget
     gtk.Button = Widget
@@ -345,6 +399,57 @@ def test_every_page_has_view_switcher_icon() -> None:
     win = _make_window(agent)
     assert set(win._stack.icons) == {"connection", "rules", "devices", "settings"}, win._stack.icons
     assert all(name for name in win._stack.icons.values()), win._stack.icons
+
+
+class _Theme:
+    """临时换掉替身主题里的可用图标，用来测「主题里没有这个图标」的分支。"""
+
+    def __init__(self, icons: set[str]) -> None:
+        self._icons = set(icons)
+
+    def __enter__(self):
+        self._saved = set(ICON_THEME.available)
+        ICON_THEME.available = set(self._icons)
+        return self
+
+    def __exit__(self, *_exc):
+        ICON_THEME.available = self._saved
+        return False
+
+
+def test_page_icons_fall_back_to_names_the_theme_has() -> None:
+    # Ubuntu 24.04 上 network-wireless-signal-good-symbolic / computer-symbolic
+    # 都取不到，标签前面会掉成「图标缺失」的方框，所以要往下捡一个存在的。
+    agent = FakeAgent(captcha=False)
+    with _Theme({"network-wireless-symbolic", "view-list-symbolic"}):
+        win = _make_window(agent)
+        assert win._stack.icons.get("connection") == "network-wireless-symbolic", win._stack.icons
+        assert win._stack.icons.get("rules") == "view-list-symbolic", win._stack.icons
+        # 候选一个都不在主题里，就不挂图标，只显示文字——总比方框好看
+        assert "devices" not in win._stack.icons, win._stack.icons
+        assert "settings" not in win._stack.icons, win._stack.icons
+
+
+def test_entry_row_edit_icon_uses_the_name_the_theme_has() -> None:
+    # Adw.EntryRow 行尾的小铅笔图标名写死成 edit-symbolic，主题里改名叫
+    # document-edit-symbolic 的话，行尾会留一个方框。
+    row = Widget()
+    icon = Image(icon_name="edit-symbolic")
+    row.append(icon)
+    win = _make_window(FakeAgent(captcha=False))
+    with _Theme({"document-edit-symbolic"}):
+        win._fix_missing_icons(row)
+    assert icon.get_icon_name() == "document-edit-symbolic", icon.get_icon_name()
+
+
+def test_entry_row_edit_icon_is_hidden_when_there_is_no_alias() -> None:
+    row = Widget()
+    icon = Image(icon_name="edit-symbolic")
+    row.append(icon)
+    win = _make_window(FakeAgent(captcha=False))
+    with _Theme(set()):
+        win._fix_missing_icons(row)
+    assert icon.get_visible() is False
 
 
 def test_devices_page_starts_with_hint_row() -> None:

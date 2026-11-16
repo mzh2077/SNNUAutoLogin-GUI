@@ -23,16 +23,29 @@ SCREENSHOT_DELAY_MS = 2500
 
 
 class Application(Adw.Application):
-    def __init__(self, page: str = "connection", screenshot: str | None = None) -> None:
+    def __init__(
+        self,
+        page: str = "connection",
+        screenshot: str | None = None,
+        width: int = 900,
+        height: int = 780,
+    ) -> None:
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self._page = page
         self._screenshot = screenshot
+        self._width = width
+        self._height = height
         self._window: MainWindow | None = None
 
     def do_activate(self) -> None:
         if self._window is None:
             Gtk.Window.set_default_icon_name("snnuautologin")
-            self._window = MainWindow(application=self, page=self._page)
+            self._window = MainWindow(
+                application=self,
+                page=self._page,
+                width=self._width,
+                height=self._height,
+            )
         self._window.present()
         if self._screenshot:
             GLib.timeout_add(SCREENSHOT_DELAY_MS, self._save_screenshot)
@@ -49,14 +62,15 @@ class Application(Adw.Application):
             self.quit()
             return False
 
-        width = window.get_width() or 900
-        height = window.get_height() or 780
+        width = window.get_width() or self._width
+        height = window.get_height() or self._height
         stack = getattr(window, "_stack", None)
         visible = stack.get_visible_child_name() if stack is not None else "?"
         print(
             f"截图 {self._screenshot}：请求 {self._page}，实际显示 {visible}，尺寸 {width}x{height}",
             file=sys.stderr,
         )
+        print(f"图标：{window.icon_report()}", file=sys.stderr)
         snapshot = Gtk.Snapshot()
         Gtk.WidgetPaintable.new(window).snapshot(snapshot, width, height)
         node = snapshot.to_node()
@@ -85,8 +99,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--page", choices=PAGES, default="connection", help="启动时打开哪个页面")
     parser.add_argument("--screenshot", metavar="PATH", help="把窗口渲染成 PNG 后退出，用于核对界面")
+    parser.add_argument("--width", type=int, default=900, help="窗口宽度，截图时用")
+    parser.add_argument("--height", type=int, default=780, help="窗口高度，截图时用")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     # GTK / Adw 自己也有命令行参数，这里只挑自己要的，其余原样交给它们去忽略。
     args, _rest = parser.parse_known_args(argv[1:])
-    app = Application(page=args.page, screenshot=args.screenshot)
+    app = Application(
+        page=args.page,
+        screenshot=args.screenshot,
+        width=args.width,
+        height=args.height,
+    )
     return app.run([argv[0] if argv else "snnuautologin-desktop"])

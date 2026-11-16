@@ -53,6 +53,37 @@ KIND_LABELS = {"Wired": "有线", "Wireless": "无线", "Unknown": "接入方式
 
 POLL_SECONDS = 3
 
+# 标签页图标。各发行版的 adwaita-icon-theme 裁掉的东西不一样：Ubuntu 24.04
+# 上 network-wireless-signal-good-symbolic 和 computer-symbolic 都取不到，
+# 标签前面会掉成一个「图标缺失」的方框。所以每个标签给一串候选，用主题里
+# 真有的那个；一个都没有就不配图标，只显示文字，总比方框好看。
+PAGE_ICONS = {
+    "connection": (
+        "network-wireless-signal-good-symbolic",
+        "network-wireless-symbolic",
+        "network-workgroup-symbolic",
+        "network-transmit-receive-symbolic",
+        "view-grid-symbolic",
+    ),
+    "rules": ("view-list-symbolic", "view-list-bullet-symbolic", "view-grid-symbolic"),
+    "devices": (
+        "computer-symbolic",
+        "video-display-symbolic",
+        "device-desktop-symbolic",
+        "smartphone-symbolic",
+        "view-grid-symbolic",
+    ),
+    "settings": ("emblem-system-symbolic", "preferences-system-symbolic", "view-grid-symbolic"),
+}
+
+# libadwaita 的 Adw.EntryRow 会在行尾画一个小铅笔，图标名写死成 edit-symbolic；
+# 有的 adwaita-icon-theme 把它改名叫 document-edit-symbolic 了，行尾就剩一个
+# 方框。这里按双向别名兜一下，两个都没有的话直接藏起来。
+ICON_ALIASES = {
+    "edit-symbolic": ("document-edit-symbolic",),
+    "document-edit-symbolic": ("edit-symbolic",),
+}
+
 
 def _label(mapping: dict[str, str], key: str | None) -> str:
     if not key:
@@ -61,11 +92,11 @@ def _label(mapping: dict[str, str], key: str | None) -> str:
 
 
 class MainWindow(Adw.ApplicationWindow):
-    def __init__(self, page: str = "connection", **kwargs: Any) -> None:
+    def __init__(self, page: str = "connection", width: int = 900, height: int = 780, **kwargs: Any) -> None:
         super().__init__(
             title="陕师大校园网自动登录",
-            default_width=900,
-            default_height=780,
+            default_width=width,
+            default_height=height,
             **kwargs,
         )
         self.set_size_request(560, 520)
@@ -87,18 +118,20 @@ class MainWindow(Adw.ApplicationWindow):
         self._stack = Adw.ViewStack()
 
         self._build_actions()
-        # 每个页面都带一个图标：Adw.ViewSwitcher 会去取它，不给的话四个标签
-        # 前面会各挂一个「图标缺失」的方框。
-        for name, title, icon, widget in (
-            ("connection", "连接", "network-wireless-signal-good-symbolic", self._build_connection_page()),
-            ("rules", "规则", "view-list-symbolic", self._build_rules_page()),
-            ("devices", "设备", "computer-symbolic", self._build_devices_page()),
-            ("settings", "设置", "emblem-system-symbolic", self._build_settings_page()),
+        # 每个页面都带一个图标：Adw.ViewSwitcher 会去取它，不给的话标签前面
+        # 会少一块，四个标签的宽度看着参差不齐。
+        for name, title, widget in (
+            ("connection", "连接", self._build_connection_page()),
+            ("rules", "规则", self._build_rules_page()),
+            ("devices", "设备", self._build_devices_page()),
+            ("settings", "设置", self._build_settings_page()),
         ):
-            if hasattr(self._stack, "add_titled_with_icon"):
+            icon = self._pick_icon(PAGE_ICONS.get(name, ()))
+            if icon is not None and hasattr(self._stack, "add_titled_with_icon"):
                 self._stack.add_titled_with_icon(widget, name, title, icon)
             else:
                 self._stack.add_titled(widget, name, title)
+            self._fix_missing_icons(widget)
         self._stack.connect("notify::visible-child", self._on_page_changed)
 
         self._toasts.set_child(self._stack)
@@ -153,6 +186,70 @@ class MainWindow(Adw.ApplicationWindow):
         refresh.connect("clicked", lambda *_: self._poll(force=True))
         header.pack_end(refresh)
         return header
+
+    def _theme(self):
+        """当前显示器的图标主题；拿不到就返回 None，调用方按「都没图标」处理。"""
+        try:
+            display = self.get_display()
+            if display is None:
+                return None
+            return Gtk.IconTheme.get_for_display(display)
+        except Exception:
+            return None
+
+    def _pick_icon(self, names: tuple[str, ...]) -> str | None:
+        theme = self._theme()
+        if theme is None:
+            return names[0] if names else None
+        for name in names:
+            try:
+                if theme.has_icon(name):
+                    return name
+            except Exception:
+                return None
+        return None
+
+    def _fix_missing_icons(self, widget: Any) -> None:
+        """把控件树里名称在主题里不存在的图标换掉或者藏掉。
+
+        只有行尾那个小铅笔会走到这里，别的图标本来就是挑过存在的。
+        """
+        theme = self._theme()
+        child = widget.get_first_child() if hasattr(widget, "get_first_child") else None
+        while child is not None:
+            if isinstance(child, Gtk.Image):
+                name = child.get_icon_name() if hasattr(child, "get_icon_name") else None
+                if name and theme is not None and not self._has_icon(theme, name):
+                    for other in ICON_ALIASES.get(name, ()):
+                        if self._has_icon(theme, other):
+                            # 只换名字不动可见性：行有没有焦点是 libadwaita 管的，
+                            # 这里插一手的话，正在编辑的行也会冒出一个铅笔。
+                            child.set_from_icon_name(other)
+                            break
+                    else:
+                        child.set_visible(False)
+            else:
+                self._fix_missing_icons(child)
+            child = child.get_next_sibling() if hasattr(child, "get_next_sibling") else None
+
+    @staticmethod
+    def _has_icon(theme: Any, name: str) -> bool:
+        try:
+            return bool(theme.has_icon(name))
+        except Exception:
+            return True
+
+    def icon_report(self) -> str:
+        """哪个标签用了哪个图标——截图时打到日志里，省得靠肉眼猜为什么少了块。"""
+        theme = self._theme()
+        if theme is None:
+            return "图标主题读不到"
+        parts = [f"{name}={self._pick_icon(icons) or '文字'}" for name, icons in PAGE_ICONS.items()]
+        parts += [
+            f"{name}={int(self._has_icon(theme, name))}"
+            for name in ("edit-symbolic", "document-edit-symbolic")
+        ]
+        return " ".join(parts)
 
     def _build_connection_page(self) -> Gtk.Widget:
         page = Adw.PreferencesPage()
@@ -279,6 +376,7 @@ class MainWindow(Adw.ApplicationWindow):
         save.connect("clicked", lambda *_: self._save_rule())
         delete = Gtk.Button(label="删除")
         delete.add_css_class("destructive-action")
+        delete.add_css_class("flat")
         delete.set_valign(Gtk.Align.CENTER)
         delete.connect("clicked", lambda *_: self._delete_rule())
         row = Adw.ActionRow(title="保存这条规则", subtitle="规则密码会按「保存到系统密钥环」的开关处理")
@@ -453,6 +551,10 @@ class MainWindow(Adw.ApplicationWindow):
         self._render_rules(settings.get("connectionRules") or [])
 
     def _on_page_changed(self, *_args: Any) -> None:
+        # 行尾那个小铅笔有可能要等行第一次显示才建出来，进页面时再扫一遍。
+        child = self._stack.get_visible_child() if hasattr(self._stack, "get_visible_child") else None
+        if child is not None:
+            self._fix_missing_icons(child)
         # 设备列表只有点进这一页才去取，第一次进来顺便自动取一次，
         # 免得看到一个空分组还得自己点刷新。
         if self._stack.get_visible_child_name() != "devices":
@@ -893,6 +995,8 @@ class MainWindow(Adw.ApplicationWindow):
             token = device.get("id") or ""
             button = Gtk.Button(label="下线", valign=Gtk.Align.CENTER)
             button.add_css_class("destructive-action")
+            # 行尾挂一整块实心红太吵，改成红字扁按钮，跟 GNOME 各处行内操作一致。
+            button.add_css_class("flat")
             button.connect("clicked", lambda *_, token=token: self._offline(token))
             row.add_suffix(button)
         return row

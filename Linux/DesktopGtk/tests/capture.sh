@@ -17,6 +17,10 @@ pages=("$@")
 mkdir -p -- "$out"
 export DISPLAY="${DISPLAY:-:99}"
 
+# 窗口拉高一点：设置页三组加起来比默认的 780 高，默认高度下最后一行会被
+# 窗口下边缘切掉。页面本身是能滚的，但截图里看着像坏了。
+size=(--width 900 --height 1180)
+
 for page in "${pages[@]}"; do
-    snnuautologin-desktop --page "$page" --screenshot "$out/ui-$page.png"
+    snnuautologin-desktop --page "$page" --screenshot "$out/ui-$page.png" "${size[@]}"
 done
