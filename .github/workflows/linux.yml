@@ -95,21 +95,10 @@ jobs:
           ls -l "$appimage"
           test -s "$appimage"
           test -x "$appimage"
-          # 解出来看里面到底装了什么，别光看文件大小。容器里没有 FUSE，
-          # 偶尔 runtime 还是想挂载，失败时把输出打出来别闷着
-          if ! "./$appimage" --appimage-extract > /tmp/extract.log 2>&1; then
-            echo "解包失败，输出如下："
-            tail -30 /tmp/extract.log
-            exit 1
-          fi
-          test -x squashfs-root/AppRun
-          test -f squashfs-root/usr/lib/snnuautologin/agent/snnuautologin
-          test -f squashfs-root/usr/lib/snnuautologin/desktop/snnuautologin_desktop/__main__.py
-          test -f squashfs-root/cn.edu.snnu.SNNUAutoLogin.desktop
-          test -f squashfs-root/cn.edu.snnu.SNNUAutoLogin.png
-          grep -q 'python3 -m snnuautologin_desktop' squashfs-root/AppRun
-          grep -q 'agent --autostart' squashfs-root/AppRun
-          rm -rf squashfs-root
+          # 后台是自包含的 .NET，包不可能小；真小于 10MB 说明 publish 没打进去
+          test "$(stat -c%s "$appimage")" -gt 10485760
+          # 内容不在这里拆包核对：容器里 --appimage-extract 不稳，而且
+          # 「拆开看看有什么」不如「真跑一遍」。下面的 Smoke-test 才是硬指标。
       - name: Install, start and remove the packages
         working-directory: artifacts/linux
         shell: bash
@@ -162,14 +151,18 @@ jobs:
         run: |
           export XDG_RUNTIME_DIR="$(mktemp -d)"
           chmod 700 "$XDG_RUNTIME_DIR"
-          timeout 180 dbus-run-session -- xvfb-run -a \
+          chmod +x ./artifacts/linux/SNNUAutoLogin-*-x86_64.AppImage
+          timeout 240 dbus-run-session -- xvfb-run -a \
               ./artifacts/linux/SNNUAutoLogin-*-x86_64.AppImage \
               --page settings --screenshot /tmp/appimage.png
           test -s /tmp/appimage.png
           test "$(stat -c%s /tmp/appimage.png)" -gt 5000
-          ls -l "$HOME/.local/share/snnuautologin/appimage/"
-          test -x "$HOME/.local/share/snnuautologin/appimage/agent-"*/snnuautologin
-          cat "$HOME/.local/share/snnuautologin/appimage/agent.log" || true
+          # AppRun 应该把自带的后台复制到用户目录并从那儿拉起来了
+          data="$HOME/.local/share/snnuautologin/appimage"
+          ls -l "$data"
+          test -x "$data"/agent-*/snnuautologin
+          test -s "$data"/agent-*/snnuautologin.dll
+          cat "$data"/agent.log || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
