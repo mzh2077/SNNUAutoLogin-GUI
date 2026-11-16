@@ -46,8 +46,10 @@ CANDIDATES = (
 
 
 class Grid(Adw.ApplicationWindow):
-    def __init__(self, target: str) -> None:
-        super().__init__(title="图标对照表", default_width=760, default_height=340)
+    def __init__(self, target: str, **kwargs: object) -> None:
+        # 必须把 application 传下去：不然这个窗口不算在程序名下，GtkApplication
+        # 看到「一个窗口都没有」会立刻退出，连定时器都来不及跑。
+        super().__init__(title="图标对照表", default_width=760, default_height=340, **kwargs)
         self._target = target
         self._box = Gtk.FlowBox(
             max_children_per_line=4,
@@ -86,7 +88,7 @@ class Application(Adw.Application):
 
     def do_activate(self) -> None:
         if self._window is None:
-            self._window = Grid(self._target)
+            self._window = Grid(self._target, application=self)
         self._window.present()
         GLib.timeout_add(1200, self._window.save)
 

@@ -112,8 +112,8 @@ jobs:
           wc -l artifacts/linux/dump.log
           # 控件那边图标名是对的，那就是有些图标在这台机器上画不出来：
           # 把候选摆一排拍下来，谁能画出来看图和日志就行。
-          dbus-run-session -- python3 Linux/DesktopGtk/tests/icon_grid.py \
-              artifacts/linux/shots/icons.png || true
+          dbus-run-session -- python3 -u Linux/DesktopGtk/tests/icon_grid.py \
+              artifacts/linux/shots/icons.png || echo "对照表没跑成，退出码 $?"
           kill "$agent" "$xvfb" 2>/dev/null || true
           ls -l artifacts/linux/shots
           # 纯黑屏只有几百字节；四张一模一样说明后面的窗口根本没画出来
