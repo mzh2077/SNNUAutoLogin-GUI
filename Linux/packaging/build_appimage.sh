@@ -48,7 +48,11 @@ mkdir -p "$appdir/usr/lib/snnuautologin" "$appdir/usr/share/applications" \
          "$appdir/usr/share/icons/hicolor/256x256/apps"
 
 cp -a "$cli" "$appdir/usr/lib/snnuautologin/agent"
-cp -a "$python_src" "$appdir/usr/lib/snnuautologin/desktop"
+# 目标要写全名：cp -a 的第二个参数不存在时，它会把源目录里的东西直接铺到那个
+# 位置上，结果就是 desktop/client.py 而不是 desktop/snnuautologin_desktop/client.py，
+# PYTHONPATH 指过去也 import 不到包。
+mkdir -p "$appdir/usr/lib/snnuautologin/desktop"
+cp -a "$python_src" "$appdir/usr/lib/snnuautologin/desktop/snnuautologin_desktop"
 [[ -f "$appdir/usr/lib/snnuautologin/desktop/snnuautologin_desktop/client.py" ]] || {
     printf '界面包没复制进去，AppImage 打出来也是废的。\n' >&2
     exit 1
