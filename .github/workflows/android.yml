@@ -1,0 +1,61 @@
+name: Android APK
+
+on:
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  push:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.428
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android build dependencies
+        run: |
+          dotnet new globaljson --sdk-version 8.0.428
+          dotnet workload install android --skip-manifest-update
+          sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
+      - name: Build test APK
+        run: >
+          dotnet build android/SnnuAndroid.csproj -c Debug
+          -p:AndroidPackageFormats=apk
+          -p:EmbedAssembliesIntoApk=true
+          -p:AndroidSdkDirectory="$ANDROID_HOME"
+          -p:JavaSdkDirectory="$JAVA_HOME"
+      - name: Verify and stage APK
+        shell: bash
+        run: |
+          mapfile -t packages < <(find android/bin/Debug -name '*-Signed.apk' -type f)
+          if [[ ${#packages[@]} -ne 1 ]]; then
+            echo "Expected one signed test APK, found ${#packages[@]}" >&2
+            exit 1
+          fi
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify "${packages[0]}"
+          mkdir -p artifacts/android
+          cd artifacts/android
+          cp "../../${packages[0]}" SNNUAutoLogin-Android-test.apk
+          sha256sum SNNUAutoLogin-Android-test.apk > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SNNUAutoLogin-Android-test
+          path: artifacts/android/
+          if-no-files-found: error
