@@ -17,8 +17,20 @@ desktop="snnuautologin-desktop_${version}_amd64.deb"
 archive="SNNUAutoLogin-${version}-linux-x64.tar.gz"
 assembly_version="${version%%~*}"
 informational_version="${version//~/-}"
-dotnet publish "$root/Linux/Agent/SNNUAutoLogin.Linux.csproj" -c Release -r linux-x64 --self-contained true \
-    "-p:Version=$informational_version" "-p:FileVersion=$assembly_version.0" -o "$stage/cli"
+# 给 dotnet 的版本只传纯数字。带 -preview 后缀的 Version 在 SDK 10 上会让
+# NuGet 的 restore 直接返回 MSB4181（「RestoreTask returned false」），
+# 一个字的原因都不写。预览版的身份靠 deb 的 Version 字段和文件名体现就够了。
+publish_cli() {
+    dotnet publish "$root/Linux/Agent/SNNUAutoLogin.Linux.csproj" -c Release -r linux-x64 \
+        --self-contained true "-p:Version=$assembly_version" \
+        "-p:FileVersion=$assembly_version.0" -o "$stage/cli"
+}
+# runner 上偶尔会因为下载 runtime pack 失败，清一下 obj 再来一次就够了
+if ! publish_cli; then
+    printf 'publish 失败，清掉 obj 重试一次\n' >&2
+    rm -rf "$root"/Linux/*/obj "$root"/Shared/obj
+    publish_cli
+fi
 # 桌面端不再是 .NET 程序：界面是 Python + GTK4/libadwaita，运行时用系统自带的 python3-gi，
 # 所以这里没有 dotnet publish，桌面包从 34MB 掉到几十 KB。
 
