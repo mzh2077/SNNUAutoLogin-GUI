@@ -88,7 +88,8 @@ jobs:
           Xvfb :99 -screen 0 1000x820x24 &
           xvfb=$!
           sleep 3
-          bash Linux/DesktopGtk/tests/capture.sh artifacts/linux/shots
+          export DISPLAY=:99
+          dbus-run-session -- bash Linux/DesktopGtk/tests/capture.sh artifacts/linux/shots
           kill "$agent" "$xvfb" 2>/dev/null || true
           ls -l artifacts/linux/shots
           # 纯黑屏只有几百字节；四张一模一样说明后面的窗口根本没画出来

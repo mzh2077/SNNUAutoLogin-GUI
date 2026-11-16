@@ -15,7 +15,13 @@ import subprocess
 import uuid
 from typing import Any, Callable
 
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk
+import gi
+
+# 必须先声明版本：机器上同时装了 GTK3 和 GTK4 时，不声明会加载到旧的那个。
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from . import __version__, client
 from .worker import Worker

@@ -302,6 +302,7 @@ def _build_gi() -> types.ModuleType:
 
     gi = types.ModuleType("gi")
     gi.repository = repository
+    gi.require_version = lambda *_args, **_kwargs: None
     sys.modules["gi"] = gi
     sys.modules["gi.repository"] = repository
     return gi

@@ -5,19 +5,28 @@ from __future__ import annotations
 import argparse
 import sys
 
-from gi.repository import Adw, Gio, Gtk
+import gi
 
-from . import __version__
-from .window import MainWindow
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+
+from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+
+from . import __version__  # noqa: E402
+from .window import MainWindow  # noqa: E402
 
 APP_ID = "cn.edu.snnu.SNNUAutoLogin"
 PAGES = ("connection", "rules", "devices", "settings")
 
+# 截图前等一会儿，让首轮状态查询回来，界面不是「正在连接后台…」那个样子。
+SCREENSHOT_DELAY_MS = 2500
+
 
 class Application(Adw.Application):
-    def __init__(self, page: str = "connection") -> None:
+    def __init__(self, page: str = "connection", screenshot: str | None = None) -> None:
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self._page = page
+        self._screenshot = screenshot
         self._window: MainWindow | None = None
 
     def do_activate(self) -> None:
@@ -25,6 +34,42 @@ class Application(Adw.Application):
             Gtk.Window.set_default_icon_name("snnuautologin")
             self._window = MainWindow(application=self, page=self._page)
         self._window.present()
+        if self._screenshot:
+            GLib.timeout_add(SCREENSHOT_DELAY_MS, self._save_screenshot)
+
+    def _save_screenshot(self) -> bool:
+        """把窗口当前的样子渲染成 PNG 后退出。
+
+        自己渲染而不是抓屏幕，是因为无头环境里没有窗口管理器，X 的根窗口
+        上不一定留下完整的窗口内容，抓出来经常是黑屏或者上一张的残影。
+        """
+        window = self._window
+        if window is None:
+            print("截图失败：没有窗口", file=sys.stderr)
+            self.quit()
+            return False
+
+        width = window.get_width() or 900
+        height = window.get_height() or 780
+        snapshot = Gtk.Snapshot()
+        Gtk.WidgetPaintable.new(window).snapshot(snapshot, width, height)
+        node = snapshot.to_node()
+        renderer = window.get_renderer()
+        if node is None or renderer is None:
+            print("截图失败：窗口还没画出来", file=sys.stderr)
+            self.quit()
+            return False
+
+        texture = renderer.render_texture(node, None)
+        if texture is None:
+            print("截图失败：渲染器没有返回纹理", file=sys.stderr)
+            self.quit()
+            return False
+
+        texture.save_to_png(self._screenshot)
+        print(f"已截图 {self._screenshot}", file=sys.stderr)
+        self.quit()
+        return False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -33,7 +78,9 @@ def main(argv: list[str] | None = None) -> int:
         prog="snnuautologin-desktop", description="陕师大校园网自动登录（GTK 桌面端）"
     )
     parser.add_argument("--page", choices=PAGES, default="connection", help="启动时打开哪个页面")
+    parser.add_argument("--screenshot", metavar="PATH", help="把窗口渲染成 PNG 后退出，用于核对界面")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     # GTK / Adw 自己也有命令行参数，这里只挑自己要的，其余原样交给它们去忽略。
     args, _rest = parser.parse_known_args(argv[1:])
-    return Application(page=args.page).run([argv[0] if argv else "snnuautologin-desktop"])
+    app = Application(page=args.page, screenshot=args.screenshot)
+    return app.run([argv[0] if argv else "snnuautologin-desktop"])
