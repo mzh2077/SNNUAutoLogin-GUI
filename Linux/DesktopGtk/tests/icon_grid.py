@@ -49,7 +49,7 @@ class Grid(Adw.ApplicationWindow):
     def __init__(self, target: str, **kwargs: object) -> None:
         # 必须把 application 传下去：不然这个窗口不算在程序名下，GtkApplication
         # 看到「一个窗口都没有」会立刻退出，连定时器都来不及跑。
-        super().__init__(title="图标对照表", default_width=760, default_height=620, **kwargs)
+        super().__init__(title="图标对照表", default_width=1100, default_height=760, **kwargs)
         self._target = target
         # 同一个图标分别按 16px 和 24px 画一遍：标签栏里用的是 16px，而
         # 大尺寸能画出来不代表小尺寸也能。
@@ -69,6 +69,18 @@ class Grid(Adw.ApplicationWindow):
                 cell.append(Gtk.Label(label=name.replace("-symbolic", ""), wrap=True, max_width_chars=12))
                 box.append(cell)
             rows.append(box)
+
+        # 最要紧的一组：同样的图标放进真的 Adw.ViewSwitcher 里。标签栏里
+        # 画不出来、单独画却好好的，差别就在这一层。
+        rows.append(Gtk.Label(label="ViewSwitcher", xalign=0, margin_start=16))
+        stack = Adw.ViewStack()
+        for name in CANDIDATES:
+            stack.add_titled_with_icon(
+                Gtk.Label(label=name), name, name.replace("-symbolic", ""), name
+            )
+        rows.append(
+            Adw.ViewSwitcher(stack=stack, policy=Adw.ViewSwitcherPolicy.WIDE, margin_top=6)
+        )
         self.set_content(rows)
 
     def save(self) -> bool:

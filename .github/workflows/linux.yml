@@ -87,7 +87,7 @@ jobs:
           agent=$!
           # 屏幕开高一点：设置页三组加起来比默认的 780 高，capture.sh 里把
           # 窗口拉到 1180，屏幕不够高的话窗口会被压回去。
-          Xvfb :99 -screen 0 1000x1300x24 &
+          Xvfb :99 -screen 0 1280x1300x24 &
           xvfb=$!
           sleep 3
           export DISPLAY=:99
