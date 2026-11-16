@@ -72,6 +72,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._captcha_texture = None
         self._captcha_asked = False
         self._device_rows: list[Gtk.Widget] = []
+        self._devices_dirty = True
         self._rule_rows: list[Gtk.Widget] = []
         self._timer = 0
 
@@ -80,10 +81,19 @@ class MainWindow(Adw.ApplicationWindow):
         self._stack = Adw.ViewStack()
 
         self._build_actions()
-        self._stack.add_titled(self._build_connection_page(), "connection", "连接")
-        self._stack.add_titled(self._build_rules_page(), "rules", "规则")
-        self._stack.add_titled(self._build_devices_page(), "devices", "设备")
-        self._stack.add_titled(self._build_settings_page(), "settings", "设置")
+        # 每个页面都带一个图标：Adw.ViewSwitcher 会去取它，不给的话四个标签
+        # 前面会各挂一个「图标缺失」的方框。
+        for name, title, icon, page in (
+            ("connection", "连接", "network-wireless-symbolic", self._build_connection_page()),
+            ("rules", "规则", "view-list-symbolic", self._build_rules_page()),
+            ("devices", "设备", "computer-symbolic", self._build_devices_page()),
+            ("settings", "设置", "emblem-system-symbolic", self._build_settings_page()),
+        ):
+            if hasattr(self._stack, "add_titled_with_icon"):
+                self._stack.add_titled_with_icon(page, name, title, icon)
+            else:
+                self._stack.add_titled(page, name, title)
+        self._stack.connect("notify::visible-child", self._on_page_changed)
 
         self._toasts.set_child(self._stack)
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -135,7 +145,7 @@ class MainWindow(Adw.ApplicationWindow):
         refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="刷新状态")
         refresh.add_css_class("flat")
         refresh.connect("clicked", lambda *_: self._poll(force=True))
-        header.pack_start(refresh)
+        header.pack_end(refresh)
         return header
 
     def _build_connection_page(self) -> Gtk.Widget:
@@ -265,7 +275,7 @@ class MainWindow(Adw.ApplicationWindow):
         delete.add_css_class("destructive-action")
         delete.set_valign(Gtk.Align.CENTER)
         delete.connect("clicked", lambda *_: self._delete_rule())
-        row = Adw.ActionRow(title="保存到后台", subtitle="规则密码会按「保存到系统密钥环」的开关处理")
+        row = Adw.ActionRow(title="保存这条规则", subtitle="规则密码会按「保存到系统密钥环」的开关处理")
         row.add_suffix(save)
         row.add_suffix(delete)
         edit.add(row)
@@ -283,6 +293,7 @@ class MainWindow(Adw.ApplicationWindow):
         refresh.connect("clicked", lambda *_: self._refresh_devices())
         self._device_group.set_header_suffix(refresh)
         page.add(self._device_group)
+        self._clear_devices()
 
         guard = Adw.PreferencesGroup(title="设备数守卫")
         self._row_guard = Adw.ActionRow(title="状态", subtitle="未启用")
@@ -435,6 +446,14 @@ class MainWindow(Adw.ApplicationWindow):
         self._spin_timeout.set_value(_int(settings.get("deviceGuardProbeTimeoutSeconds"), 3))
         self._render_rules(settings.get("connectionRules") or [])
 
+    def _on_page_changed(self, *_args: Any) -> None:
+        # 设备列表只有点进这一页才去取，第一次进来顺便自动取一次，
+        # 免得看到一个空分组还得自己点刷新。
+        if self._stack.get_visible_child_name() != "devices":
+            return
+        if self._devices_dirty and not self._worker.active:
+            self._refresh_devices()
+
     def _poll(self, *, force: bool = False) -> bool:
         if not force and self._worker.active:
             return True
@@ -568,6 +587,7 @@ class MainWindow(Adw.ApplicationWindow):
             changed = self._network_version is not None
             self._network_version = version
             if changed:
+                self._devices_dirty = True
                 self._clear_devices()
                 self._captcha_asked = False
                 self._set_captcha(None)
@@ -827,6 +847,7 @@ class MainWindow(Adw.ApplicationWindow):
             return client.send({"command": "devices"})
 
         def finished(reply: dict) -> None:
+            self._devices_dirty = False
             self._apply_status(reply.get("status"))
             devices = reply.get("devices") or []
             for row in self._device_rows:

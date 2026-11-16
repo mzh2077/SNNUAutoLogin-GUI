@@ -162,15 +162,23 @@ class ViewStack(Widget):
     def __init__(self, **props):
         super().__init__(**props)
         self.pages: dict[str, Widget] = {}
+        self.icons: dict[str, str] = {}
         self.visible_name = ""
 
     def add_titled(self, child, name, _title):
         self.pages[name] = child
         self.append(child)
 
+    def add_titled_with_icon(self, child, name, title, icon_name):
+        self.add_titled(child, name, title)
+        self.icons[name] = icon_name
+
     def set_visible_child_name(self, name):
         assert name in self.pages, f"没有这个页面：{name}"
         self.visible_name = name
+
+    def get_visible_child_name(self):
+        return self.visible_name
 
 
 class ToastOverlay(Widget):
@@ -320,6 +328,21 @@ def _make_window(agent: FakeAgent, page: str = "connection"):
     win = window.MainWindow(application=APPLICATION, page=page)
     _wait(win)
     return win
+
+
+def test_every_page_has_view_switcher_icon() -> None:
+    # 没有图标的页面会在 ViewSwitcher 里显示一个「图标缺失」的方框
+    agent = FakeAgent(captcha=False)
+    win = _make_window(agent)
+    assert set(win._stack.icons) == {"connection", "rules", "devices", "settings"}, win._stack.icons
+    assert all(name for name in win._stack.icons.values()), win._stack.icons
+
+
+def test_devices_page_starts_with_hint_row() -> None:
+    agent = FakeAgent(captcha=False)
+    win = _make_window(agent, page="devices")
+    rows = [row for row in win._device_rows if isinstance(row, Row)]
+    assert rows and rows[0].get_title() == "点右上角刷新", [r.get_title() for r in rows]
 
 
 def test_online_state_renders() -> None:
