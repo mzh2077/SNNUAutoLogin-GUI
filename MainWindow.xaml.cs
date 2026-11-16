@@ -51,10 +51,6 @@ public sealed partial class MainWindow : Window
     private const int MinIntervalSeconds = 4;
     private const int MaxIntervalSeconds = 120;
 
-    /// <summary>「关于」卡片里的两个链接。</summary>
-    private const string RepoUrl = "https://github.com/mzh2077/SNNUAutoLogin-GUI";
-    private const string IssueUrl = "https://github.com/mzh2077/SNNUAutoLogin-GUI/issues/new";
-
     public MainWindow(AppRuntime runtime)
     {
         _rt = runtime;
@@ -277,22 +273,6 @@ public sealed partial class MainWindow : Window
         catch { }
     }
 
-    /// <summary>
-    /// 关于卡片里的两个链接：源代码仓库与问题反馈。
-    /// 用系统默认浏览器打开，不自己实现一套 URL 协议。
-    /// </summary>
-    private void OpenExternal(string url)
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-        }
-        catch
-        {
-            // 打开失败不该让程序崩掉，提示一下就好
-            _rt.AddLog($"打开链接失败：{url}");
-        }
-    }
     /// <summary>把 x:Name 生成的控件字段全部置空，断开它们对已卸载树的强引用。</summary>
     private void DropElementReferences()
     {
@@ -949,9 +929,6 @@ public sealed partial class MainWindow : Window
     {
         ConnectBtn.Click += async (_, _) => await OnConnectClicked();
         RefreshBtn.Click += async (_, _) => await OnRefreshClicked();
-
-        RepoLinkButton.Click += (_, _) => OpenExternal(RepoUrl);
-        IssueLinkButton.Click += (_, _) => OpenExternal(IssueUrl);
 
         AccountBox.TextChanged += (_, _) => ScheduleSave();
         PwdBox.PasswordChanged += (_, _) => ScheduleSave();

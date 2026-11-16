@@ -82,8 +82,14 @@
                 <Setter Property="VerticalAlignment" Value="Center" />
             </Style>
 
+            <Style x:Key="InlineLinkStyle" TargetType="HyperlinkButton">
+                <Setter Property="Foreground" Value="{ThemeResource InlineLinkBrush}" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
+
             <Style x:Key="ValueTextStyle" TargetType="TextBlock">
-                <Setter Property="FontFamily" Value="Consolas" />
                 <Setter Property="FontSize" Value="12" />
                 <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
                 <Setter Property="VerticalAlignment" Value="Center" />
@@ -106,7 +112,6 @@
                 BasedOn="{StaticResource RowInputBase}"
                 TargetType="TextBox">
                 <Setter Property="Height" Value="32" />
-                <Setter Property="FontFamily" Value="Consolas, Microsoft YaHei UI" />
             </Style>
 
             <Style
@@ -114,7 +119,6 @@
                 BasedOn="{StaticResource RowInputBase}"
                 TargetType="PasswordBox">
                 <Setter Property="Height" Value="32" />
-                <Setter Property="FontFamily" Value="Consolas, Microsoft YaHei UI" />
                 <Setter Property="PasswordRevealMode" Value="Peek" />
             </Style>
 
@@ -397,7 +401,7 @@
                                 Content="切换出口"
                                 Click="OnSwitchOutletClicked" />
                             <HyperlinkButton x:Name="UpdateLink" Margin="0,6,0,0"
-                                Padding="0" Visibility="Collapsed" />
+                                Style="{StaticResource InlineLinkStyle}" Visibility="Collapsed" />
                             <TextBlock x:Name="StatusRefreshMessage" Style="{StaticResource HintStyle}"
                                 Margin="0,6,0,0" TextWrapping="Wrap" Visibility="Collapsed"
                                 AutomationProperties.LiveSetting="Polite" />
@@ -455,7 +459,6 @@
                                                     <ColumnDefinition Width="*" />
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock
-                                                    FontFamily="Consolas"
                                                     FontSize="10.5"
                                                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                                     Text="{Binding Time}" />
@@ -583,7 +586,6 @@
 
                                                 <StackPanel VerticalAlignment="Center" Spacing="2">
                                                     <TextBlock
-                                                        FontFamily="Consolas"
                                                         FontSize="11"
                                                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                         Text="{Binding Ip}" />
@@ -1074,7 +1076,6 @@
                                         x:Name="CaptchaBox"
                                         Grid.Column="1"
                                         VerticalAlignment="Center"
-                                        FontFamily="Consolas, Microsoft YaHei UI"
                                         MaxLength="8"
                                         PlaceholderText="输入图片中的字符" />
 
@@ -1248,8 +1249,7 @@
                                 <HyperlinkButton
                                     Grid.Column="1"
                                     HorizontalAlignment="Right"
-                                    VerticalAlignment="Center"
-                                    Padding="0"
+                                    Style="{StaticResource InlineLinkStyle}"
                                     Content="202.117.144.205"
                                     NavigateUri="http://202.117.144.205/" />
                             </Grid>
@@ -1305,18 +1305,15 @@
                                     FontSize="12"
                                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                     Text="源代码" />
-                                <HyperlinkButton
-                                    x:Name="RepoLinkButton"
-                                    Grid.Column="1"
-                                    Padding="0"
-                                    HorizontalAlignment="Right"
-                                    VerticalAlignment="Center"
-                                    Background="Transparent"
-                                    BorderThickness="0"
-                                    Content="github.com/mzh2077/SNNUAutoLogin-GUI"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    FontFamily="Consolas"
-                                    FontSize="12" />
+                                <StackPanel Grid.Column="1" HorizontalAlignment="Right"
+                                    VerticalAlignment="Center" Orientation="Horizontal" Spacing="12">
+                                    <HyperlinkButton Style="{StaticResource InlineLinkStyle}"
+                                        Content="GitHub"
+                                        NavigateUri="https://github.com/mzh2077/SNNUAutoLogin-GUI" />
+                                    <HyperlinkButton Style="{StaticResource InlineLinkStyle}"
+                                        Content="Gitee"
+                                        NavigateUri="https://gitee.com/marike_86/SNNUAutoLogin-GUI" />
+                                </StackPanel>
                             </Grid>
 
                             <Border Style="{StaticResource DividerStyle}" />
@@ -1331,17 +1328,9 @@
                                     FontSize="12"
                                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                     Text="问题反馈" />
-                                <HyperlinkButton
-                                    x:Name="IssueLinkButton"
-                                    Grid.Column="1"
-                                    Padding="0"
-                                    HorizontalAlignment="Right"
-                                    VerticalAlignment="Center"
-                                    Background="Transparent"
-                                    BorderThickness="0"
-                                    Content="提交 Issue"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    FontSize="12" />
+                                <HyperlinkButton Grid.Column="1" HorizontalAlignment="Right"
+                                    Style="{StaticResource InlineLinkStyle}" Content="提交 Issue"
+                                    NavigateUri="https://github.com/mzh2077/SNNUAutoLogin-GUI/issues/new" />
                             </Grid>
                         </StackPanel>
                     </Border>
