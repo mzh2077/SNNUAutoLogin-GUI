@@ -600,25 +600,29 @@ public sealed partial class MainWindow : Window
 
         var s = _rt.Store.Settings;
         var access = _rt.Access.GetCurrent();
-        var profile = _rt.Profiles.Resolve();
+        var profile = _rt.Profiles.Resolve(access);
+        bool waitingForSsid = access.Kind == NetworkAccessKind.Wireless
+            && !access.SsidReliable && ConnectionRuleSet.NeedsSsid(s.ConnectionRules);
 
         RulesCurrentLinkText.Text = access.Kind switch
         {
             NetworkAccessKind.Wired => "当前接入：有线",
             NetworkAccessKind.Wireless => access.SsidReliable && access.Ssid.Length > 0
                 ? $"当前接入：无线 · SSID『{access.Ssid}』"
-                : "当前接入：无线（未能读取 SSID，按无线任意匹配）",
+                : "当前接入：无线",
             _ => "当前接入：未知"
         };
 
-        RulesActiveText.Text = profile.IsDefault
-            ? $"未命中任何规则，使用默认账号（{s.Account} · 端口 {profile.Port}）"
-            : $"生效规则：账号 {profile.Account} · 端口 {profile.Port}";
+        RulesActiveText.Text = waitingForSsid
+            ? "生效规则：等待后台确认 SSID"
+            : profile.IsDefault
+                ? $"未命中任何规则，使用默认账号（{s.Account} · 端口 {profile.Port}）"
+                : $"生效规则：账号 {profile.Account} · 端口 {profile.Port}";
 
         var items = new List<RuleItem>();
         foreach (var r in ConnectionRuleSet.Sorted(s.ConnectionRules))
         {
-            bool active = !profile.IsDefault
+            bool active = !waitingForSsid && !profile.IsDefault
                 && profile.Rule is not null
                 && string.Equals(profile.Rule.Id, r.Id, StringComparison.Ordinal);
 
@@ -730,24 +734,29 @@ public sealed partial class MainWindow : Window
     {
         bool editing = existing is not null;
 
-        // 新建时用当前的实际接入状态预填：选「无线」就带上当前 SSID，
-        // 账号 / 密码 / 出口也都沿用当前生效的那一套，用户改成别的即可。
-        var currentAccess = _rt.Access.GetCurrent();
-        var currentProfile = _rt.Profiles.Resolve();
-
-        var rule = existing is null
-            ? new ConnectionRule
+        ConnectionRule rule;
+        string initialPassword = "";
+        if (existing is null)
+        {
+            // 只在添加规则时读取 SSID，档案解析复用这次查询结果。
+            var access = _rt.Access.GetCurrentWithSsid();
+            var profile = _rt.Profiles.Resolve(access);
+            rule = new ConnectionRule
             {
                 Id = Guid.NewGuid().ToString("N"),
-                MatchType = currentAccess.Kind == NetworkAccessKind.Wireless
+                MatchType = access.Kind == NetworkAccessKind.Wireless
                     ? ConnectionMatchType.WirelessSsid
                     : ConnectionMatchType.Wired,
-                Ssid = currentAccess.Kind == NetworkAccessKind.Wireless ? currentAccess.Ssid : "",
-                Account = currentProfile.Account,
-                Operator = currentProfile.Operator,
+                Ssid = access.SsidReliable ? access.Ssid : "",
+                Account = profile.Account,
+                Operator = profile.Operator,
                 Enabled = true
-            }
-            : new ConnectionRule
+            };
+            initialPassword = profile.Password;
+        }
+        else
+        {
+            rule = new ConnectionRule
             {
                 Id = existing.Id,
                 MatchType = existing.MatchType,
@@ -757,6 +766,7 @@ public sealed partial class MainWindow : Window
                 Enabled = existing.Enabled,
                 PasswordRef = existing.PasswordRef
             };
+        }
 
         var matchBox = new ComboBox { Width = 320, HorizontalAlignment = HorizontalAlignment.Stretch };
         matchBox.Items.Add("有线");
@@ -779,8 +789,7 @@ public sealed partial class MainWindow : Window
         // 新建时把当前生效的密码也带上：用户接着改几个字就行，
         // 不用把密码从头敲一遍（更不用为了确认「填了没」去切到明文）。
         // 编辑已有规则时不预填 —— 那是该规则自己的密码，留空表示不改。
-        if (!editing)
-            pwdBox.Password = currentProfile.Password;
+        pwdBox.Password = initialPassword;
 
         // 出口是运营商（表单里的 yys），不是门户端口 —— 端口由服务端分配，用户选不了
         var operatorBox = new ComboBox { Width = 320, HorizontalAlignment = HorizontalAlignment.Stretch };

@@ -213,7 +213,7 @@ public static class Diagnostics
         sb.AppendLine();
 
         var access = new NetworkAccessService();
-        var info = access.GetCurrent();
+        var info = access.GetCurrentWithSsid();   // 诊断要看真实 SSID
 
         sb.AppendLine($"[接入方式] 类型      : {info.Kind}"
                     + (info.Kind == NetworkAccessKind.Wireless ? "（无线）" : info.Kind == NetworkAccessKind.Wired ? "（有线）" : "（未判定）"));

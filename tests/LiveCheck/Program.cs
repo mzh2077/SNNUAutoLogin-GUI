@@ -56,7 +56,7 @@ internal static class Program
         // ── 1. 真实接入方式判定 ──────────────────────────────
         Say("── 1. 接入方式判定（真实网卡） ──");
         var access = new NetworkAccessService();
-        var info = access.GetCurrent();
+        var info = access.GetCurrentWithSsid();   // 自检要核对真实 SSID
         Say($"网卡描述 : {info.InterfaceDescription}");
         Say($"接入方式 : {info.Kind}");
         Say($"SSID     : {(string.IsNullOrEmpty(info.Ssid) ? "(未取到)" : info.Ssid)}  可信={info.SsidReliable}");

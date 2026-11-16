@@ -158,6 +158,25 @@ public static class ConnectionRuleSet
     }
 
     /// <summary>
+    /// 规则集里是否有「按 SSID 匹配」的启用规则。
+    ///
+    /// 读 SSID 要走 WLAN 服务，会被安全软件记成「读取无线/位置信息」。
+    /// 没有这类规则时（大多数用户都是空规则集），整条读取路径可以完全跳过。
+    /// </summary>
+    public static bool NeedsSsid(IReadOnlyList<ConnectionRule>? rules)
+    {
+        if (rules is null) return false;
+
+        foreach (var r in rules)
+        {
+            if (r is null || !r.Enabled) continue;
+            if (r.MatchType == ConnectionMatchType.WirelessSsid) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// 排序：匹配方式（有线 → 无线任意 → 无线指定）→ SSID 字典序。
     /// 界面上的规则列表按这个顺序显示，和匹配优先级一致，看起来才不别扭。
     /// </summary>

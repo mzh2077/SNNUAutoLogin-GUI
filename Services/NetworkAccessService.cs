@@ -26,6 +26,13 @@ public sealed class NetworkAccessService : INetworkAccessService
     /// <summary>判定结果的缓存时长。网卡状态变化有延迟，几秒的缓存能挡掉大部分重复读取。</summary>
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// SSID 的缓存时长。比网卡判定长得多 —— 读 SSID 要敲 WLAN 服务，
+    /// 巡检一轮（默认 8 秒）就读一次会让安全软件不停地报「读取无线/位置信息」。
+    /// 真正的换网会触发 NetworkAddressChanged，那条路径会调 <see cref="Invalidate"/> 清掉缓存。
+    /// </summary>
+    private static readonly TimeSpan SsidCacheTtl = TimeSpan.FromSeconds(15);
+
     /// <summary>择优时用来问路由的目��地址：门户所在的内网地址。</summary>
     private const string RouteProbeHost = "202.117.144.205";
 
@@ -39,25 +46,50 @@ public sealed class NetworkAccessService : INetworkAccessService
     private readonly object _gate = new();
     private NetworkAccessInfo? _cached;
 
-    public void Invalidate()
-    {
-        lock (_gate) _cached = null;
-    }
+    /// <summary>上次真正向 WLAN 服务读 SSID 的时间（默认值表示还没读过）。</summary>
+    private DateTime _ssidAt;
 
-    public NetworkAccessInfo GetCurrent()
+    /// <summary>当前缓存里是否已经带过 SSID 字段（区分「读不到」和「压根没读」）。</summary>
+    private bool _cachedHasSsid;
+
+    public void Invalidate()
     {
         lock (_gate)
         {
-            if (_cached is not null && DateTime.Now - _cached.At < CacheTtl)
-                return _cached;
+            _cached = null;
+            _ssidAt = default;
+            _cachedHasSsid = false;
+        }
+    }
 
-            var info = Detect();
+    public NetworkAccessInfo GetCurrent() => Get(withSsid: false);
+
+    public NetworkAccessInfo GetCurrentWithSsid() => Get(withSsid: true);
+
+    private NetworkAccessInfo Get(bool withSsid)
+    {
+        lock (_gate)
+        {
+            var now = DateTime.Now;
+
+            if (_cached is not null && now - _cached.At < CacheTtl)
+            {
+                // 不需要 SSID：缓存直接可用
+                if (!withSsid) return _cached;
+
+                // 需要 SSID：非无线本来就没有 SSID；无线则看 SSID 缓存期与缓存内容
+                if (_cached.Kind != NetworkAccessKind.Wireless) return _cached;
+                if (_cachedHasSsid && now - _ssidAt < SsidCacheTtl) return _cached;
+            }
+
+            var info = Detect(withSsid);
             _cached = info;
+            _cachedHasSsid = withSsid && info.Kind == NetworkAccessKind.Wireless;
             return info;
         }
     }
 
-    private static NetworkAccessInfo Detect()
+    private NetworkAccessInfo Detect(bool withSsid)
     {
         var candidates = PhysicalCandidates();
 
@@ -84,9 +116,12 @@ public sealed class NetworkAccessService : INetworkAccessService
             InterfaceDescription = chosen.Description
         };
 
-        if (kind != NetworkAccessKind.Wireless) return info;
+        // 不是无线、或者调用方不需要 SSID（没有按 SSID 匹配的规则）时，
+        // 完全不去碰 wlanapi —— 那是最容易被安全软件记成「读取位置信息」的一步。
+        if (kind != NetworkAccessKind.Wireless || !withSsid) return info;
 
         var (ssid, reliable) = ReadSsid(chosen.Id);
+        _ssidAt = DateTime.Now;
         return info with { Ssid = ssid, SsidReliable = reliable };
     }
 
