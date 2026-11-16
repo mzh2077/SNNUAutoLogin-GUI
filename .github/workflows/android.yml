@@ -27,6 +27,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - name: Install Android build dependencies
         run: |
           dotnet new globaljson --sdk-version 8.0.428
