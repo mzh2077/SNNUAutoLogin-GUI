@@ -331,6 +331,14 @@ def _make_window(agent: FakeAgent, page: str = "connection"):
     return win
 
 
+def test_startup_page_argument_is_honoured() -> None:
+    # 曾经因为循环变量把 page 参数覆盖掉，--page 一直不生效
+    agent = FakeAgent(captcha=False)
+    for page in ("connection", "rules", "devices", "settings"):
+        win = _make_window(agent, page=page)
+        assert win._stack.visible_name == page, f"期望 {page}，实际 {win._stack.visible_name}"
+
+
 def test_every_page_has_view_switcher_icon() -> None:
     # 没有图标的页面会在 ViewSwitcher 里显示一个「图标缺失」的方框
     agent = FakeAgent(captcha=False)
