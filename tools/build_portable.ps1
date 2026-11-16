@@ -9,7 +9,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $project = Join-Path $PSScriptRoot '..\SNNUAutoLogin.csproj'
-[xml]$projectXml = Get-Content -LiteralPath $project
+[xml]$projectXml = Get-Content -LiteralPath $project -Encoding UTF8 -Raw
 $version = $projectXml.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
 $assembly = 'SNNUAutoLogin'
 if ($AssemblySuffix) { $assembly = "SNNUAutoLogin$AssemblySuffix" }
