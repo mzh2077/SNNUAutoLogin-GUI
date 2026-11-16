@@ -49,6 +49,10 @@ mkdir -p "$appdir/usr/lib/snnuautologin" "$appdir/usr/share/applications" \
 
 cp -a "$cli" "$appdir/usr/lib/snnuautologin/agent"
 cp -a "$python_src" "$appdir/usr/lib/snnuautologin/desktop"
+[[ -f "$appdir/usr/lib/snnuautologin/desktop/snnuautologin_desktop/client.py" ]] || {
+    printf '界面包没复制进去，AppImage 打出来也是废的。\n' >&2
+    exit 1
+}
 find "$appdir" -name '__pycache__' -type d -prune -exec rm -rf {} +
 
 # dotnet publish 出来的 dll 带 0744（有执行位、组和他人不可读），appimagetool 会为
@@ -143,15 +147,20 @@ runtime="$XDG_RUNTIME_DIR/snnuautologin"
 
 # 用一次真的问答来探活：光看套接字文件在不在会误判（后台崩了文件还留着），
 # 而且万一已经装了 deb 版、systemd 那边正跑着一个，这里就不该再起一个。
-agent_ready() {
+probe() {
     PYTHONPATH="$here/usr/lib/snnuautologin/desktop" python3 -c '
 import sys
 from snnuautologin_desktop import client
 try:
     client.send({"command": "status"}, timeout=2.0)
-except Exception:
+except Exception as exc:
+    print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
     sys.exit(1)
-' >/dev/null 2>&1
+'
+}
+
+agent_ready() {
+    probe >/dev/null 2>&1
 }
 
 if ! agent_ready; then
@@ -170,7 +179,9 @@ if ! agent_ready; then
         fi
         tries=$((tries + 1))
         if [ "$tries" -ge 10 ]; then
-            printf '后台十秒内没应答，日志：\n' >&2
+            printf '后台十秒内没应答。探活输出：\n' >&2
+            probe >&2 || true
+            printf '后台日志：\n' >&2
             tail -20 "$data/agent.log" >&2 2>/dev/null || true
             complain "后台没应答，详见 $data/agent.log"
             exit 1
