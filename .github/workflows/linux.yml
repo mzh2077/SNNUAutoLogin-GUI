@@ -110,15 +110,17 @@ jobs:
               --screenshot /tmp/dump.png > /tmp/dump.log 2>&1 || true
           cp /tmp/dump.log artifacts/linux/dump.log
           wc -l artifacts/linux/dump.log
-          grep -a -A 24 "AdwViewSwitcherButton$" artifacts/linux/dump.log | head -60 || true
-          grep -a -A 14 "PasswordEntryRow\]" artifacts/linux/dump.log | head -40 || true
+          # 控件那边图标名是对的，那就是有些图标在这台机器上画不出来：
+          # 把候选摆一排拍下来，谁能画出来看图和日志就行。
+          dbus-run-session -- python3 Linux/DesktopGtk/tests/icon_grid.py \
+              artifacts/linux/shots/icons.png || true
           kill "$agent" "$xvfb" 2>/dev/null || true
           ls -l artifacts/linux/shots
           # 纯黑屏只有几百字节；四张一模一样说明后面的窗口根本没画出来
           for shot in artifacts/linux/shots/ui-*.png; do
             test "$(stat -c%s "$shot")" -gt 5000
           done
-          test "$(md5sum artifacts/linux/shots/*.png | awk '{print $1}' | sort -u | wc -l)" -eq 4
+          test "$(md5sum artifacts/linux/shots/ui-*.png | awk '{print $1}' | sort -u | wc -l)" -eq 4
       - uses: actions/upload-artifact@v4
         if: always()
         with:
