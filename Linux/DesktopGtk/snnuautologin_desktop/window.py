@@ -70,6 +70,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._network_version: int | None = None
         self._rule_index: int | None = None
         self._captcha_texture = None
+        self._captcha_asked = False
         self._device_rows: list[Gtk.Widget] = []
         self._rule_rows: list[Gtk.Widget] = []
         self._timer = 0
@@ -474,6 +475,7 @@ class MainWindow(Adw.ApplicationWindow):
         mutate: Callable[[dict], None],
         done: str,
         extra: Callable[[dict], dict] | None = None,
+        after: Callable[[], None] | None = None,
     ) -> None:
         """改一份设置副本发过去；extra 用来在保存成功后再补一条命令（比如存密码）。"""
 
@@ -503,6 +505,8 @@ class MainWindow(Adw.ApplicationWindow):
                 if "重新加载" in message:
                     self._reload_settings()
                 return
+            if after is not None:
+                after()
             self._toast(done)
             self._reload_settings()
 
@@ -549,9 +553,13 @@ class MainWindow(Adw.ApplicationWindow):
         awaiting = bool(status.get("awaitingCaptcha"))
         self._captcha_group.set_visible(awaiting)
         if awaiting:
-            if self._captcha_texture is None:
+            # 只在刚进入等待状态时取一次图，否则后台一直不给图就会变成每 3 秒
+            # 一次额外请求，正好是这次要避免的那种事。
+            if self._captcha_texture is None and not self._captcha_asked:
+                self._captcha_asked = True
                 self._load_captcha()
         else:
+            self._captcha_asked = False
             self._set_captcha(None)
             self._captcha_entry.set_text("")
 
@@ -561,6 +569,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._network_version = version
             if changed:
                 self._clear_devices()
+                self._captcha_asked = False
                 self._set_captcha(None)
 
     def _load_captcha(self, *, refresh: bool = False) -> None:
@@ -642,8 +651,9 @@ class MainWindow(Adw.ApplicationWindow):
                 return {}
             return {"command": "password", "password": secret, "save": save}
 
-        self._post_settings(mutate, "账号设置已保存", extra)
-        self._entry_password.set_text("")
+        self._post_settings(
+            mutate, "账号设置已保存", extra, after=lambda: self._entry_password.set_text("")
+        )
 
     def _save_automation(self) -> None:
         autostart = self._switch_autostart.get_active()
@@ -784,8 +794,9 @@ class MainWindow(Adw.ApplicationWindow):
                 return {}
             return {"command": "password", "ruleId": rule_id, "password": secret, "save": save_secret}
 
-        self._post_settings(mutate, "规则已保存", extra)
-        self._rule_password.set_text("")
+        self._post_settings(
+            mutate, "规则已保存", extra, after=lambda: self._rule_password.set_text("")
+        )
 
     def _delete_rule(self) -> None:
         index = self._rule_index
