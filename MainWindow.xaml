@@ -725,10 +725,6 @@
                     <!--  设备数守卫：设备数超阈值时确认还能不能出网  -->
                     <Border x:Name="DeviceGuardCard" Style="{StaticResource CardStyle}">
                         <StackPanel Padding="20,14,20,14" Spacing="0">
-                            <StackPanel.Resources>
-                                <StaticResource x:Key="TextControlBorderBrush" ResourceKey="ControlStrokeColorDefaultBrush" />
-                                <StaticResource x:Key="TextControlBorderBrushPointerOver" ResourceKey="ControlStrokeColorSecondaryBrush" />
-                            </StackPanel.Resources>
 
                             <StackPanel
                                 Margin="0,0,0,10"
@@ -999,30 +995,6 @@
                                     Grid.Column="1"
                                     Style="{StaticResource RowPasswordBoxStyle}"
                                     PlaceholderText="校园网密码" />
-                            </Grid>
-
-                            <Border Style="{StaticResource DividerStyle}" />
-
-                            <Grid MinHeight="42">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Center" Spacing="1">
-                                    <TextBlock
-                                        Style="{StaticResource RowTitleStyle}"
-                                        Text="接入端口" />
-                                    <TextBlock
-                                        Style="{StaticResource HintStyle}"
-                                        Text="由校园网门户自动分配，无需手动选择" />
-                                </StackPanel>
-                                <TextBlock
-                                    x:Name="DefaultPortText"
-                                    Grid.Column="1"
-                                    Width="264"
-                                    VerticalAlignment="Center"
-                                    Style="{StaticResource RowTitleStyle}"
-                                    Text="—" />
                             </Grid>
 
                             <!--  验证码：只在 Portal 要求时出现  -->

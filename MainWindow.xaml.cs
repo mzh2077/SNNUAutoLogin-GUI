@@ -203,7 +203,6 @@ public sealed partial class MainWindow : Window
         LoadSettingsToUi();
         FillLogsFromRuntime();
         WireEvents();
-        FillDevicePorts();
         OnDeviceListChanged();
 
         // 在线设备默认就加载：进窗口就看到当前在线几台，不用再点一次刷新。
@@ -503,18 +502,6 @@ public sealed partial class MainWindow : Window
 
         while (Logs.Count > MaxLogLines) Logs.RemoveAt(0);
         ScrollLogToEnd();
-    }
-
-    /// <summary>
-    /// 刷新「接入端口」的显示。
-    ///
-    /// 端口不是用户能选的 —— 门户按接入线路临时分配（访问门户根路径会回一段
-    /// JS 指向具体端口），所以这里只负责把当前实际用的端口显示出来。
-    /// </summary>
-    private void FillDevicePorts()
-    {
-        int port = _rt.Devices.Port;
-        DefaultPortText.Text = $"{port}";
     }
 
     // ────────────────────────── 设备数守卫 ──────────────────────────

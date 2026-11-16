@@ -9,9 +9,21 @@
             <ResourceDictionary.ThemeDictionaries>
                 <ResourceDictionary x:Key="Light">
                     <SolidColorBrush x:Key="InlineLinkBrush" Color="#005FB8" />
+                    <SolidColorBrush x:Key="TextControlBorderBrush" Color="{ThemeResource ControlStrokeColorDefault}" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{ThemeResource ControlStrokeColorSecondary}" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{ThemeResource SystemAccentColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="{ThemeResource ControlStrokeColorDefault}" />
+                    <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="{ThemeResource ControlStrokeColorSecondary}" />
+                    <Thickness x:Key="ComboBoxBorderThemeThickness">1</Thickness>
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Dark">
                     <SolidColorBrush x:Key="InlineLinkBrush" Color="#79B8FF" />
+                    <SolidColorBrush x:Key="TextControlBorderBrush" Color="{ThemeResource ControlStrokeColorDefault}" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{ThemeResource ControlStrokeColorSecondary}" />
+                    <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{ThemeResource SystemAccentColor}" />
+                    <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="{ThemeResource ControlStrokeColorDefault}" />
+                    <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="{ThemeResource ControlStrokeColorSecondary}" />
+                    <Thickness x:Key="ComboBoxBorderThemeThickness">1</Thickness>
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="HighContrast">
                     <SolidColorBrush x:Key="InlineLinkBrush" Color="{ThemeResource SystemColorHotlightColor}" />
