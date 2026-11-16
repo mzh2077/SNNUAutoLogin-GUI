@@ -1128,7 +1128,7 @@ public sealed partial class MainWindow : Window
         _publicIpRequest?.Cancel();
         _publicIpRequest = null;
         _publicIpSession = null;
-        PublicIpText.Text = "—";
+        if (PublicIpText is { } text) text.Text = "—";
     }
 
     private async Task UpdatePublicIpAsync(LoginResult? result, bool force = false)
