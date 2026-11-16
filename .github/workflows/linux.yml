@@ -108,4 +108,9 @@ jobs:
             artifacts/linux/*.deb
             artifacts/linux/*.tar.gz
             artifacts/linux/SHA256SUMS.txt
-            artifacts/linux/shots/*.png
+      # 截图单独一个 artifact：几十 MB 的 deb 里夹四张图，无论是谁去看都得整包下。
+      - uses: actions/upload-artifact@v4
+        if: matrix.distro == 'ubuntu-24.04'
+        with:
+          name: SNNUAutoLogin-linux-ui-shots
+          path: artifacts/linux/shots/*.png
