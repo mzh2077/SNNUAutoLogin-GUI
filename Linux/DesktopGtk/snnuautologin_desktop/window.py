@@ -257,6 +257,33 @@ class MainWindow(Adw.ApplicationWindow):
         ]
         return " ".join(parts)
 
+    def dump_tree(self, max_depth: int = 12, max_lines: int = 900) -> list[str]:
+        """把控件树按缩进打出来，排查「明明设了图标却是个方框」这类问题用。"""
+        lines: list[str] = []
+
+        def walk(widget: Any, depth: int) -> None:
+            if depth > max_depth or len(lines) >= max_lines:
+                return
+            info = type(widget).__name__
+            if isinstance(widget, Gtk.Image):
+                icon_name = widget.get_icon_name() if hasattr(widget, "get_icon_name") else None
+                storage = widget.get_storage_type() if hasattr(widget, "get_storage_type") else "?"
+                paintable = widget.get_paintable() is not None if hasattr(widget, "get_paintable") else "?"
+                info += f"[icon={icon_name} storage={storage} paintable={paintable}]"
+            else:
+                title = widget.get_title() if hasattr(widget, "get_title") else None
+                if isinstance(title, str) and title:
+                    info += f"[{title}]"
+            info += "" if widget.get_visible() else "(隐藏)"
+            lines.append("  " * depth + info)
+            child = widget.get_first_child() if hasattr(widget, "get_first_child") else None
+            while child is not None:
+                walk(child, depth + 1)
+                child = child.get_next_sibling() if hasattr(child, "get_next_sibling") else None
+
+        walk(self, 0)
+        return lines
+
     def _build_connection_page(self) -> Gtk.Widget:
         page = Adw.PreferencesPage()
 

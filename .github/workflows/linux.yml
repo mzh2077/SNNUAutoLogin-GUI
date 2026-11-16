@@ -104,6 +104,10 @@ jobs:
               /usr/share/icons/Adwaita/symbolic/actions/view-list-symbolic.svg \
               /usr/share/icons/Adwaita/symbolic/actions/document-edit-symbolic.svg || true
           dbus-run-session -- bash Linux/DesktopGtk/tests/capture.sh artifacts/linux/shots
+          # 图标文件本身没问题，那问题就在控件上：把含图标的控件打出来看看
+          # 它们到底是「设了名字但没取到图标」还是别的。
+          timeout 30s dbus-run-session -- snnuautologin-desktop --page settings --dump-widgets \
+              --screenshot /tmp/dump.png 2>&1 | grep -a -E "控件 .*(Image\[|Switcher|HeaderBar|EntryRow)" | head -40 || true
           kill "$agent" "$xvfb" 2>/dev/null || true
           ls -l artifacts/linux/shots
           # 纯黑屏只有几百字节；四张一模一样说明后面的窗口根本没画出来

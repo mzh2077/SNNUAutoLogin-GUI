@@ -29,12 +29,14 @@ class Application(Adw.Application):
         screenshot: str | None = None,
         width: int = 900,
         height: int = 780,
+        dump_widgets: bool = False,
     ) -> None:
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self._page = page
         self._screenshot = screenshot
         self._width = width
         self._height = height
+        self._dump_widgets = dump_widgets
         self._window: MainWindow | None = None
 
     def do_activate(self) -> None:
@@ -71,6 +73,9 @@ class Application(Adw.Application):
             file=sys.stderr,
         )
         print(f"图标：{window.icon_report()}", file=sys.stderr)
+        if self._dump_widgets:
+            for line in window.dump_tree():
+                print(f"控件 {line}", file=sys.stderr)
         snapshot = Gtk.Snapshot()
         Gtk.WidgetPaintable.new(window).snapshot(snapshot, width, height)
         node = snapshot.to_node()
@@ -101,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--screenshot", metavar="PATH", help="把窗口渲染成 PNG 后退出，用于核对界面")
     parser.add_argument("--width", type=int, default=900, help="窗口宽度，截图时用")
     parser.add_argument("--height", type=int, default=780, help="窗口高度，截图时用")
+    parser.add_argument("--dump-widgets", action="store_true", help="截图时把控件树打到日志里")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     # GTK / Adw 自己也有命令行参数，这里只挑自己要的，其余原样交给它们去忽略。
     args, _rest = parser.parse_known_args(argv[1:])
@@ -109,5 +115,6 @@ def main(argv: list[str] | None = None) -> int:
         screenshot=args.screenshot,
         width=args.width,
         height=args.height,
+        dump_widgets=args.dump_widgets,
     )
     return app.run([argv[0] if argv else "snnuautologin-desktop"])
