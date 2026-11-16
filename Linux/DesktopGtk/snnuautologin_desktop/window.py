@@ -257,7 +257,7 @@ class MainWindow(Adw.ApplicationWindow):
         ]
         return " ".join(parts)
 
-    def dump_tree(self, max_depth: int = 12, max_lines: int = 900) -> list[str]:
+    def dump_tree(self, max_depth: int = 14, max_lines: int = 4000) -> list[str]:
         """把控件树按缩进打出来，排查「明明设了图标却是个方框」这类问题用。"""
         lines: list[str] = []
 
