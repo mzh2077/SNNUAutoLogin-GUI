@@ -154,9 +154,14 @@ jobs:
           chmod +x ./artifacts/linux/SNNUAutoLogin-*-x86_64.AppImage
           # 容器里没有 FUSE，AppImage 挂不上，只能解压后再跑
           export APPIMAGE_EXTRACT_AND_RUN=1
-          timeout 240 dbus-run-session -- xvfb-run -a \
+          if ! timeout 240 dbus-run-session -- xvfb-run -a \
               ./artifacts/linux/SNNUAutoLogin-*-x86_64.AppImage \
               --page settings --screenshot /tmp/appimage.png
+          then
+            echo "AppImage 没跑起来，后台日志："
+            cat "$HOME/.local/share/snnuautologin/appimage/agent.log" 2>/dev/null || true
+            exit 1
+          fi
           test -s /tmp/appimage.png
           test "$(stat -c%s /tmp/appimage.png)" -gt 5000
           # AppRun 应该把自带的后台复制到用户目录并从那儿拉起来了

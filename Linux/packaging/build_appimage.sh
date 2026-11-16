@@ -157,13 +157,22 @@ except Exception:
 if ! agent_ready; then
     mkdir -p "$runtime"
     chmod 700 "$runtime" 2>/dev/null || true
-    ( cd "$data" && nohup "$agent/snnuautologin" agent --autostart >>"$data/agent.log" 2>&1 & )
-    # 起 .NET 加上读凭据，一两秒很正常，给到五秒
+    # exec 一层子 shell，这样 $! 拿到的就是后台自己的 pid，能判断它是不是一启动就退出了
+    ( cd "$data" && exec "$agent/snnuautologin" agent --autostart >>"$data/agent.log" 2>&1 </dev/null ) &
+    agent_pid=$!
     tries=0
     while ! agent_ready; do
+        if ! kill -0 "$agent_pid" 2>/dev/null; then
+            printf '后台启动后立刻退出了，日志：\n' >&2
+            tail -20 "$data/agent.log" >&2 2>/dev/null || true
+            complain "后台起不来，详见 $data/agent.log"
+            exit 1
+        fi
         tries=$((tries + 1))
         if [ "$tries" -ge 10 ]; then
-            complain "后台没起来，详见 $data/agent.log"
+            printf '后台十秒内没应答，日志：\n' >&2
+            tail -20 "$data/agent.log" >&2 2>/dev/null || true
+            complain "后台没应答，详见 $data/agent.log"
             exit 1
         fi
         sleep 0.5
