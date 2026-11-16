@@ -84,7 +84,7 @@ class MainWindow(Adw.ApplicationWindow):
         # 每个页面都带一个图标：Adw.ViewSwitcher 会去取它，不给的话四个标签
         # 前面会各挂一个「图标缺失」的方框。
         for name, title, icon, page in (
-            ("connection", "连接", "network-wireless-symbolic", self._build_connection_page()),
+            ("connection", "连接", "network-wireless-signal-good-symbolic", self._build_connection_page()),
             ("rules", "规则", "view-list-symbolic", self._build_rules_page()),
             ("devices", "设备", "computer-symbolic", self._build_devices_page()),
             ("settings", "设置", "emblem-system-symbolic", self._build_settings_page()),

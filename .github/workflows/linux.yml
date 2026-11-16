@@ -82,32 +82,20 @@ jobs:
           # 上一步已经把包装上又卸掉验证干净了，这里重新装一遍再截图。
           apt-get install -y --no-install-recommends ./artifacts/linux/snnuautologin_*.deb ./artifacts/linux/snnuautologin-desktop_*.deb
           command -v snnuautologin-desktop
-          mkdir -p artifacts/linux/shots
           export XDG_RUNTIME_DIR="$(mktemp -d)"
-          dbus-run-session -- bash -c '
-            set -e
-            python3 Linux/DesktopGtk/tests/fake_agent.py &
-            agent=$!
-            Xvfb :99 -screen 0 1000x820x24 &
-            xvfb=$!
-            sleep 3
-            export DISPLAY=:99
-            for page in connection rules devices settings; do
-              snnuautologin-desktop --page "$page" &
-              app=$!
-              sleep 6
-              kill -0 "$app" 2>/dev/null || { echo "界面没有起来：$page"; exit 1; }
-              import -window root "artifacts/linux/shots/ui-$page.png"
-              kill "$app" 2>/dev/null || true
-              wait "$app" 2>/dev/null || true
-            done
-            kill "$agent" "$xvfb" 2>/dev/null || true
-          '
+          python3 Linux/DesktopGtk/tests/fake_agent.py &
+          agent=$!
+          Xvfb :99 -screen 0 1000x820x24 &
+          xvfb=$!
+          sleep 3
+          bash Linux/DesktopGtk/tests/capture.sh artifacts/linux/shots
+          kill "$agent" "$xvfb" 2>/dev/null || true
           ls -l artifacts/linux/shots
-          # 空白屏截出来只有几百字节，别让它悄悄通过
+          # 纯黑屏只有几百字节；四张一模一样说明后面的窗口根本没画出来
           for shot in artifacts/linux/shots/ui-*.png; do
             test "$(stat -c%s "$shot")" -gt 5000
           done
+          test "$(md5sum artifacts/linux/shots/*.png | awk '{print $1}' | sort -u | wc -l)" -eq 4
       - uses: actions/upload-artifact@v4
         if: always()
         with:
