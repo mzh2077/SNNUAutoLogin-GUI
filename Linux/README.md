@@ -2,12 +2,14 @@
 
 首版目标为 Ubuntu 24.04 LTS 和 Debian 13，x86-64。桌面需要 X11 或 XWayland。命令行和桌面使用同一个当前用户后台进程。
 
+桌面端用 GTK4 与 libadwaita 写，跟着发行版的桌面主题走，跟 KDE / GNOME 的原生控件是一套。它只依赖系统自带的 Python 与 `python3-gi`，不自带运行时，所以桌面包只有几十 KB。
+
 ## 安装与运行
 
 安装命令行与后台服务包后，按需安装同版本的桌面包。
 
 ```bash
-version=1.6.0
+version=1.7.0
 sudo apt install "./snnuautologin_${version}_amd64.deb"
 sudo apt install "./snnuautologin-desktop_${version}_amd64.deb"
 systemctl --user daemon-reload
@@ -15,6 +17,21 @@ systemctl --user start snnuautologin.service
 ```
 
 桌面程序也会在打开时尝试启动已安装的用户服务。便携包解压后可直接运行 `./cli/snnuautologin agent`，另开终端运行 `./cli/snnuautologin` 或启动 `./desktop/snnuautologin-desktop`。需要登录后自启时，在便携目录先运行 `bash ./install-user-service.sh`。后台服务默认不随用户登录启动。
+
+桌面包的运行依赖由 `apt` 自己装：`python3-gi`、`gir1.2-gtk-4.0`、`gir1.2-adw-1`、`gir1.2-pango-1.0`。中文界面需要 `fonts-noto-cjk`，它只是 Recommends，最小化安装的系统里要自己补一下。
+
+### AppImage（不装包）
+
+不想动 `apt` 就下 `SNNUAutoLogin-<版本>-x86_64.AppImage`，加执行权限后双击，或者：
+
+```bash
+chmod +x SNNUAutoLogin-*-x86_64.AppImage
+./SNNUAutoLogin-*-x86_64.AppImage
+```
+
+它里面同时有后台和界面，第一次启动会把自带的后台（自包含 .NET，一百多兆）解到 `${XDG_DATA_HOME:-~/.local/share}/snnuautologin/appimage/` 再从那儿拉起来——不能直接跑挂载点上的文件，AppImage 一卸载进程就跟着没了。之后同一版本再打开就不重复解压。
+
+界面仍然是 Python 调系统的 GTK4，所以跟 deb 版一样需要 `python3-gi`、`gir1.2-gtk-4.0`、`gir1.2-adw-1`。Ubuntu 24.04 以上、Debian 13 以上、Fedora 40 以上都自带；更老的发行版上的 GTK 版本不够，跑不起来，AppRun 会直接弹窗说缺什么。如果机器上已经装了 deb 版、`snnuautologin.service` 正在跑，AppImage 会直接连上那个后台，不会再起一个。
 
 ## 命令行
 
@@ -37,13 +54,47 @@ snnuautologin config set autostart true
 - 配置位于 `${XDG_CONFIG_HOME:-$HOME/.config}/snnuautologin/settings.json`。停止后台使用 `systemctl --user stop snnuautologin.service`。
 - 安装了 NetworkManager 时可识别有线、Wi-Fi 和 SSID。无法判定接入方式时使用默认账号。桌面和命令行通过当前用户专用 socket 通信。
 
-## 构建与测试
+## 桌面端
 
-在 Linux 上安装 .NET 10 SDK 和 `dpkg-deb`。共享库的 .NET 8 目标包会随 NuGet 还原。执行以下命令。
+界面代码在 `Linux/DesktopGtk/`，是一个 Python 包，靠 `python3-gi` 调 GTK4 与 libadwaita。它和命令行一样，只通过 `$XDG_RUNTIME_DIR/snnuautologin/agent.sock` 跟后台进程说话，所以换界面不用碰后台。
 
 ```bash
+# 起一个假后台，没有校园网也能看界面
+export XDG_RUNTIME_DIR=$(mktemp -d)
+python3 Linux/DesktopGtk/tests/fake_agent.py &
+PYTHONPATH=Linux/DesktopGtk python3 -m snnuautologin_desktop
+```
+
+`--page rules|devices|settings` 可以直接打开某个页面，`tests/fake_agent.py --captcha` 把状态切成等待验证码。这两个开关是给截图和人工核对用的。
+
+界面外观靠 `tests/capture.sh` 逐页截图核对（CI 里跑，图在 `SNNUAutoLogin-linux-ui-shots` 这个 artifact 里）：
+
+```bash
+Xvfb :99 -screen 0 1280x1300x24 &
+DISPLAY=:99 bash Linux/DesktopGtk/tests/capture.sh /tmp/shots
+```
+
+图标上踩过一次坑，记在这里省得再查：标签栏的图标是在窗口构造时就设好的，那会儿图标主题的索引还没铺开，`Gtk.IconTheme.has_icon()` 说有、SVG 也能解码，可 `Adw.ViewSwitcherButton` 里就是个「图标缺失」的方框。所以 `MainWindow` 在 `map` 之后会把图标名清空再写回去，逼标签重查一次。同类的 `Adw.EntryRow` 行尾小铅笔也一样，等行真画出来才存在，要在这时候再扫一遍控件树。排查工具：
+
+```bash
+# 控件树（含每个图标的名字、有没有拿到 paintable）
+DISPLAY=:99 snnuautologin-desktop --page settings --dump-widgets --screenshot /tmp/x.png
+# 某个图标名能不能用：查得到 / 匹配到哪个文件 / 那个 svg 能不能解
+DISPLAY=:99 python3 Linux/DesktopGtk/tests/icon_probe.py computer-symbolic
+# 候选图标摆一排（16px 与 24px，外加真的 ViewSwitcher），看谁画得出来
+DISPLAY=:99 python3 Linux/DesktopGtk/tests/icon_grid.py /tmp/icons.png
+```
+
+## 构建与测试
+
+在 Linux 上安装 .NET 10 SDK、`dpkg-deb` 和桌面的 GTK 依赖。共享库的 .NET 8 目标包会随 NuGet 还原。
+
+```bash
+sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-pango-1.0
 dotnet run --project tests/LinuxCoreTests -c Release
-bash Linux/packaging/build.sh 1.6.0
+python3 Linux/DesktopGtk/tests/test_client.py   # 帧格式与错误分支，不需要图形环境
+python3 Linux/DesktopGtk/tests/ui_smoke.py      # 窗口构造与状态渲染，不需要 GTK
+bash Linux/packaging/build.sh 1.7.0
 ```
 
 产物在 `artifacts/linux/`。发布前需要在两种发行版上完成桌面、密钥环、自启和安装卸载实测，并用校园网测试账号完成门户认证和设备守卫验收。

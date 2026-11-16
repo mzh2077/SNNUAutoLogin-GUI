@@ -4,6 +4,10 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 覆盖版本号（例如 1.7.0~preview.1），留空用 SNNUAutoLogin.csproj 里的
+        required: false
 
 permissions:
   contents: read
@@ -24,22 +28,77 @@ jobs:
       - name: Prepare the disposable test environment
         run: |
           apt-get update
-          apt-get install -y ca-certificates curl git libicu-dev libssl-dev zlib1g dpkg-dev xvfb xauth
+          apt-get install -y ca-certificates curl git libicu-dev libssl-dev zlib1g dpkg-dev xvfb xauth python3
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
       - run: dotnet run --project tests/LinuxCoreTests -c Release
+      # 桌面端是 Python，协议层和窗口逻辑都能在没有图形环境的机器上测。
+      - name: Desktop client tests
+        run: |
+          python3 Linux/DesktopGtk/tests/test_client.py
+          python3 Linux/DesktopGtk/tests/ui_smoke.py
       - run: |
           bash -n Linux/packaging/build.sh
+          bash -n Linux/packaging/build_appimage.sh
           bash -n Linux/packaging/install-user-service.sh
-      - run: bash Linux/packaging/build.sh 1.6.2
+      - name: Resolve version
+        id: version
+        run: |
+          version="${{ inputs.version }}"
+          if [ -z "$version" ]; then
+            version="$(grep -oP '(?<=<Version>)[^<]+' SNNUAutoLogin.csproj)"
+          fi
+          printf '版本 %s\n' "$version"
+          printf 'value=%s\n' "$version" >> "$GITHUB_OUTPUT"
+      # AppImage 只在 ubuntu-24.04 那份里出：glibc 版本低的打出来能跑在高版本上，
+      # 反过来不行。debian 13 的 glibc 更新，拿它打的包反而更挑系统。
+      - name: Get appimagetool
+        if: matrix.distro == 'ubuntu-24.04'
+        run: |
+          apt-get install -y --no-install-recommends file
+          for url in \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          do
+            printf '试 %s\n' "$url"
+            if curl -fsSL --retry 3 -o /usr/local/bin/appimagetool "$url"; then
+              chmod +x /usr/local/bin/appimagetool
+              break
+            fi
+          done
+          test -x /usr/local/bin/appimagetool
+          APPIMAGE_EXTRACT_AND_RUN=1 appimagetool --version < /dev/null || true
+      - name: Build packages
+        run: bash Linux/packaging/build.sh "${{ steps.version.outputs.value }}"
       - name: Check package metadata and checksums
         working-directory: artifacts/linux
         run: |
           sha256sum -c SHA256SUMS.txt
-          dpkg-deb -f snnuautologin_1.6.2_amd64.deb Package Version Architecture
-          dpkg-deb -f snnuautologin-desktop_1.6.2_amd64.deb Package Version Architecture Depends
+          for package in ./*.deb; do
+            dpkg-deb -f "$package" Package Version Architecture Depends
+            echo
+          done
+          test -n "$(ls snnuautologin_*_amd64.deb)"
+          test -n "$(ls snnuautologin-desktop_*_amd64.deb)"
+          # 桌面包现在只依赖系统的 GTK4 / libadwaita，不再自带 .NET 运行时
+          dpkg-deb -f snnuautologin-desktop_*_amd64.deb Depends | grep -q 'gir1.2-gtk-4.0'
+          dpkg-deb -f snnuautologin-desktop_*_amd64.deb Depends | grep -q 'gir1.2-adw-1'
+          test "$(du -k snnuautologin-desktop_*_amd64.deb | cut -f1)" -lt 1024
+      - name: Check the AppImage
+        if: matrix.distro == 'ubuntu-24.04'
+        working-directory: artifacts/linux
+        shell: bash
+        run: |
+          appimage="$(ls SNNUAutoLogin-*-x86_64.AppImage)"
+          ls -l "$appimage"
+          test -s "$appimage"
+          test -x "$appimage"
+          # 后台是自包含的 .NET，包不可能小；真小于 10MB 说明 publish 没打进去
+          test "$(stat -c%s "$appimage")" -gt 10485760
+          # 内容不在这里拆包核对：容器里 --appimage-extract 不稳，而且
+          # 「拆开看看有什么」不如「真跑一遍」。下面的 Smoke-test 才是硬指标。
       - name: Install, start and remove the packages
         working-directory: artifacts/linux
         shell: bash
@@ -48,19 +107,81 @@ jobs:
           snnuautologin --help
           test -r /usr/lib/systemd/user/snnuautologin.service
           test ! -e /etc/systemd/user/default.target.wants/snnuautologin.service
+          test -x /usr/bin/snnuautologin-desktop
           export XDG_RUNTIME_DIR="$(mktemp -d)"
           result=0
           timeout 8s xvfb-run -a snnuautologin-desktop || result=$?
           test "$result" = 124
-          tar -xzf SNNUAutoLogin-1.6.2-linux-x64.tar.gz
-          ./SNNUAutoLogin-1.6.2-linux-x64/cli/snnuautologin --help
+          tar -xzf SNNUAutoLogin-*-linux-x64.tar.gz
+          ./SNNUAutoLogin-*-linux-x64/cli/snnuautologin --help
+          test -x ./SNNUAutoLogin-*-linux-x64/desktop/snnuautologin-desktop
           apt-get purge -y snnuautologin-desktop snnuautologin
           test ! -e /usr/bin/snnuautologin
           test ! -e /usr/bin/snnuautologin-desktop
+      # 截图是给人看的：在无头 runner 上跑真 GTK，把四个页面各拍一张传上来。
+      - name: Desktop UI screenshots
+        if: matrix.distro == 'ubuntu-24.04'
+        shell: bash
+        run: |
+          apt-get install -y --no-install-recommends fonts-noto-cjk dbus
+          # 上一步已经把包装上又卸掉验证干净了，这里重新装一遍再截图。
+          apt-get install -y --no-install-recommends ./artifacts/linux/snnuautologin_*.deb ./artifacts/linux/snnuautologin-desktop_*.deb
+          command -v snnuautologin-desktop
+          export XDG_RUNTIME_DIR="$(mktemp -d)"
+          python3 Linux/DesktopGtk/tests/fake_agent.py &
+          agent=$!
+          # 屏幕开高一点：设置页三组加起来比默认的 780 高，capture.sh 里把
+          # 窗口拉到 1180，屏幕不够高的话窗口会被压回去。
+          Xvfb :99 -screen 0 1280x1300x24 &
+          xvfb=$!
+          sleep 3
+          export DISPLAY=:99
+          dbus-run-session -- bash Linux/DesktopGtk/tests/capture.sh artifacts/linux/shots
+          kill "$agent" "$xvfb" 2>/dev/null || true
+          ls -l artifacts/linux/shots
+          # 纯黑屏只有几百字节；四张一模一样说明后面的窗口根本没画出来
+          for shot in artifacts/linux/shots/ui-*.png; do
+            test "$(stat -c%s "$shot")" -gt 5000
+          done
+          test "$(md5sum artifacts/linux/shots/ui-*.png | awk '{print $1}' | sort -u | wc -l)" -eq 4
+      # AppRun 里那套「探活 → 复制后台 → 拉起界面」的逻辑只能真跑一遍才知道对不对
+      - name: Smoke-test the AppImage
+        if: matrix.distro == 'ubuntu-24.04'
+        shell: bash
+        run: |
+          export XDG_RUNTIME_DIR="$(mktemp -d)"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          chmod +x ./artifacts/linux/SNNUAutoLogin-*-x86_64.AppImage
+          # 容器里没有 FUSE，AppImage 挂不上，只能解压后再跑
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          if ! timeout 240 dbus-run-session -- xvfb-run -a \
+              ./artifacts/linux/SNNUAutoLogin-*-x86_64.AppImage \
+              --page settings --screenshot /tmp/appimage.png
+          then
+            echo "AppImage 没跑起来，后台日志："
+            cat "$HOME/.local/share/snnuautologin/appimage/agent.log" 2>/dev/null || true
+            exit 1
+          fi
+          test -s /tmp/appimage.png
+          test "$(stat -c%s /tmp/appimage.png)" -gt 5000
+          # AppRun 应该把自带的后台复制到用户目录并从那儿拉起来了
+          data="$HOME/.local/share/snnuautologin/appimage"
+          ls -l "$data"
+          test -x "$data"/agent-*/snnuautologin
+          test -s "$data"/agent-*/snnuautologin.dll
+          cat "$data"/agent.log || true
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: SNNUAutoLogin-linux-x64-${{ matrix.distro }}
           path: |
             artifacts/linux/*.deb
             artifacts/linux/*.tar.gz
+            artifacts/linux/*.AppImage
             artifacts/linux/SHA256SUMS.txt
+      # 截图单独一个 artifact：几十 MB 的 deb 里夹四张图，无论是谁去看都得整包下。
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.distro == 'ubuntu-24.04'
+        with:
+          name: SNNUAutoLogin-linux-ui-shots
+          path: artifacts/linux/shots/*.png

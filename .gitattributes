@@ -1,0 +1,10 @@
+# 仓库里的文本一律按 LF 存。Windows 上 core.autocrlf 会把工作区变成 CRLF，
+# 对 C# 没影响，但 Linux 下的 sh / service / desktop 文件带着 \r 就跑不起来了
+# （#!/usr/bin/env bash\r 这种）。
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
+*.desktop text eol=lf
+*.service text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
