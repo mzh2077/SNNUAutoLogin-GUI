@@ -21,14 +21,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 8.0.428
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+      - uses: android-actions/setup-android@v3
       - name: Install Android build dependencies
         run: |
-          dotnet workload install android
+          dotnet new globaljson --sdk-version 8.0.428
+          dotnet workload install android --skip-manifest-update
           sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
       - name: Build test APK
         run: >
