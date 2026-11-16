@@ -422,7 +422,6 @@ class MainWindow(Adw.ApplicationWindow):
         save.connect("clicked", lambda *_: self._save_rule())
         delete = Gtk.Button(label="删除")
         delete.add_css_class("destructive-action")
-        delete.add_css_class("flat")
         delete.set_valign(Gtk.Align.CENTER)
         delete.connect("clicked", lambda *_: self._delete_rule())
         row = Adw.ActionRow(title="保存这条规则", subtitle="规则密码会按「保存到系统密钥环」的开关处理")
@@ -1065,9 +1064,9 @@ class MainWindow(Adw.ApplicationWindow):
         elif device.get("canForceOffline"):
             token = device.get("id") or ""
             button = Gtk.Button(label="下线", valign=Gtk.Align.CENTER)
+            # 别加 flat：flat 只清背景不清字色，destructive-action 的字色是白的，
+            # 叠起来就是白底白字，按钮直接看不见了。
             button.add_css_class("destructive-action")
-            # 行尾挂一整块实心红太吵，改成红字扁按钮，跟 GNOME 各处行内操作一致。
-            button.add_css_class("flat")
             button.connect("clicked", lambda *_, token=token: self._offline(token))
             row.add_suffix(button)
         return row
