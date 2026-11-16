@@ -51,6 +51,12 @@ class Application(Adw.Application):
 
         width = window.get_width() or 900
         height = window.get_height() or 780
+        stack = getattr(window, "_stack", None)
+        visible = stack.get_visible_child_name() if stack is not None else "?"
+        print(
+            f"截图 {self._screenshot}：请求 {self._page}，实际显示 {visible}，尺寸 {width}x{height}",
+            file=sys.stderr,
+        )
         snapshot = Gtk.Snapshot()
         Gtk.WidgetPaintable.new(window).snapshot(snapshot, width, height)
         node = snapshot.to_node()
