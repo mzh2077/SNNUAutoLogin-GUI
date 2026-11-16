@@ -396,6 +396,8 @@
                                 Foreground="White"
                                 Content="切换出口"
                                 Click="OnSwitchOutletClicked" />
+                            <HyperlinkButton x:Name="UpdateLink" Margin="0,6,0,0"
+                                Padding="0" Visibility="Collapsed" />
                             <TextBlock x:Name="StatusRefreshMessage" Style="{StaticResource HintStyle}"
                                 Margin="0,6,0,0" TextWrapping="Wrap" Visibility="Collapsed"
                                 AutomationProperties.LiveSetting="Polite" />

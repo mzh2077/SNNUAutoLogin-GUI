@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../Shared/Platform.cs" Link="Platform.cs" />
+    <Compile Include="../../Services/ReleaseUpdateCheck.cs" Link="ReleaseUpdateCheck.cs" />
     <Compile Include="../../Services/StartupManager.cs" Link="StartupManager.cs" />
     <Compile Include="../../Services/LoginCoordinator.cs" Link="LoginCoordinator.cs" />
     <Compile Include="../../Services/OperationLifetime.cs" Link="OperationLifetime.cs" />

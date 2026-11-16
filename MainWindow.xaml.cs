@@ -75,6 +75,7 @@ public sealed partial class MainWindow : Window
         _rt.StateChanged += OnRuntimeState;
         _rt.Coordinator.CaptchaChanged += OnCaptchaChanged;
         _rt.Logged += OnRuntimeLog;
+        _rt.UpdateAvailable += ShowUpdateLink;
         _rt.SettingsChanged += OnRuntimeSettings;
         _rt.LegacyHostsChanged += OnLegacyHostsChanged;
         _rt.Devices.Changed += OnDeviceListChanged;
@@ -198,6 +199,7 @@ public sealed partial class MainWindow : Window
 
         LogList.ItemsSource = Logs;
         ShowVersion();
+        ShowUpdateLink();
 
         // 先置位再灌值：ApplyState 都会检查 _uiBuilt
         _uiBuilt = true;
@@ -256,6 +258,15 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>关于卡片里的版本号直接读程序集，别再手写一份（以前写死 1.0.0，升级后就对不上了）。</summary>
+    private void ShowUpdateLink()
+    {
+        if (UpdateLink is null || _rt.NewReleaseTag is not { } tag) return;
+
+        UpdateLink.Content = $"发现新版本 {tag} · 前往下载";
+        UpdateLink.NavigateUri = new Uri(ReleaseUpdateCheck.ReleaseUrl(tag));
+        UpdateLink.Visibility = Visibility.Visible;
+    }
+
     private void ShowVersion()
     {
         try
@@ -1713,6 +1724,7 @@ public sealed partial class MainWindow : Window
         _theme.Changed -= OnThemeChanged;
         _rt.StateChanged -= OnRuntimeState;
         _rt.Logged -= OnRuntimeLog;
+        _rt.UpdateAvailable -= ShowUpdateLink;
         _rt.SettingsChanged -= OnRuntimeSettings;
         _rt.LegacyHostsChanged -= OnLegacyHostsChanged;
         _rt.Coordinator.CaptchaChanged -= OnCaptchaChanged;
