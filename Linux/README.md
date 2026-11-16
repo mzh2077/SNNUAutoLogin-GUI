@@ -20,6 +20,19 @@ systemctl --user start snnuautologin.service
 
 桌面包的运行依赖由 `apt` 自己装：`python3-gi`、`gir1.2-gtk-4.0`、`gir1.2-adw-1`、`gir1.2-pango-1.0`。中文界面需要 `fonts-noto-cjk`，它只是 Recommends，最小化安装的系统里要自己补一下。
 
+### AppImage（不装包）
+
+不想动 `apt` 就下 `SNNUAutoLogin-<版本>-x86_64.AppImage`，加执行权限后双击，或者：
+
+```bash
+chmod +x SNNUAutoLogin-*-x86_64.AppImage
+./SNNUAutoLogin-*-x86_64.AppImage
+```
+
+它里面同时有后台和界面，第一次启动会把自带的后台（自包含 .NET，一百多兆）解到 `${XDG_DATA_HOME:-~/.local/share}/snnuautologin/appimage/` 再从那儿拉起来——不能直接跑挂载点上的文件，AppImage 一卸载进程就跟着没了。之后同一版本再打开就不重复解压。
+
+界面仍然是 Python 调系统的 GTK4，所以跟 deb 版一样需要 `python3-gi`、`gir1.2-gtk-4.0`、`gir1.2-adw-1`。Ubuntu 24.04 以上、Debian 13 以上、Fedora 40 以上都自带；更老的发行版上的 GTK 版本不够，跑不起来，AppRun 会直接弹窗说缺什么。如果机器上已经装了 deb 版、`snnuautologin.service` 正在跑，AppImage 会直接连上那个后台，不会再起一个。
+
 ## 命令行
 
 ```bash

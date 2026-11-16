@@ -4,6 +4,10 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 覆盖版本号（例如 1.7.0~preview.1），留空用 SNNUAutoLogin.csproj 里的
+        required: false
 
 permissions:
   contents: read
@@ -37,9 +41,37 @@ jobs:
           python3 Linux/DesktopGtk/tests/ui_smoke.py
       - run: |
           bash -n Linux/packaging/build.sh
+          bash -n Linux/packaging/build_appimage.sh
           bash -n Linux/packaging/install-user-service.sh
+      - name: Resolve version
+        id: version
+        run: |
+          version="${{ inputs.version }}"
+          if [ -z "$version" ]; then
+            version="$(grep -oP '(?<=<Version>)[^<]+' SNNUAutoLogin.csproj)"
+          fi
+          printf '版本 %s\n' "$version"
+          printf 'value=%s\n' "$version" >> "$GITHUB_OUTPUT"
+      # AppImage 只在 ubuntu-24.04 那份里出：glibc 版本低的打出来能跑在高版本上，
+      # 反过来不行。debian 13 的 glibc 更新，拿它打的包反而更挑系统。
+      - name: Get appimagetool
+        if: matrix.distro == 'ubuntu-24.04'
+        run: |
+          apt-get install -y --no-install-recommends file
+          for url in \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          do
+            printf '试 %s\n' "$url"
+            if curl -fsSL --retry 3 -o /usr/local/bin/appimagetool "$url"; then
+              chmod +x /usr/local/bin/appimagetool
+              break
+            fi
+          done
+          test -x /usr/local/bin/appimagetool
+          APPIMAGE_EXTRACT_AND_RUN=1 appimagetool --version < /dev/null || true
       - name: Build packages
-        run: bash Linux/packaging/build.sh "$(grep -oP '(?<=<Version>)[^<]+' SNNUAutoLogin.csproj)"
+        run: bash Linux/packaging/build.sh "${{ steps.version.outputs.value }}"
       - name: Check package metadata and checksums
         working-directory: artifacts/linux
         run: |
@@ -54,6 +86,24 @@ jobs:
           dpkg-deb -f snnuautologin-desktop_*_amd64.deb Depends | grep -q 'gir1.2-gtk-4.0'
           dpkg-deb -f snnuautologin-desktop_*_amd64.deb Depends | grep -q 'gir1.2-adw-1'
           test "$(du -k snnuautologin-desktop_*_amd64.deb | cut -f1)" -lt 1024
+      - name: Check the AppImage
+        if: matrix.distro == 'ubuntu-24.04'
+        working-directory: artifacts/linux
+        shell: bash
+        run: |
+          appimage="$(ls SNNUAutoLogin-*-x86_64.AppImage)"
+          test -s "$appimage"
+          test -x "$appimage"
+          # 解出来看里面到底装了什么，别光看文件大小
+          "./$appimage" --appimage-extract > /dev/null
+          test -x squashfs-root/AppRun
+          test -f squashfs-root/usr/lib/snnuautologin/agent/snnuautologin
+          test -f squashfs-root/usr/lib/snnuautologin/desktop/snnuautologin_desktop/__main__.py
+          test -f squashfs-root/cn.edu.snnu.SNNUAutoLogin.desktop
+          test -f squashfs-root/cn.edu.snnu.SNNUAutoLogin.png
+          grep -q 'python3 -m snnuautologin_desktop' squashfs-root/AppRun
+          grep -q 'agent --autostart' squashfs-root/AppRun
+          rm -rf squashfs-root
       - name: Install, start and remove the packages
         working-directory: artifacts/linux
         shell: bash
@@ -99,6 +149,21 @@ jobs:
             test "$(stat -c%s "$shot")" -gt 5000
           done
           test "$(md5sum artifacts/linux/shots/ui-*.png | awk '{print $1}' | sort -u | wc -l)" -eq 4
+      # AppRun 里那套「探活 → 复制后台 → 拉起界面」的逻辑只能真跑一遍才知道对不对
+      - name: Smoke-test the AppImage
+        if: matrix.distro == 'ubuntu-24.04'
+        shell: bash
+        run: |
+          export XDG_RUNTIME_DIR="$(mktemp -d)"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          timeout 180 dbus-run-session -- xvfb-run -a \
+              ./artifacts/linux/SNNUAutoLogin-*-x86_64.AppImage \
+              --page settings --screenshot /tmp/appimage.png
+          test -s /tmp/appimage.png
+          test "$(stat -c%s /tmp/appimage.png)" -gt 5000
+          ls -l "$HOME/.local/share/snnuautologin/appimage/"
+          test -x "$HOME/.local/share/snnuautologin/appimage/agent-"*/snnuautologin
+          cat "$HOME/.local/share/snnuautologin/appimage/agent.log" || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -106,6 +171,7 @@ jobs:
           path: |
             artifacts/linux/*.deb
             artifacts/linux/*.tar.gz
+            artifacts/linux/*.AppImage
             artifacts/linux/SHA256SUMS.txt
       # 截图单独一个 artifact：几十 MB 的 deb 里夹四张图，无论是谁去看都得整包下。
       - uses: actions/upload-artifact@v4

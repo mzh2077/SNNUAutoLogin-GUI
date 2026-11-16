@@ -83,4 +83,15 @@ chmod 0755 "$stage/$portable/desktop/snnuautologin-desktop"
 install -m755 "$root/Linux/packaging/install-user-service.sh" "$stage/$portable/install-user-service.sh"
 install -m644 "$root/Linux/README.md" "$stage/$portable/README.md"
 tar -C "$stage" -czf "$output/$archive" "$portable"
-(cd "$output" && sha256sum "$cli" "$desktop" "$archive" > SHA256SUMS.txt)
+
+# AppImage 是绿色版：后台和界面都塞在里面，不装包、双击就能跑。
+# 没有 appimagetool 的机器上这一步会自己跳过，deb 和 tar.gz 照样出。
+appimage="SNNUAutoLogin-${informational_version}-x86_64.AppImage"
+bash "$root/Linux/packaging/build_appimage.sh" "$version" "$stage/$portable/cli" "$desktop_src" \
+    "$root/Assets/app_256.png" "$output/$appimage"
+
+files=("$cli" "$desktop" "$archive")
+if [[ -s "$output/$appimage" ]]; then
+    files+=("$appimage")
+fi
+(cd "$output" && sha256sum "${files[@]}" > SHA256SUMS.txt)
