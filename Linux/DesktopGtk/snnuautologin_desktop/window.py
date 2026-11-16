@@ -123,6 +123,8 @@ class MainWindow(Adw.ApplicationWindow):
         self._toasts = Adw.ToastOverlay()
         self._stack = Adw.ViewStack()
 
+        self._page_icons: dict[str, str | None] = {}
+        self._page_widgets: dict[str, Gtk.Widget] = {}
         self._build_actions()
         # 每个页面都带一个图标：Adw.ViewSwitcher 会去取它，不给的话标签前面
         # 会少一块，四个标签的宽度看着参差不齐。
@@ -133,6 +135,8 @@ class MainWindow(Adw.ApplicationWindow):
             ("settings", "设置", self._build_settings_page()),
         ):
             icon = self._pick_icon(PAGE_ICONS.get(name, ()))
+            self._page_icons[name] = icon
+            self._page_widgets[name] = widget
             if icon is not None and hasattr(self._stack, "add_titled_with_icon"):
                 self._stack.add_titled_with_icon(widget, name, title, icon)
             else:
@@ -154,6 +158,9 @@ class MainWindow(Adw.ApplicationWindow):
         if page in {"connection", "rules", "devices", "settings"}:
             self._stack.set_visible_child_name(page)
 
+        # 窗口建的时候图标主题的索引还没铺开，这时候取图标偶尔会取到空，
+        # 之后一直画成「图标缺失」的方框。等窗口真显示出来再让标签取一次。
+        self.connect("map", self._on_map)
         self.connect("close-request", self._on_close)
         self._timer = GLib.timeout_add_seconds(POLL_SECONDS, self._poll)
         GLib.idle_add(self._bootstrap)
@@ -588,6 +595,31 @@ class MainWindow(Adw.ApplicationWindow):
         self._entry_external.set_text(settings.get("deviceGuardExternalProbeTarget") or "")
         self._spin_timeout.set_value(_int(settings.get("deviceGuardProbeTimeoutSeconds"), 3))
         self._render_rules(settings.get("connectionRules") or [])
+
+    def _on_map(self, *_args: Any) -> None:
+        GLib.timeout_add(400, self._polish_icons)
+        GLib.timeout_add(1200, self._polish_icons)
+        return False
+
+    def _polish_icons(self) -> bool:
+        """重新取一遍图标。
+
+        图标名先清空再写回去，AdwViewSwitcherButton 才会重新查一次主题；
+        行尾那个小铅笔也要等行真画出来才有，所以顺手再扫一遍控件树。
+        """
+        for name, icon in self._page_icons.items():
+            widget = self._page_widgets.get(name)
+            if not icon or widget is None or not hasattr(self._stack, "get_page"):
+                continue
+            page = self._stack.get_page(widget)
+            if page is None:
+                continue
+            page.set_icon_name("")
+            page.set_icon_name(icon)
+        child = self._stack.get_visible_child() if hasattr(self._stack, "get_visible_child") else None
+        if child is not None:
+            self._fix_missing_icons(child)
+        return False
 
     def _on_page_changed(self, *_args: Any) -> None:
         # 行尾那个小铅笔有可能要等行第一次显示才建出来，进页面时再扫一遍。

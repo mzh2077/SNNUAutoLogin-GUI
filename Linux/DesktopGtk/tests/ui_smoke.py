@@ -172,6 +172,7 @@ class ViewStack(Widget):
         super().__init__(**props)
         self.pages: dict[str, Widget] = {}
         self.icons: dict[str, str] = {}
+        self._page_objects: dict[int, Page] = {}
         self.visible_name = ""
 
     def add_titled(self, child, name, _title):
@@ -182,12 +183,30 @@ class ViewStack(Widget):
         self.add_titled(child, name, title)
         self.icons[name] = icon_name
 
+    def get_page(self, child):
+        if child not in self.pages.values():
+            return None
+        # 同一个页面每次都要拿到同一个 Page，跟真 Gtk 一样
+        return self._page_objects.setdefault(id(child), Page(child))
+
+    def get_visible_child(self):
+        return self.pages.get(self.visible_name)
+
     def set_visible_child_name(self, name):
         assert name in self.pages, f"没有这个页面：{name}"
         self.visible_name = name
 
     def get_visible_child_name(self):
         return self.visible_name
+
+
+class Page:
+    def __init__(self, child):
+        self.child = child
+        self.icon_name = None
+
+    def set_icon_name(self, name):
+        self.icon_name = name
 
 
 class ToastOverlay(Widget):
@@ -428,6 +447,16 @@ def test_page_icons_fall_back_to_names_the_theme_has() -> None:
         # 候选一个都不在主题里，就不挂图标，只显示文字——总比方框好看
         assert "devices" not in win._stack.icons, win._stack.icons
         assert "settings" not in win._stack.icons, win._stack.icons
+
+
+def test_polish_icons_reapplies_every_page_icon() -> None:
+    # 窗口刚建的时候图标主题索引还没铺开，有的图标会一直画成方框，
+    # 所以显示出来之后要把图标名清空再写回去，逼标签重新查一次主题。
+    win = _make_window(FakeAgent(captcha=False))
+    win._polish_icons()
+    for name, icon in win._page_icons.items():
+        page = win._stack.get_page(win._page_widgets[name])
+        assert page.icon_name == icon, f"{name} 最后落在 {page.icon_name}"
 
 
 def test_entry_row_edit_icon_uses_the_name_the_theme_has() -> None:
