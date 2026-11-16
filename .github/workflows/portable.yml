@@ -2,7 +2,39 @@ name: Windows release build
 on:
   push:
     branches: [main]
+    paths:
+      - '.github/workflows/portable.yml'
+      - '*.cs'
+      - '*.xaml'
+      - '*.csproj'
+      - 'app.manifest'
+      - 'runtimeconfig.template.json'
+      - 'Assets/**'
+      - 'Services/**'
+      - 'Shared/**'
+      - 'installer/**'
+      - 'tools/**'
+      - 'tests/StartupTests/**'
+      - 'tests/CredentialTests/**'
+      - 'tests/DeviceListTests/**'
+      - 'tests/GuardTests/**'
   pull_request:
+    paths:
+      - '.github/workflows/portable.yml'
+      - '*.cs'
+      - '*.xaml'
+      - '*.csproj'
+      - 'app.manifest'
+      - 'runtimeconfig.template.json'
+      - 'Assets/**'
+      - 'Services/**'
+      - 'Shared/**'
+      - 'installer/**'
+      - 'tools/**'
+      - 'tests/StartupTests/**'
+      - 'tests/CredentialTests/**'
+      - 'tests/DeviceListTests/**'
+      - 'tests/GuardTests/**'
   workflow_dispatch:
 permissions:
   contents: read
