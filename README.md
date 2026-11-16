@@ -39,7 +39,7 @@ Windows 版支持 Windows 10 2004 及以上和 Windows 11（x64）。安装版�
 
 ## Linux 预览版
 
-Linux 1.6.0 面向 Ubuntu 24.04 和 Debian 13（x64）。桌面和命令行共用后台服务。安装桌面 `.deb` 前，先安装同版本的命令行与服务包，也可以下载同时包含两种入口的便携包。登录后自启需要自行启用。 [Linux 安装与命令说明](https://github.com/mzh2077/SNNUAutoLogin-GUI/blob/main/Linux/README.md)
+Linux 1.7.0 面向 Ubuntu 24.04 和 Debian 13（x64）。桌面端是 GTK4 + libadwaita 写的，跟系统原生控件一致，只依赖发行版自带的 `python3-gi`，桌面包本身只有几十 KB。桌面和命令行共用后台服务，安装桌面 `.deb` 前先安装同版本的命令行与服务包，也可以下载同时包含两种入口的便携包。登录后自启需要自行启用。 [Linux 安装与命令说明](https://github.com/mzh2077/SNNUAutoLogin-GUI/blob/main/Linux/README.md)
 
 ## 本地数据与排障
 
@@ -59,6 +59,6 @@ dotnet run --project tests/DeviceListTests -c Release
 dotnet run --project tests/GuardTests -c Release
 ```
 
-安装 Inno Setup 6 后运行 `./tools/build_release.ps1` 可生成 Windows 安装版和 ZIP 便携版。Linux 使用 .NET 10 SDK，构建和打包步骤见 [Linux 开发说明](https://github.com/mzh2077/SNNUAutoLogin-GUI/blob/main/Linux/README.md)。
+安装 Inno Setup 6 后运行 `./tools/build_release.ps1` 可生成 Windows 安装版和 ZIP 便携版。Linux 后台用 .NET 10 SDK 构建，桌面端是 Python + GTK4，构建和打包步骤见 [Linux 开发说明](https://github.com/mzh2077/SNNUAutoLogin-GUI/blob/main/Linux/README.md)。
 
 本项目为非官方客户端。请在自己的设备上使用，并遵守学校的网络使用规定。 [贡献者](https://github.com/mzh2077/SNNUAutoLogin-GUI/graphs/contributors)

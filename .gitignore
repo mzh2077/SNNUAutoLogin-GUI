@@ -3,7 +3,12 @@
 [Oo]bj/
 release/
 artifacts/
+artifacts-*/
 installer/Output/
+
+# Python 缓存（Linux 桌面端）
+__pycache__/
+*.pyc
 
 # 本机用户配置
 *.user

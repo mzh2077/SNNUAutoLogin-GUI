@@ -24,22 +24,36 @@ jobs:
       - name: Prepare the disposable test environment
         run: |
           apt-get update
-          apt-get install -y ca-certificates curl git libicu-dev libssl-dev zlib1g dpkg-dev xvfb xauth
+          apt-get install -y ca-certificates curl git libicu-dev libssl-dev zlib1g dpkg-dev xvfb xauth python3
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
       - run: dotnet run --project tests/LinuxCoreTests -c Release
+      # 桌面端是 Python，协议层和窗口逻辑都能在没有图形环境的机器上测。
+      - name: Desktop client tests
+        run: |
+          python3 Linux/DesktopGtk/tests/test_client.py
+          python3 Linux/DesktopGtk/tests/ui_smoke.py
       - run: |
           bash -n Linux/packaging/build.sh
           bash -n Linux/packaging/install-user-service.sh
-      - run: bash Linux/packaging/build.sh 1.6.2
+      - name: Build packages
+        run: bash Linux/packaging/build.sh "$(grep -oP '(?<=<Version>)[^<]+' SNNUAutoLogin.csproj)"
       - name: Check package metadata and checksums
         working-directory: artifacts/linux
         run: |
           sha256sum -c SHA256SUMS.txt
-          dpkg-deb -f snnuautologin_1.6.2_amd64.deb Package Version Architecture
-          dpkg-deb -f snnuautologin-desktop_1.6.2_amd64.deb Package Version Architecture Depends
+          for package in ./*.deb; do
+            dpkg-deb -f "$package" Package Version Architecture Depends
+            echo
+          done
+          test -n "$(ls snnuautologin_*_amd64.deb)"
+          test -n "$(ls snnuautologin-desktop_*_amd64.deb)"
+          # 桌面包现在只依赖系统的 GTK4 / libadwaita，不再自带 .NET 运行时
+          dpkg-deb -f snnuautologin-desktop_*_amd64.deb Depends | grep -q 'gir1.2-gtk-4.0'
+          dpkg-deb -f snnuautologin-desktop_*_amd64.deb Depends | grep -q 'gir1.2-adw-1'
+          test "$(du -k snnuautologin-desktop_*_amd64.deb | cut -f1)" -lt 1024
       - name: Install, start and remove the packages
         working-directory: artifacts/linux
         shell: bash
@@ -48,19 +62,50 @@ jobs:
           snnuautologin --help
           test -r /usr/lib/systemd/user/snnuautologin.service
           test ! -e /etc/systemd/user/default.target.wants/snnuautologin.service
+          test -x /usr/bin/snnuautologin-desktop
           export XDG_RUNTIME_DIR="$(mktemp -d)"
           result=0
           timeout 8s xvfb-run -a snnuautologin-desktop || result=$?
           test "$result" = 124
-          tar -xzf SNNUAutoLogin-1.6.2-linux-x64.tar.gz
-          ./SNNUAutoLogin-1.6.2-linux-x64/cli/snnuautologin --help
+          tar -xzf SNNUAutoLogin-*-linux-x64.tar.gz
+          ./SNNUAutoLogin-*-linux-x64/cli/snnuautologin --help
+          test -x ./SNNUAutoLogin-*-linux-x64/desktop/snnuautologin-desktop
           apt-get purge -y snnuautologin-desktop snnuautologin
           test ! -e /usr/bin/snnuautologin
           test ! -e /usr/bin/snnuautologin-desktop
+      # 截图是给人看的：在无头 runner 上跑真 GTK，把四个页面各拍一张传上来。
+      - name: Desktop UI screenshots
+        if: matrix.distro == 'ubuntu-24.04'
+        shell: bash
+        run: |
+          apt-get install -y --no-install-recommends fonts-noto-cjk imagemagick dbus
+          mkdir -p artifacts/linux/shots
+          export XDG_RUNTIME_DIR="$(mktemp -d)"
+          dbus-run-session -- bash -c '
+            set -e
+            python3 Linux/DesktopGtk/tests/fake_agent.py &
+            agent=$!
+            Xvfb :99 -screen 0 1000x820x24 &
+            xvfb=$!
+            sleep 3
+            export DISPLAY=:99
+            for page in connection rules devices settings; do
+              snnuautologin-desktop --page "$page" &
+              app=$!
+              sleep 6
+              import -window root "artifacts/linux/shots/ui-$page.png"
+              kill "$app" 2>/dev/null || true
+              wait "$app" 2>/dev/null || true
+            done
+            kill "$agent" "$xvfb" 2>/dev/null || true
+          '
+          ls -l artifacts/linux/shots
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: SNNUAutoLogin-linux-x64-${{ matrix.distro }}
           path: |
             artifacts/linux/*.deb
             artifacts/linux/*.tar.gz
             artifacts/linux/SHA256SUMS.txt
+            artifacts/linux/shots/*.png
