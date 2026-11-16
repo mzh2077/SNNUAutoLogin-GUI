@@ -62,3 +62,7 @@ dotnet run --project tests/GuardTests -c Release
 安装 Inno Setup 6 后运行 `./tools/build_release.ps1` 可生成 Windows 安装版和 ZIP 便携版。Linux 使用 .NET 10 SDK，构建和打包步骤见 [Linux 开发说明](https://github.com/mzh2077/SNNUAutoLogin-GUI/blob/main/Linux/README.md)。
 
 本项目为非官方客户端。请在自己的设备上使用，并遵守学校的网络使用规定。 [贡献者](https://github.com/mzh2077/SNNUAutoLogin-GUI/graphs/contributors)
+
+## 许可证
+
+本项目按 [PolyForm Noncommercial License 1.0.0](LICENSE) 授权。主要作者为 [mzh2077](https://github.com/mzh2077) 和 [marike86](https://github.com/marike86)，分发时请保留 [NOTICE](NOTICE) 中的署名声明。
