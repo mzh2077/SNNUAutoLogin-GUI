@@ -74,7 +74,13 @@ class Application(Adw.Application):
         )
         print(f"图标：{window.icon_report()}", file=sys.stderr)
         if self._dump_widgets:
-            for line in window.dump_tree():
+            # 只打两块：顶部标签栏（图标出问题的地方）和当前页面。
+            print("== 标题栏 ==", file=sys.stderr)
+            for line in window.dump_tree(window._header):
+                print(f"控件 {line}", file=sys.stderr)
+            print("== 页面 ==", file=sys.stderr)
+            child = stack.get_visible_child() if stack is not None else None
+            for line in window.dump_tree(child):
                 print(f"控件 {line}", file=sys.stderr)
         snapshot = Gtk.Snapshot()
         Gtk.WidgetPaintable.new(window).snapshot(snapshot, width, height)

@@ -146,7 +146,8 @@ class MainWindow(Adw.ApplicationWindow):
         body.append(self._toasts)
 
         view = Adw.ToolbarView()
-        view.add_top_bar(self._build_header())
+        self._header = self._build_header()
+        view.add_top_bar(self._header)
         view.set_content(body)
         self.set_content(view)
 
@@ -257,7 +258,12 @@ class MainWindow(Adw.ApplicationWindow):
         ]
         return " ".join(parts)
 
-    def dump_tree(self, max_depth: int = 14, max_lines: int = 4000) -> list[str]:
+    def dump_tree(
+        self,
+        root: Any = None,
+        max_depth: int = 24,
+        max_lines: int = 6000,
+    ) -> list[str]:
         """把控件树按缩进打出来，排查「明明设了图标却是个方框」这类问题用。"""
         lines: list[str] = []
 
@@ -281,7 +287,7 @@ class MainWindow(Adw.ApplicationWindow):
                 walk(child, depth + 1)
                 child = child.get_next_sibling() if hasattr(child, "get_next_sibling") else None
 
-        walk(self, 0)
+        walk(self if root is None else root, 0)
         return lines
 
     def _build_connection_page(self) -> Gtk.Widget:

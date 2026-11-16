@@ -110,8 +110,8 @@ jobs:
               --screenshot /tmp/dump.png > /tmp/dump.log 2>&1 || true
           cp /tmp/dump.log artifacts/linux/dump.log
           wc -l artifacts/linux/dump.log
-          grep -a -A 30 "ViewSwitcher$" artifacts/linux/dump.log | head -50 || true
-          grep -a -A 12 "PasswordEntryRow\]" artifacts/linux/dump.log | head -40 || true
+          grep -a -A 24 "AdwViewSwitcherButton$" artifacts/linux/dump.log | head -60 || true
+          grep -a -A 14 "PasswordEntryRow\]" artifacts/linux/dump.log | head -40 || true
           kill "$agent" "$xvfb" 2>/dev/null || true
           ls -l artifacts/linux/shots
           # 纯黑屏只有几百字节；四张一模一样说明后面的窗口根本没画出来
