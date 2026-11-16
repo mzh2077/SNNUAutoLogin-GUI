@@ -79,6 +79,9 @@ jobs:
         shell: bash
         run: |
           apt-get install -y --no-install-recommends fonts-noto-cjk imagemagick dbus
+          # 上一步已经把包装上又卸掉验证干净了，这里重新装一遍再截图。
+          apt-get install -y --no-install-recommends ./artifacts/linux/snnuautologin_*.deb ./artifacts/linux/snnuautologin-desktop_*.deb
+          command -v snnuautologin-desktop
           mkdir -p artifacts/linux/shots
           export XDG_RUNTIME_DIR="$(mktemp -d)"
           dbus-run-session -- bash -c '
@@ -93,6 +96,7 @@ jobs:
               snnuautologin-desktop --page "$page" &
               app=$!
               sleep 6
+              kill -0 "$app" 2>/dev/null || { echo "界面没有起来：$page"; exit 1; }
               import -window root "artifacts/linux/shots/ui-$page.png"
               kill "$app" 2>/dev/null || true
               wait "$app" 2>/dev/null || true
@@ -100,6 +104,10 @@ jobs:
             kill "$agent" "$xvfb" 2>/dev/null || true
           '
           ls -l artifacts/linux/shots
+          # 空白屏截出来只有几百字节，别让它悄悄通过
+          for shot in artifacts/linux/shots/ui-*.png; do
+            test "$(stat -c%s "$shot")" -gt 5000
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
