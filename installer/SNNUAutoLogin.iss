@@ -231,6 +231,26 @@ begin
   end;
 end;
 
+{ 覆盖升级时先删掉开始菜单里的旧快捷方式。
+  Inno 更新已存在的 .lnk 是走 IShellLink 的 IPersistFile::Save，如果 shell 或安全软件
+  正占着这个文件，会报「IPersistFile::Save 失败；错误码 0x80070005」。静默安装下这条
+  消息被 SUPPRESSMSGBOXES 吞掉，表现为快捷方式停在旧时间戳、内容却没更新。
+  先删再建走的是新建路径，不碰覆盖，就没有这个问题。 }
+procedure DeleteStaleShortcuts;
+var
+  Dirs: array[0..1] of String;
+  I: Integer;
+begin
+  Dirs[0] := ExpandConstant('{userprograms}');
+  Dirs[1] := ExpandConstant('{commonprograms}');
+  for I := 0 to 1 do
+  begin
+    if Dirs[I] = '' then Continue;
+    DeleteFile(AddBackslash(Dirs[I]) + '{#AppName}.lnk');
+    DeleteFile(AddBackslash(Dirs[I]) + '卸载 {#AppName}.lnk');
+  end;
+end;
+
 { 覆盖升级时把开机自启改指到安装目录：
   旧版本可能是便携版（自启写的是别的路径），不改的话升级完还在启动旧程序。 }
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -242,6 +262,7 @@ begin
   begin
     DeleteStaleFiles(ExpandConstant('{app}'));
     CleanupStaleDirs;
+    DeleteStaleShortcuts;
     Exit;
   end;
 
