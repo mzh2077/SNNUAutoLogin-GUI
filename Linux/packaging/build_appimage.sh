@@ -51,6 +51,16 @@ cp -a "$cli" "$appdir/usr/lib/snnuautologin/agent"
 cp -a "$python_src" "$appdir/usr/lib/snnuautologin/desktop"
 find "$appdir" -name '__pycache__' -type d -prune -exec rm -rf {} +
 
+# dotnet publish 出来的 dll 带 0744（有执行位、组和他人不可读），appimagetool 会为
+# 每一个都报一条「别的用户跑会 Permission denied」。这里统一收一遍权限：普通文件
+# 0644，只有真需要执行的那两个留 0755。
+find "$appdir" -type d -exec chmod 0755 {} +
+find "$appdir" -type f -exec chmod 0644 {} +
+chmod 0755 "$appdir/usr/lib/snnuautologin/agent/snnuautologin"
+if [[ -e "$appdir/usr/lib/snnuautologin/agent/createdump" ]]; then
+    chmod 0755 "$appdir/usr/lib/snnuautologin/agent/createdump"
+fi
+
 # 桌面文件名必须和 GTK 的 application_id 对得上，否则 GNOME 任务栏抓不到图标。
 desktop_id="cn.edu.snnu.SNNUAutoLogin"
 cat > "$appdir/$desktop_id.desktop" <<DESKTOP

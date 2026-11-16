@@ -92,10 +92,16 @@ jobs:
         shell: bash
         run: |
           appimage="$(ls SNNUAutoLogin-*-x86_64.AppImage)"
+          ls -l "$appimage"
           test -s "$appimage"
           test -x "$appimage"
-          # 解出来看里面到底装了什么，别光看文件大小
-          "./$appimage" --appimage-extract > /dev/null
+          # 解出来看里面到底装了什么，别光看文件大小。容器里没有 FUSE，
+          # 偶尔 runtime 还是想挂载，失败时把输出打出来别闷着
+          if ! "./$appimage" --appimage-extract > /tmp/extract.log 2>&1; then
+            echo "解包失败，输出如下："
+            tail -30 /tmp/extract.log
+            exit 1
+          fi
           test -x squashfs-root/AppRun
           test -f squashfs-root/usr/lib/snnuautologin/agent/snnuautologin
           test -f squashfs-root/usr/lib/snnuautologin/desktop/snnuautologin_desktop/__main__.py
