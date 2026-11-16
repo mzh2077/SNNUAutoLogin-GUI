@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
@@ -35,7 +36,6 @@ public sealed partial class MainWindow : Window
 
     private AppWindow? _appWindow;
     private WindowCloseHook? _closeHook;
-    private Operator _operator = Operator.Mobile;
     private ConnState _lastState = ConnState.Idle;
     private bool _uiReady;
     private bool _uiBuilt;
@@ -47,7 +47,13 @@ public sealed partial class MainWindow : Window
 
     private readonly DispatcherTimer _saveTimer = new() { Interval = TimeSpan.FromMilliseconds(450) };
 
-    private static readonly int[] Intervals = { 4, 8, 15, 30 };
+    /// <summary>巡检时长的合法范围（秒）。存设置与落盘都用这一份，避免几处各写各的。</summary>
+    private const int MinIntervalSeconds = 4;
+    private const int MaxIntervalSeconds = 120;
+
+    /// <summary>「关于」卡片里的两个链接。</summary>
+    private const string RepoUrl = "https://github.com/mzh2077/SNNUAutoLogin-GUI";
+    private const string IssueUrl = "https://github.com/mzh2077/SNNUAutoLogin-GUI/issues/new";
 
     public MainWindow(AppRuntime runtime)
     {
@@ -69,8 +75,11 @@ public sealed partial class MainWindow : Window
         _rt.StateChanged += OnRuntimeState;
         _rt.Coordinator.CaptchaChanged += OnCaptchaChanged;
         _rt.Logged += OnRuntimeLog;
+        _rt.UpdateAvailable += ShowUpdateLink;
         _rt.SettingsChanged += OnRuntimeSettings;
         _rt.LegacyHostsChanged += OnLegacyHostsChanged;
+        _rt.Devices.Changed += OnDeviceListChanged;
+        _rt.Guard.Changed += OnGuardChanged;
 
         Activated += OnWindowActivated;
         Closed += OnClosed;
@@ -190,13 +199,20 @@ public sealed partial class MainWindow : Window
 
         LogList.ItemsSource = Logs;
         ShowVersion();
+        ShowUpdateLink();
 
-        // 先置位再灌值：SyncOperatorUi / ApplyState 都会检查 _uiBuilt
+        // 先置位再灌值：ApplyState 都会检查 _uiBuilt
         _uiBuilt = true;
 
         LoadSettingsToUi();
         FillLogsFromRuntime();
         WireEvents();
+        FillDevicePorts();
+        OnDeviceListChanged();
+
+        // 在线设备默认就加载：进窗口就看到当前在线几台，不用再点一次刷新。
+        // 放在这里而不是构造函数里，是为了让「加载中」的状态能正常显示出来。
+        _ = RefreshDevicesAsync();
 
         ApplyThemeColors();
         ApplyState(_rt.State, _rt.LastResult, animate: false);
@@ -217,6 +233,7 @@ public sealed partial class MainWindow : Window
         if (!_uiBuilt) return;
 
         PersistToStore();
+        ClearPublicIp();
         _uiBuilt = false;
 
         try { LogList.ItemsSource = null; } catch { }
@@ -241,6 +258,15 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>关于卡片里的版本号直接读程序集，别再手写一份（以前写死 1.0.0，升级后就对不上了）。</summary>
+    private void ShowUpdateLink()
+    {
+        if (UpdateLink is null || _rt.NewReleaseTag is not { } tag) return;
+
+        UpdateLink.Content = $"发现新版本 {tag} · 前往下载";
+        UpdateLink.NavigateUri = new Uri(ReleaseUpdateCheck.ReleaseUrl(tag));
+        UpdateLink.Visibility = Visibility.Visible;
+    }
+
     private void ShowVersion()
     {
         try
@@ -251,6 +277,22 @@ public sealed partial class MainWindow : Window
         catch { }
     }
 
+    /// <summary>
+    /// 关于卡片里的两个链接：源代码仓库与问题反馈。
+    /// 用系统默认浏览器打开，不自己实现一套 URL 协议。
+    /// </summary>
+    private void OpenExternal(string url)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch
+        {
+            // 打开失败不该让程序崩掉，提示一下就好
+            _rt.AddLog($"打开链接失败：{url}");
+        }
+    }
     /// <summary>把 x:Name 生成的控件字段全部置空，断开它们对已卸载树的强引用。</summary>
     private void DropElementReferences()
     {
@@ -274,8 +316,10 @@ public sealed partial class MainWindow : Window
 
         Fx.FallIn(StatusCard, 0, 12, Fx.SlowMs);
         Fx.FallIn(LogCard, 30, 12, Fx.SlowMs);
-        Fx.FallIn(AccountCard, 30, 12, Fx.SlowMs);
-        Fx.FallIn(BehaviorCard, 60, 12, Fx.SlowMs);
+        Fx.FallIn(DeviceGuardCard, 30, 12, Fx.SlowMs);
+        Fx.FallIn(RulesCard, 45, 12, Fx.SlowMs);
+        Fx.FallIn(AccountCard, 60, 12, Fx.SlowMs);
+        Fx.FallIn(BehaviorCard, 75, 12, Fx.SlowMs);
         Fx.FallIn(AboutCard, 90, 12, Fx.SlowMs);
     }
 
@@ -316,11 +360,11 @@ public sealed partial class MainWindow : Window
     {
         Trace($"close-requested exiting={_rt.Exiting} tray={(_rt.Store.Settings.MinimizeToTray ? 1 : 0)}");
 
-        if (_rt.Exiting) return false;
-        if (!_rt.Store.Settings.MinimizeToTray) return false;
-        if (_rt.Tray?.IsVisible != true) return false;
-
-        HideToTray();
+        if (_rt.Exiting) return !_rt.ShutdownComplete;
+        if (_rt.Store.Settings.MinimizeToTray && _rt.Tray?.IsVisible == true)
+            HideToTray();
+        else
+            _rt.Exit();
         return true;
     }
 
@@ -410,22 +454,22 @@ public sealed partial class MainWindow : Window
         {
             _startHidden = false;
             HideToTray();
+            return;
         }
+
+        // 窗口被激活说明用户可能刚换了网：重新判一次接入方式，规则卡片要跟上
+        _rt.Access.Invalidate();
+        RefreshRulesUi();
     }
 
     // ────────────────────────── 初始化 ──────────────────────────
 
-    /// <summary>开发期用：--op=N 强制指定出口，--dark 强制深色，配合 --snapshot 验证界面。</summary>
+    /// <summary>开发期用：--dark 强制深色，配合 --snapshot 验证界面。</summary>
     private void ApplyCommandLineOverrides()
     {
         foreach (var arg in Environment.GetCommandLineArgs())
         {
-            if (arg.StartsWith("--op=", StringComparison.OrdinalIgnoreCase)
-                && int.TryParse(arg.AsSpan(5), out int op) && op is >= 0 and <= 3)
-            {
-                _operator = (Operator)op;
-            }
-            else if (arg.Equals("--dark", StringComparison.OrdinalIgnoreCase))
+            if (arg.Equals("--dark", StringComparison.OrdinalIgnoreCase))
             {
                 Root.RequestedTheme = ElementTheme.Dark;
             }
@@ -445,16 +489,31 @@ public sealed partial class MainWindow : Window
         TraySwitch.IsOn = s.MinimizeToTray;
         LockKeepSwitch.IsOn = s.KeepAliveOnLock;
 
-        IntervalBox.Items.Clear();
-        foreach (var v in Intervals) IntervalBox.Items.Add($"{v} 秒");
-        int idx = Array.IndexOf(Intervals, s.CheckIntervalSeconds);
-        IntervalBox.SelectedIndex = idx >= 0 ? idx : 1;
+        // 巡检时长：直接填数值，没有下拉索引这一层，也就不会再出现「填了 20 却被写回 8」
+        IntervalBox.Value = Math.Clamp(s.CheckIntervalSeconds, MinIntervalSeconds, MaxIntervalSeconds);
 
-        _operator = s.Operator;
-        SyncOperatorUi();
+        DeviceGuardSwitch.IsOn = s.DeviceGuardEnabled;
+        DeviceGuardThresholdBox.Value = s.DeviceGuardThreshold;
+        DeviceGuardProbeTargetBox.Text = s.DeviceGuardProbeTarget;
+        DeviceGuardExternalProbeTargetBox.Text = s.DeviceGuardExternalProbeTarget;
+        DeviceGuardTimeoutBox.Value = s.DeviceGuardProbeTimeoutSeconds;
+        UpdateGuardUiEnabledState();
 
         SyncLegacyHostsBar();
         _uiReady = ready;
+
+        RefreshRulesUi();
+    }
+
+    /// <summary>守卫关闭时把下面三项置灰 —— 但已经填好的值要留着，别让人重填一遍。</summary>
+    private void UpdateGuardUiEnabledState()
+    {
+        bool on = DeviceGuardSwitch.IsOn;
+        DeviceGuardThresholdBox.IsEnabled = on;
+        DeviceGuardProbeTargetBox.IsEnabled = on;
+        DeviceGuardExternalProbeTargetBox.IsEnabled = on;
+        DeviceGuardTimeoutBox.IsEnabled = on;
+        DeviceGuardProbeNowBtn.IsEnabled = on;
     }
 
     private void FillLogsFromRuntime()
@@ -466,16 +525,433 @@ public sealed partial class MainWindow : Window
         ScrollLogToEnd();
     }
 
+    /// <summary>
+    /// 刷新「接入端口」的显示。
+    ///
+    /// 端口不是用户能选的 —— 门户按接入线路临时分配（访问门户根路径会回一段
+    /// JS 指向具体端口），所以这里只负责把当前实际用的端口显示出来。
+    /// </summary>
+    private void FillDevicePorts()
+    {
+        int port = _rt.Devices.Port;
+        DefaultPortText.Text = $"{port}";
+    }
+
+    // ────────────────────────── 设备数守卫 ──────────────────────────
+
+    /// <summary>守卫状态变化（后台线程触发，切回 UI 线程刷新卡片）。</summary>
+    private void OnGuardChanged(DeviceGuardStatus status)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_uiBuilt) return;
+
+            string state = status.State switch
+            {
+                DeviceGuardState.Disabled => "守卫未启用",
+                DeviceGuardState.Idle => "待检测",
+                DeviceGuardState.Probing => "正在检测出网连通性…",
+                DeviceGuardState.Disposing => "正在断开本机连接…",
+                DeviceGuardState.Reauthenticating => "正在重新认证…",
+                DeviceGuardState.Cooldown => "冷却中，稍后再检测",
+                DeviceGuardState.Stopped => "已停止自动处置，请检查网络或手动重新连接",
+                _ => "待检测"
+            };
+
+            DeviceGuardStateText.Text = $"{state} · 在线设备 {status.DeviceCount} 台 · 阈值 {status.Threshold} · 统计端口 {status.StatisticPort}";
+
+            DeviceGuardLastText.Text = status.LastProbeAt is null
+                ? "尚未检测"
+                : $"上次检测 {status.LastProbeAt:HH:mm:ss} · {(status.LastProbeOk == true ? "通过" : "失败")} · {status.LastMessage}";
+
+            RefreshRulesUi();
+        });
+    }
+
+    /// <summary>「立即检测一次」：只探测，不处置。</summary>
+    private void OnGuardProbeNowClicked(object sender, RoutedEventArgs e) => _ = ProbeNowAsync();
+
+    private async Task ProbeNowAsync()
+    {
+        DeviceGuardProbeNowBtn.IsEnabled = false;
+        DeviceGuardLastText.Text = "正在检测…";
+
+        try
+        {
+            UpdateGuardProbeSettings();
+            var result = await _rt.Guard.ProbeNowAsync();
+            DeviceGuardLastText.Text = result.Success
+                ? $"出网正常（{result.Detail}）"
+                : $"出网异常（{result.Detail}）";
+        }
+        catch (Exception ex)
+        {
+            DeviceGuardLastText.Text = $"检测失败：{ex.Message}";
+        }
+        finally
+        {
+            UpdateGuardUiEnabledState();
+        }
+    }
+
+    // ────────────────────────── 连接规则 ──────────────────────────
+
+    /// <summary>刷新规则列表与「当前接入 / 生效规则」两行。</summary>
+    private void RefreshRulesUi()
+    {
+        if (!_uiBuilt) return;
+
+        var s = _rt.Store.Settings;
+        var access = _rt.Access.GetCurrent();
+        var profile = _rt.Profiles.Resolve(access);
+        bool waitingForSsid = access.Kind == NetworkAccessKind.Wireless
+            && !access.SsidReliable && ConnectionRuleSet.NeedsSsid(s.ConnectionRules);
+
+        RulesCurrentLinkText.Text = access.Kind switch
+        {
+            NetworkAccessKind.Wired => "当前接入：有线",
+            NetworkAccessKind.Wireless => access.SsidReliable && access.Ssid.Length > 0
+                ? $"当前接入：无线 · SSID『{access.Ssid}』"
+                : "当前接入：无线",
+            _ => "当前接入：未知"
+        };
+
+        RulesActiveText.Text = waitingForSsid
+            ? "生效规则：等待后台确认 SSID"
+            : profile.IsDefault
+                ? $"未命中任何规则，使用默认账号（{s.Account} · 端口 {profile.Port}）"
+                : $"生效规则：账号 {profile.Account} · 端口 {profile.Port}";
+
+        var items = new List<RuleItem>();
+        foreach (var r in ConnectionRuleSet.Sorted(s.ConnectionRules))
+        {
+            bool active = !waitingForSsid && !profile.IsDefault
+                && profile.Rule is not null
+                && string.Equals(profile.Rule.Id, r.Id, StringComparison.Ordinal);
+
+            items.Add(new RuleItem(r, active, _rt.Store.HasRulePassword(r.CredentialKey)));
+        }
+
+        RulesList.ItemsSource = items;
+        RulesEmptyText.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>添加一条规则。</summary>
+    private void OnRuleAddClicked(object sender, RoutedEventArgs e) => _ = AddRuleAsync();
+
+    private async Task AddRuleAsync()
+    {
+        var rule = await ShowRuleDialogAsync(null);
+        if (rule is null) return;
+
+        var rules = _rt.Store.Settings.ConnectionRules;
+        rules.Add(rule);
+        if (!SaveRules()) return;
+
+        _rt.AddLog($"已添加连接规则：{DescribeRule(rule)}");
+        RefreshRulesUi();
+    }
+
+    /// <summary>编辑一条规则。</summary>
+    private void OnRuleEditClicked(object sender, RoutedEventArgs e) => _ = EditRuleAsync(sender);
+
+    private async Task EditRuleAsync(object sender)
+    {
+        if (sender is not FrameworkElement fe || fe.Tag is not ConnectionRule target) return;
+
+        var edited = await ShowRuleDialogAsync(target);
+        if (edited is null) return;
+
+        var rules = _rt.Store.Settings.ConnectionRules;
+        int index = rules.FindIndex(r => string.Equals(r.Id, target.Id, StringComparison.Ordinal));
+        if (index < 0) return;
+
+        rules[index] = edited;
+        if (!SaveRules()) return;
+
+        _rt.AddLog($"已修改连接规则：{DescribeRule(edited)}");
+        RefreshRulesUi();
+    }
+
+    /// <summary>删除一条规则（连带删掉它的密码）。</summary>
+    private void OnRuleDeleteClicked(object sender, RoutedEventArgs e) => _ = DeleteRuleAsync(sender);
+
+    private async Task DeleteRuleAsync(object sender)
+    {
+        if (sender is not FrameworkElement fe || fe.Tag is not ConnectionRule target) return;
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Root.XamlRoot,
+            Title = "删除这条连接规则？",
+            Content = $"「{DescribeRule(target)}」会被删除，这条规则保存的密码也会一并清除。",
+            PrimaryButtonText = "删除",
+            SecondaryButtonText = "取消",
+            DefaultButton = ContentDialogButton.Secondary
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var rules = _rt.Store.Settings.ConnectionRules;
+        rules.RemoveAll(r => string.Equals(r.Id, target.Id, StringComparison.Ordinal));
+
+        // 凭据的删除失败只记日志，不阻断删除
+        if (!_rt.Store.DeleteRulePassword(target.CredentialKey))
+            _rt.AddLog("该规则的密码清理失败，请稍后重试");
+
+        if (!SaveRules()) return;
+
+        _rt.AddLog($"已删除连接规则：{DescribeRule(target)}");
+        RefreshRulesUi();
+    }
+
+    /// <summary>规则增删改之后统一落盘。</summary>
+    private bool SaveRules()
+    {
+        var s = _rt.Store.Settings;
+        var valid = ConnectionRuleSet.ValidateSet(s.ConnectionRules, out var dropped);
+
+        foreach (var d in dropped) _rt.AddLog($"有一条连接规则未生效：{d}");
+
+        s.ConnectionRules = valid;
+        if (!_rt.Store.Save())
+        {
+            _rt.AddLog("连接规则保存失败，请检查本地配置目录的写入权限");
+            return false;
+        }
+
+        // 规则变了，生效档案也要跟着重算
+        _rt.Access.Invalidate();
+        return true;
+    }
+
+    private static string DescribeRule(ConnectionRule rule) => rule.MatchType switch
+    {
+        ConnectionMatchType.Wired => "有线",
+        ConnectionMatchType.WirelessAny => "无线（任意 SSID）",
+        _ => $"无线（指定 SSID『{rule.Ssid}』）"
+    };
+
+    /// <summary>规则编辑对话框。返回 null 表示用户取消。</summary>
+    private async Task<ConnectionRule?> ShowRuleDialogAsync(ConnectionRule? existing)
+    {
+        bool editing = existing is not null;
+
+        ConnectionRule rule;
+        string initialPassword = "";
+        if (existing is null)
+        {
+            // 只在添加规则时读取 SSID，档案解析复用这次查询结果。
+            var access = _rt.Access.GetCurrentWithSsid();
+            var profile = _rt.Profiles.Resolve(access);
+            rule = new ConnectionRule
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                MatchType = access.Kind == NetworkAccessKind.Wireless
+                    ? ConnectionMatchType.WirelessSsid
+                    : ConnectionMatchType.Wired,
+                Ssid = access.SsidReliable ? access.Ssid : "",
+                Account = profile.Account,
+                Operator = profile.Operator,
+                Enabled = true
+            };
+            initialPassword = profile.Password;
+        }
+        else
+        {
+            rule = new ConnectionRule
+            {
+                Id = existing.Id,
+                MatchType = existing.MatchType,
+                Ssid = existing.Ssid,
+                Account = existing.Account,
+                Operator = existing.Operator,
+                Enabled = existing.Enabled,
+                PasswordRef = existing.PasswordRef
+            };
+        }
+
+        var matchBox = new ComboBox { Width = 320, HorizontalAlignment = HorizontalAlignment.Stretch };
+        matchBox.Items.Add("有线");
+        matchBox.Items.Add("无线（任意 SSID）");
+        matchBox.Items.Add("无线（指定 SSID）");
+        matchBox.SelectedIndex = (int)rule.MatchType;
+
+        var ssidBox = new TextBox { Width = 320, MaxLength = 32, PlaceholderText = "例如：校园网" };
+        ssidBox.Text = rule.Ssid;
+
+        var accountBox = new TextBox { Width = 320, PlaceholderText = "学号" };
+        accountBox.Text = rule.Account;
+
+        var pwdBox = new PasswordBox
+        {
+            Width = 320,
+            PasswordRevealMode = PasswordRevealMode.Peek,
+            PlaceholderText = editing ? "留空表示不修改" : "校园网密码"
+        };
+        // 新建时把当前生效的密码也带上：用户接着改几个字就行，
+        // 不用把密码从头敲一遍（更不用为了确认「填了没」去切到明文）。
+        // 编辑已有规则时不预填 —— 那是该规则自己的密码，留空表示不改。
+        pwdBox.Password = initialPassword;
+
+        // 出口是运营商（表单里的 yys），不是门户端口 —— 端口由服务端分配，用户选不了
+        var operatorBox = new ComboBox { Width = 320, HorizontalAlignment = HorizontalAlignment.Stretch };
+        operatorBox.Items.Add("校园网直连（教育网）");
+        operatorBox.Items.Add("中国移动");
+        operatorBox.Items.Add("中国联通");
+        operatorBox.Items.Add("中国电信");
+        operatorBox.SelectedIndex = (int)rule.Operator;
+
+        var errorText = new TextBlock
+        {
+            Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.IndianRed),
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed
+        };
+
+        void UpdateSsidEnabled()
+        {
+            ssidBox.IsEnabled = matchBox.SelectedIndex == (int)ConnectionMatchType.WirelessSsid;
+        }
+
+        matchBox.SelectionChanged += (_, _) => UpdateSsidEnabled();
+        UpdateSsidEnabled();
+
+        var panel = new StackPanel { Spacing = 10, Width = 320 };
+
+        // 每一行：标题 + 一句说明（说明这个输入框要填什么）+ 控件
+        void AddRow(string label, string desc, Microsoft.UI.Xaml.Controls.Control control)
+        {
+            panel.Children.Add(new TextBlock { Text = label, FontSize = 12 });
+            if (!string.IsNullOrEmpty(desc))
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = desc,
+                    FontSize = 11.5,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gray)
+                });
+            }
+            panel.Children.Add(control);
+        }
+
+        AddRow("匹配方式", "按当前接入方式决定这条规则何时生效", matchBox);
+        AddRow("SSID", "无线网络的名称，只在「无线（指定 SSID）」时生效", ssidBox);
+        AddRow("账号", "登录校园网用的学号，留空则沿用默认账号", accountBox);
+        AddRow("密码", "该学号对应的密码，编辑时留空表示不修改", pwdBox);
+        AddRow("出口", "运营商出口，决定这段流量从哪条链路出去", operatorBox);
+        panel.Children.Add(errorText);
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Root.XamlRoot,
+            Title = editing ? "编辑连接规则" : "添加连接规则",
+            Content = panel,
+            PrimaryButtonText = "保存",
+            SecondaryButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary
+        };
+
+        dialog.PrimaryButtonClick += (_, args) =>
+        {
+            rule.MatchType = (ConnectionMatchType)Math.Max(0, matchBox.SelectedIndex);
+            rule.Ssid = rule.MatchType == ConnectionMatchType.WirelessSsid ? ssidBox.Text.Trim() : "";
+            rule.Account = accountBox.Text.Trim();
+            rule.Operator = (Operator)Math.Max(0, operatorBox.SelectedIndex);
+
+            // 唯一性校验：把别的规则都算上（自己除外）
+            var others = new List<ConnectionRule>();
+            foreach (var r in _rt.Store.Settings.ConnectionRules)
+            {
+                if (!string.Equals(r.Id, rule.Id, StringComparison.Ordinal)) others.Add(r);
+            }
+
+            var error = ConnectionRuleSet.Validate(rule, others);
+            if (error is not null)
+            {
+                errorText.Text = error;
+                errorText.Visibility = Visibility.Visible;
+                args.Cancel = true;      // 别关掉对话框，让用户改
+                return;
+            }
+
+            string password = pwdBox.Password;
+            if (!string.IsNullOrEmpty(password))
+            {
+                if (!_rt.Store.SaveRulePassword(rule.CredentialKey, password))
+                {
+                    errorText.Text = "密码保存失败，请检查本地配置目录的写入权限";
+                    errorText.Visibility = Visibility.Visible;
+                    args.Cancel = true;
+                    return;
+                }
+            }
+            else if (!editing)
+            {
+                // 新建时密码必填：编辑留空是「不改」，新建留空是「没填」
+                errorText.Text = "请填写密码";
+                errorText.Visibility = Visibility.Visible;
+                args.Cancel = true;
+            }
+        };
+
+        var result = await dialog.ShowAsync();
+        return result == ContentDialogResult.Primary ? rule : null;
+    }
+
+    /// <summary>规则列表的一行（供界面绑定）。</summary>
+    private sealed class RuleItem
+    {
+        public RuleItem(ConnectionRule rule, bool isActive, bool hasPassword)
+        {
+            Rule = rule;
+            IsActive = isActive;
+
+            MatchText = rule.MatchType switch
+            {
+                ConnectionMatchType.Wired => "有线",
+                ConnectionMatchType.WirelessAny => "无线（任意 SSID）",
+                _ => $"无线（指定 SSID）· SSID：{rule.Ssid}"
+            };
+
+            DetailText = $"账号 {rule.Account} · 出口 {DescribeOperator(rule.Operator)} · 密码{(hasPassword ? "已设置" : "未设置")}";
+        }
+
+        public ConnectionRule Rule { get; }
+        public bool IsActive { get; }
+        public string MatchText { get; }
+        public string DetailText { get; }
+    }
+
+    /// <summary>运营商出口的中文名。</summary>
+    private static string DescribeOperator(Operator op) => op switch
+    {
+        Operator.Campus => "校园网直连",
+        Operator.Mobile => "中国移动",
+        Operator.Unicom => "中国联通",
+        Operator.Telecom => "中国电信",
+        _ => op.ToString()
+    };
+
+    /// <summary>巡检时长的快捷值按钮。</summary>
+    private void OnIntervalQuickClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe) return;
+        if (fe.Tag is not string tag || !int.TryParse(tag, out int seconds)) return;
+
+        IntervalBox.Value = Math.Clamp(seconds, MinIntervalSeconds, MaxIntervalSeconds);
+        ScheduleSave();
+    }
+
     private void WireEvents()
     {
         ConnectBtn.Click += async (_, _) => await OnConnectClicked();
         RefreshBtn.Click += async (_, _) => await OnRefreshClicked();
 
-        OperatorBox.SelectionChanged += (_, _) =>
-        {
-            if (!_uiReady || OperatorBox.SelectedIndex < 0) return;
-            SelectOperator((Operator)OperatorBox.SelectedIndex);
-        };
+        RepoLinkButton.Click += (_, _) => OpenExternal(RepoUrl);
+        IssueLinkButton.Click += (_, _) => OpenExternal(IssueUrl);
 
         AccountBox.TextChanged += (_, _) => ScheduleSave();
         PwdBox.PasswordChanged += (_, _) => ScheduleSave();
@@ -496,7 +972,25 @@ public sealed partial class MainWindow : Window
             ScheduleSave();
             _rt.RefreshTray();
         };
-        IntervalBox.SelectionChanged += (_, _) => ScheduleSave();
+        IntervalBox.ValueChanged += (_, _) => ScheduleSave();
+
+        // 设备数守卫
+        DeviceGuardSwitch.Toggled += (_, _) =>
+        {
+            UpdateGuardUiEnabledState();
+            ScheduleSave();
+        };
+        DeviceGuardThresholdBox.ValueChanged += (_, _) => ScheduleSave();
+        DeviceGuardProbeTargetBox.TextChanged += (_, _) => ScheduleSave();
+        DeviceGuardExternalProbeTargetBox.TextChanged += (_, _) => ScheduleSave();
+        DeviceGuardTimeoutBox.ValueChanged += (_, args) =>
+        {
+            if (!_uiReady) return;
+            if (!double.IsNaN(args.NewValue))
+                _rt.Store.Settings.DeviceGuardProbeTimeoutSeconds = Math.Clamp((int)Math.Round(args.NewValue), 1, 30);
+            ScheduleSave();
+        };
+        // 「立即检测一次」与「添加规则」的点击在 XAML 里直接绑到处理器，这里不再重复接线
 
         // 验证码：点按钮或直接回车提交
         CaptchaSubmitBtn.Click += (_, _) => _ = SubmitCaptchaAsync();
@@ -512,6 +1006,10 @@ public sealed partial class MainWindow : Window
         Fx.PressFeedback(ConnectBtn);
         Fx.PressFeedback(CaptchaSubmitBtn);
         Fx.PressFeedback(RefreshBtn);
+        Fx.PressFeedback(DeviceRefreshBtn);
+
+        // 在线设备
+        DeviceRefreshBtn.Click += async (_, _) => await OnDeviceRefreshClicked();
 
         LegacyCleanBtn.Click += (_, _) => OnLegacyCleanClicked();
         LegacyDismissBtn.Click += (_, _) =>
@@ -624,11 +1122,61 @@ public sealed partial class MainWindow : Window
         return null;
     }
 
+    private static readonly System.Net.Http.HttpClient PublicIpClient = new(
+        new System.Net.Http.SocketsHttpHandler { UseProxy = false })
+    {
+        Timeout = TimeSpan.FromSeconds(4)
+    };
+
+    private System.Threading.CancellationTokenSource? _publicIpRequest;
+    private (string? Account, string? Ip, string? LoginTime)? _publicIpSession;
+    private long _publicIpCheckedAt;
+
+    private void ClearPublicIp()
+    {
+        _publicIpRequest?.Cancel();
+        _publicIpRequest = null;
+        _publicIpSession = null;
+        if (PublicIpText is { } text) text.Text = "—";
+    }
+
+    private async Task UpdatePublicIpAsync(LoginResult? result, bool force = false)
+    {
+        var session = (result?.Account, result?.Ip, result?.LoginTime);
+        if (_publicIpSession == session && (_publicIpRequest is not null
+            || (!force && Environment.TickCount64 - _publicIpCheckedAt < 300_000))) return;
+
+        ClearPublicIp();
+        _publicIpSession = session;
+        PublicIpText.Text = "查询中…";
+        using var request = new System.Threading.CancellationTokenSource();
+        _publicIpRequest = request;
+        string value = "暂不可用";
+        try
+        {
+            string body = await PublicIpClient.GetStringAsync("https://ipinfo.io/ip", request.Token);
+            if (System.Net.IPAddress.TryParse(body.Trim(), out var address))
+                value = address.ToString();
+        }
+        catch (System.Net.Http.HttpRequestException) { }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            if (ReferenceEquals(_publicIpRequest, request))
+            {
+                _publicIpRequest = null;
+                _publicIpCheckedAt = Environment.TickCount64;
+                if (_uiBuilt) PublicIpText.Text = value;
+            }
+        }
+    }
+
     private void ApplyState(ConnState state, LoginResult? result, bool animate)
     {
         if (!_uiBuilt) return;
 
         _lastState = state;
+        if (state != ConnState.Online) ClearPublicIp();
 
         string title;
         string subtitle;
@@ -643,6 +1191,7 @@ public sealed partial class MainWindow : Window
                     : $"当前出口已通过认证 · {rhythm}";
                 AccText.Text = result?.Account ?? (string.IsNullOrWhiteSpace(AccountBox.Text) ? "—" : AccountBox.Text.Trim());
                 IpText.Text = result?.Ip ?? "—";
+                _ = UpdatePublicIpAsync(result);
                 break;
 
             case ConnState.Connecting:
@@ -726,6 +1275,132 @@ public sealed partial class MainWindow : Window
     }
 
     // ────────────────────────── 交互 ──────────────────────────
+
+    // ────────────────────────── 在线设备 ──────────────────────────
+
+    /// <summary>在线设备列表。门户在线控制页里的设备表格。</summary>
+    private void OnDeviceListChanged()
+    {
+        if (!_uiBuilt) return;
+
+        var dm = _rt.Devices;
+
+        DeviceList.ItemsSource = dm.Devices;
+        DevicePortText.Text = $"端口 {dm.Port}";
+
+        bool loading = dm.State == DeviceListState.Loading;
+        DeviceRefreshBtn.IsEnabled = !loading;
+
+        switch (dm.State)
+        {
+            case DeviceListState.Loading:
+                DeviceSummary.Text = "正在读取在线设备…";
+                break;
+
+            case DeviceListState.Ready:
+                DeviceSummary.Text = dm.Devices.Count == 0
+                    ? "暂无在线设备"
+                    : $"共 {dm.Devices.Count} 台在线设备";
+                break;
+
+            case DeviceListState.Failed:
+                DeviceSummary.Text = "在线设备读取失败";
+                break;
+
+            default:
+                DeviceSummary.Text = "尚未加载";
+                break;
+        }
+
+        if (!string.IsNullOrEmpty(dm.Error))
+        {
+            DeviceErrorText.Text = dm.Error;
+            DeviceErrorText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            DeviceErrorText.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private async Task OnDeviceRefreshClicked()
+    {
+        await RefreshDevicesAsync();
+    }
+
+    /// <summary>
+    /// 拉一次在线设备列表。
+    ///
+    /// 端口取当前生效档案里的那个 —— 门户按线路分配接入端口，
+    /// 所以这里不能写死，得跟着门户分配的结果走。
+    /// </summary>
+    private async Task RefreshDevicesAsync()
+    {
+        if (!_uiBuilt) return;
+
+        DeviceRefreshBtn.IsEnabled = false;
+        DeviceSummary.Text = "正在读取在线设备…";
+
+        try
+        {
+            int port = _rt.Profiles.Resolve().Port;
+            await _rt.Devices.RefreshAsync(port);
+        }
+        finally
+        {
+            if (_uiBuilt) DeviceRefreshBtn.IsEnabled = true;
+        }
+    }
+
+    /// <summary>下线别的设备（门户里的「强制下线」）。</summary>
+    private async void OnDeviceOfflineClicked(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        if (!_uiBuilt) return;
+        if ((sender as FrameworkElement)?.Tag is not OnlineDevice device) return;
+
+        if (!device.CanForceOffline)
+        {
+            _rt.AddLog($"{device.DisplayName} 是本机当前连接，请用卡片底部的「断开连接」");
+            return;
+        }
+
+        _rt.AddLog($"正在下线 {device.DisplayName}（{device.Ip}）…");
+        device.Status = "下线中";
+        OnDeviceListChanged();
+
+        var ok = await _rt.Devices.TakeOfflineAsync(device);
+        _rt.AddLog(ok ? $"{device.DisplayName} 已下线" : $"{device.DisplayName} 下线失败");
+    }
+
+    /// <summary>
+    /// 断开本机当前这条连接 —— 卡片底部的页面级按钮，
+    /// 对应门户 userstatus.jsp 底部那个「断开连接」。
+    /// </summary>
+    private async void OnDeviceDisconnectSelfClicked(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        if (!_uiBuilt) return;
+
+        DeviceDisconnectBtn.IsEnabled = false;
+        DeviceDisconnectLabel.Text = "断开中…";
+
+        _rt.AddLog("正在断开本机连接…");
+
+        try
+        {
+            var ok = await _rt.Devices.DisconnectSelfAsync();
+            _rt.AddLog(ok
+                ? "本机连接已断开，巡检将按设置自动重新认证"
+                : "断开失败");
+        }
+        finally
+        {
+            if (_uiBuilt)
+            {
+                DeviceDisconnectBtn.IsEnabled = true;
+                DeviceDisconnectLabel.Text = "断开连接";
+            }
+        }
+    }
 
     // ────────────────────────── 旧版 hosts 残留 ──────────────────────────
 
@@ -878,19 +1553,48 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void OnSwitchOutletClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button) return;
+        button.IsEnabled = false;
+        try
+        {
+            PersistToStore();
+            var options = Enum.GetValues<Operator>();
+            var picker = new ComboBox { ItemsSource = options.Select(OperatorName).ToArray(),
+                SelectedIndex = Array.IndexOf(options, _rt.Coordinator.ActiveOperator) };
+            var dialog = new ContentDialog
+            {
+                XamlRoot = Root.XamlRoot,
+                Title = "切换出口",
+                Content = new StackPanel { Spacing = 12, Children =
+                    { new TextBlock { Text = "确定后将断开本机连接，并使用所选出口重新登录。" }, picker } },
+                PrimaryButtonText = "断开并重新登录",
+                CloseButtonText = "取消"
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || picker.SelectedIndex < 0) return;
+            var selected = options[picker.SelectedIndex];
+            await _rt.Coordinator.ManualConnectAsync(selected);
+            _rt.Devices.Invalidate();
+        }
+        catch (Exception ex) { _rt.AddLog($"切换出口失败：{ex.Message}"); }
+        finally { if (_uiBuilt) button.IsEnabled = true; }
+    }
+
     private async Task OnConnectClicked()
     {
+        bool reconnect = _rt.State == ConnState.Online;
         PersistToStore();
 
-        // 空字段直接给焦点，比只在日志里写一句「请先填写账号与密码」有用
-        if (string.IsNullOrWhiteSpace(AccountBox.Text))
+        var profile = _rt.Profiles.Resolve();
+        if (string.IsNullOrWhiteSpace(profile.Account))
         {
             _rt.AddLog("请先填写学号");
             AccountBox.Focus(FocusState.Programmatic);
             return;
         }
 
-        if (string.IsNullOrEmpty(PwdBox.Password))
+        if (string.IsNullOrEmpty(profile.Password))
         {
             _rt.AddLog("请先填写密码");
             PwdBox.Focus(FocusState.Programmatic);
@@ -900,7 +1604,8 @@ public sealed partial class MainWindow : Window
         ConnectBtn.IsEnabled = false;
         try
         {
-            await _rt.Coordinator.ManualConnectAsync();
+            await _rt.Coordinator.ManualConnectAsync(reconnect: reconnect);
+            if (reconnect) _rt.Devices.Invalidate();
         }
         finally
         {
@@ -910,23 +1615,38 @@ public sealed partial class MainWindow : Window
 
     private async Task OnRefreshClicked()
     {
-        _rt.AddLog("手动刷新状态");
-        ApplyState(ConnState.Checking, null, animate: true);
-        await _rt.Coordinator.RefreshAsync();
-    }
+        RefreshBtn.IsEnabled = false;
+        StatusRefreshIcon.Visibility = Visibility.Collapsed;
+        StatusRefreshProgress.Visibility = Visibility.Visible;
+        StatusRefreshProgress.IsActive = true;
+        StatusRefreshMessage.Visibility = Visibility.Collapsed;
 
-    private void SelectOperator(Operator op)
-    {
-        if (_operator == op)
+        try
         {
-            SyncOperatorUi();
-            return;
+            var message = await _rt.Coordinator.RefreshStatusAsync();
+            if (_rt.Exiting) return;
+            if (message is null)
+            {
+                if (_rt.State == ConnState.Online)
+                    _ = UpdatePublicIpAsync(_rt.LastResult, force: true);
+                return;
+            }
+            StatusRefreshMessage.Text = message;
+            StatusRefreshMessage.Visibility = Visibility.Visible;
         }
-
-        _operator = op;
-        SyncOperatorUi();
-        _rt.AddLog($"出口切换为 {OperatorName(op)}");
-        ScheduleSave();
+        catch (Exception ex)
+        {
+            if (_rt.Exiting) return;
+            StatusRefreshMessage.Text = $"刷新失败：{ex.Message}";
+            StatusRefreshMessage.Visibility = Visibility.Visible;
+        }
+        finally
+        {
+            StatusRefreshProgress.IsActive = false;
+            StatusRefreshProgress.Visibility = Visibility.Collapsed;
+            StatusRefreshIcon.Visibility = Visibility.Visible;
+            RefreshBtn.IsEnabled = true;
+        }
     }
 
     private static string OperatorName(Operator op) => op switch
@@ -937,20 +1657,6 @@ public sealed partial class MainWindow : Window
         _ => "校园网直连"
     };
 
-    /// <summary>把字段值同步到下拉框（守卫再入，避免 SelectionChanged 递归）。</summary>
-    private void SyncOperatorUi()
-    {
-        if (!_uiBuilt) return;
-
-        int index = Math.Clamp((int)_operator, 0, 3);
-        if (OperatorBox.SelectedIndex == index) return;
-
-        bool ready = _uiReady;
-        _uiReady = false;
-        OperatorBox.SelectedIndex = index;
-        _uiReady = ready;
-    }
-
     // ────────────────────────── 持久化 ──────────────────────────
 
     private void ScheduleSave()
@@ -959,20 +1665,48 @@ public sealed partial class MainWindow : Window
         _saveTimer.Start();
     }
 
+    private int ReadGuardProbeTimeout()
+    {
+        // 文本在 NumberBox 提交 Value 前也可能已被编辑。
+        return int.TryParse(DeviceGuardTimeoutBox.Text, out int seconds)
+            ? Math.Clamp(seconds, 1, 30)
+            : _rt.Store.Settings.DeviceGuardProbeTimeoutSeconds;
+    }
+
+    private void UpdateGuardProbeSettings()
+    {
+        var s = _rt.Store.Settings;
+        s.DeviceGuardProbeTarget = NetworkProbeService.NormalizeTarget(DeviceGuardProbeTargetBox.Text);
+        s.DeviceGuardExternalProbeTarget = NetworkProbeService.IsValidTarget(DeviceGuardExternalProbeTargetBox.Text)
+            ? DeviceGuardExternalProbeTargetBox.Text.Trim() : NetworkProbeService.DefaultExternalTarget;
+
+        s.DeviceGuardProbeTimeoutSeconds = ReadGuardProbeTimeout();
+    }
+
     /// <summary>把界面上的值写回运行时配置（关窗/退出前必须先调）。</summary>
     public void PersistToStore()
     {
+        if (_rt.Exiting) return;
         if (!_uiBuilt) return;
 
         var s = _rt.Store.Settings;
         s.Account = AccountBox.Text.Trim();
-        s.Operator = _operator;
         s.AutoReconnect = AutoReconnectSwitch.IsOn;
         s.MinimizeToTray = TraySwitch.IsOn;
         s.KeepAliveOnLock = LockKeepSwitch.IsOn;
 
-        int idx = IntervalBox.SelectedIndex;
-        s.CheckIntervalSeconds = (idx >= 0 && idx < Intervals.Length) ? Intervals[idx] : 8;
+        // 巡检时长：NumberBox 的值就是唯一真值，钳到合法范围再落盘
+        double raw = IntervalBox.Value;
+        s.CheckIntervalSeconds = double.IsNaN(raw)
+            ? s.CheckIntervalSeconds
+            : Math.Clamp((int)Math.Round(raw), MinIntervalSeconds, MaxIntervalSeconds);
+
+        s.DeviceGuardEnabled = DeviceGuardSwitch.IsOn;
+
+        double threshold = DeviceGuardThresholdBox.Value;
+        s.DeviceGuardThreshold = double.IsNaN(threshold) ? 2 : Math.Clamp((int)Math.Round(threshold), 1, 50);
+
+        UpdateGuardProbeSettings();
 
         bool settingsSaved = _rt.Store.Save();
         bool passwordSaved = _rt.Store.SavePassword(PwdBox.Password);
@@ -993,14 +1727,18 @@ public sealed partial class MainWindow : Window
         PersistToStore();
 
         _saveTimer.Stop();
+        ClearPublicIp();
         _uiBuilt = false;
 
         _theme.Changed -= OnThemeChanged;
         _rt.StateChanged -= OnRuntimeState;
         _rt.Logged -= OnRuntimeLog;
+        _rt.UpdateAvailable -= ShowUpdateLink;
         _rt.SettingsChanged -= OnRuntimeSettings;
         _rt.LegacyHostsChanged -= OnLegacyHostsChanged;
         _rt.Coordinator.CaptchaChanged -= OnCaptchaChanged;
+        _rt.Devices.Changed -= OnDeviceListChanged;
+        _rt.Guard.Changed -= OnGuardChanged;
 
         _closeHook?.Dispose();
         _closeHook = null;

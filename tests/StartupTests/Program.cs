@@ -10,31 +10,79 @@ void Check(bool condition, string name)
     checks++;
 }
 
-// Exercise Windows registry operations in a disposable key, never the real Run key.
-string runKey = @"Software\SNNUAutoLogin.Tests\" + Guid.NewGuid().ToString("N");
+const string releases = """
+    [
+      {"tag_name":"v1.6.3","draft":false,"prerelease":false},
+      {"tag_name":"1.7.0","draft":false,"prerelease":false},
+      {"tag_name":"1.6.2-fix","draft":false,"prerelease":false},
+      {"tag_name":"linux-2.0.0","draft":false,"prerelease":false},
+      {"tag_name":"2.0.0","draft":false,"prerelease":true},
+      {"tag_name":"3.0.0","draft":true,"prerelease":false}
+    ]
+    """;
+Check(ReleaseUpdateCheck.FindNewerTag(releases, new Version(1, 6, 2, 0)) == "1.7.0",
+    "update check picks highest stable application version");
+Check(ReleaseUpdateCheck.FindNewerTag(releases, new Version(1, 7, 0, 0)) is null,
+    "update check skips current, draft, preview and platform-specific releases");
+
 string path = @"C:\Portable App\SNNUAutoLogin.exe";
-if (!args.Contains("--skip-registry"))
+void CheckRegistration(Func<bool, string, bool> setEnabled, Func<string, bool> isEnabled,
+    Func<string?> readEntry, Action<string> writeLegacyEntry)
 {
-try
-{
-    Check(StartupManager.SetEnabled(false, path, runKey), "disable absent key");
-    Check(StartupManager.SetEnabled(true, path, runKey), "create missing key");
-    using (var key = Registry.CurrentUser.OpenSubKey(runKey))
-        Check((string?)key?.GetValue("SNNUAutoLogin") == $"\"{path}\" --tray", "quoted path and tray argument");
+    Check(setEnabled(false, path), "disable absent entry");
+    Check(setEnabled(true, path), "register absent entry");
+    Check(readEntry() == $"\"{path}\" --tray", "quoted path and tray argument");
     string moved = @"C:\Moved App\SNNUAutoLogin.exe";
-    Check(!StartupManager.IsEnabled(moved, runKey), "same filename at old path is invalid");
-    Check(StartupManager.SetEnabled(true, moved, runKey), "repair moved portable path");
-    Check(!StartupManager.IsEnabled(path, runKey), "old path no longer matches");
-    using (var key = Registry.CurrentUser.OpenSubKey(runKey, true))
-        key!.SetValue("SNNUAutoLogin", $"\"{moved}\"");
-    Check(!StartupManager.IsEnabled(moved, runKey), "missing tray argument is invalid");
-    Check(StartupManager.SetEnabled(true, moved, runKey), "repair legacy command");
-    Check(!StartupManager.SetEnabled(true, "", runKey), "empty path rejected");
-    Check(StartupManager.SetEnabled(false, moved, runKey), "disable removes entry");
+    Check(!isEnabled(moved), "same filename at old path is invalid");
+    Check(setEnabled(true, moved), "repair moved portable path");
+    Check(!isEnabled(path), "old path no longer matches");
+    writeLegacyEntry($"\"{moved}\"");
+    Check(!isEnabled(moved), "missing tray argument is invalid");
+    Check(setEnabled(true, moved), "repair legacy command");
+    Check(!setEnabled(true, ""), "empty path rejected");
+    Check(setEnabled(false, moved) && readEntry() is null, "disable removes entry");
 }
-finally { Registry.CurrentUser.DeleteSubKeyTree(runKey, false); }
+
+string? entry = null;
+CheckRegistration(
+    (enabled, executable) => StartupManager.SetEnabled(enabled, executable, () => entry, value => entry = value),
+    executable => StartupManager.IsEnabled(executable, () => entry),
+    () => entry,
+    value => entry = value);
+
+Check(!StartupManager.SetEnabled(true, path, () => entry, _ => throw new UnauthorizedAccessException()),
+    "registry write denial is reported");
+Check(!StartupManager.SetEnabled(false, path, () => throw new UnauthorizedAccessException(), _ => { }),
+    "registry read denial does not confirm removal");
+Check(!StartupManager.SetEnabled(true, path, () => entry, _ => { }),
+    "registration must be verified after writing");
+
+if (args.Contains("--registry-integration") && !args.Contains("--skip-registry"))
+{
+    // Use a unique test key and leave the user's Run key untouched.
+    string runKey = @"Software\SNNUAutoLogin.Tests\" + Guid.NewGuid().ToString("N");
+    Console.WriteLine("Windows registry integration");
+    try
+    {
+        CheckRegistration(
+            (enabled, executable) => StartupManager.SetEnabled(enabled, executable, runKey),
+            executable => StartupManager.IsEnabled(executable, runKey),
+            () =>
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(runKey);
+                return key?.GetValue("SNNUAutoLogin") as string;
+            },
+            value =>
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(runKey, true);
+                key!.SetValue("SNNUAutoLogin", value);
+            });
+    }
+    finally
+    {
+        Registry.CurrentUser.DeleteSubKeyTree(runKey, false);
+    }
 }
-else Console.WriteLine("SKIP registry integration (restricted environment)");
 
 async Task Scenario(string name, bool startup, Action<CredentialStore>? configure,
     LoginResult status, LoginResult login, params int[] expectedCalls)
@@ -54,6 +102,35 @@ async Task Scenario(string name, bool startup, Action<CredentialStore>? configur
 
 var offline = LoginResult.Fail("offline");
 var ok = new LoginResult { Success = true };
+using (var coordinator = new LoginCoordinator(new CredentialStore(), new DispatcherQueue(), true))
+{
+    PortalClient.LoginCalls = 0;
+    PortalClient.Status = ok;
+    Check(await coordinator.RefreshStatusAsync() is null && coordinator.State == ConnState.Online,
+        "status refresh confirms online session");
+
+    PortalClient.Status = LoginResult.Fail("Portal unreachable");
+    Check(await coordinator.RefreshStatusAsync() is not null && coordinator.State == ConnState.Online,
+        "failed status refresh preserves verified state");
+
+    var reply = new TaskCompletionSource<LoginResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+    PortalClient.StatusRequest = ct => reply.Task.WaitAsync(ct);
+    var inFlight = coordinator.RefreshStatusAsync();
+    Check(await coordinator.RefreshStatusAsync() is not null, "status refresh skips occupied coordinator");
+    coordinator.InvalidateNetwork();
+    reply.SetResult(LoginResult.Fail("未认证"));
+    Check(await inFlight is null && coordinator.State == ConnState.Online,
+        "status refresh discards the previous network response");
+
+    PortalClient.StatusRequest = ct => new TaskCompletionSource<LoginResult>().Task.WaitAsync(ct);
+    Check((await coordinator.RefreshStatusAsync())?.Contains("超时") == true
+        && coordinator.State == ConnState.Online, "status refresh times out without clearing verified state");
+
+    PortalClient.StatusRequest = null;
+    PortalClient.Status = LoginResult.Fail("未认证");
+    Check(await coordinator.RefreshStatusAsync() is null && coordinator.State == ConnState.Offline
+        && PortalClient.LoginCalls == 0, "status refresh confirms offline without logging in");
+}
 await Scenario("startup logs in once with reconnect off", true, null, offline, ok, 1, 1);
 await Scenario("manual launch respects reconnect off", false, null, offline, ok, 0);
 await Scenario("disabled startup does not log in", true, s => s.Settings.AutoStart = false, offline, ok, 0);
@@ -89,5 +166,25 @@ using (var coordinator = new LoginCoordinator(new CredentialStore(), new Dispatc
     PortalClient.Status = offline;
     await coordinator.RefreshAsync();
     Check(PortalClient.LoginCalls == 0, "already online completes startup login");
+}
+var switchStore = new CredentialStore();
+switchStore.Settings.Account = "test@mobile";
+using (var coordinator = new LoginCoordinator(switchStore, new DispatcherQueue()))
+{
+    PortalClient.LoginCalls = 0;
+    PortalClient.Login = ok;
+    PortalClient.DisconnectSucceeds = false;
+    await coordinator.ManualConnectAsync(Operator.Telecom);
+    Check(PortalClient.LoginCalls == 0, "failed disconnect does not attempt outlet login");
+    PortalClient.DisconnectSucceeds = true;
+    await coordinator.ManualConnectAsync(Operator.Telecom);
+    Check(PortalClient.LastOperator == Operator.Telecom && PortalClient.LastAccount == "test" && PortalClient.LastForce,
+        "explicit outlet overrides the account suffix and forces login");
+    await coordinator.ManualConnectAsync();
+    Check(PortalClient.LastOperator == Operator.Telecom, "subsequent login keeps the temporary outlet");
+    int previousDisconnects = PortalClient.DisconnectCalls;
+    await coordinator.ManualConnectAsync(reconnect: true);
+    Check(PortalClient.DisconnectCallsAtLogin == previousDisconnects + 1 && PortalClient.LastForce
+        && PortalClient.LastOperator == Operator.Telecom, "reconnect disconnects before forcing login on the current outlet");
 }
 Console.WriteLine($"{checks} checks passed.");

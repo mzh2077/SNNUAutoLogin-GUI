@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -20,9 +20,9 @@
     <EnableMsixTooling>true</EnableMsixTooling>
 
     <!-- 文件属性（exe 右键「属性 → 详细信息」与「应用和功能」列表里显示的内容） -->
-    <Version>1.5.1</Version>
-    <FileVersion>1.5.1.0</FileVersion>
-    <AssemblyVersion>1.5.1.0</AssemblyVersion>
+    <Version>1.6.2</Version>
+    <FileVersion>1.6.2.0</FileVersion>
+    <AssemblyVersion>1.6.2.0</AssemblyVersion>
     <Product>陕师大校园网自动登录</Product>
     <AssemblyTitle>陕师大校园网自动登录</AssemblyTitle>
     <Company>SNNU</Company>
@@ -147,8 +147,9 @@
   </Target>
 
   <ItemGroup>
-    <Compile Remove="tests\**\*.cs" />
     <Compile Remove="android\**\*.cs" />
+    <Compile Remove="tests\**\*.cs;Shared\**\*.cs;Linux\**\*.cs;Services\PortalClient.cs;Services\PortalPortDiscovery.cs;Services\ConnectionProfileResolver.cs;Services\ConnectionRules.cs;Services\DeviceListParser.cs;Services\IOnlineDevicePortal.cs;Services\DeviceManager.cs;Services\DeviceGuardService.cs;Services\NetworkProbeService.cs;Services\LoginCoordinator.cs;Services\OperationLifetime.cs" />
+    <ProjectReference Include="Shared/SNNUAutoLogin.Core.csproj" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.6584" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />

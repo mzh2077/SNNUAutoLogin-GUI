@@ -1,7 +1,7 @@
 name: Windows release build
 on:
   push:
-    branches: [main, fix/startup-login]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -15,16 +15,22 @@ jobs:
         with:
           dotnet-version: 8.0.x
       - name: Startup registration and login regression tests
-        run: dotnet run --project tests/StartupTests -c Release
+        run: dotnet run --project tests/StartupTests -c Release -- --registry-integration
       - name: Credential persistence regression tests
         run: dotnet run --project tests/CredentialTests -c Release
-      - name: Build installer and portable archive
+      - name: Online device list parsing regression tests
+        run: dotnet run --project tests/DeviceListTests -c Release
+      - name: Device guard and connection rules regression tests
+        run: dotnet run --project tests/GuardTests -c Release
+      # tests/LiveCheck 需要真实校园网（要能连到 202.117.144.205 的 Portal 并拿到真实 SSID），
+      # GitHub runner 上跑不了，因此不进 CI。它是给本机用的实机验证入口。
+      - name: Build Windows installer
         shell: pwsh
         run: ./tools/build_release.ps1
       - name: Check self-contained dependencies
         shell: pwsh
         run: |
-          $publish = Get-ChildItem artifacts/staging-*/SNNUAutoLogin-Portable-*-win-x64 -Directory | Select-Object -First 1
+          $publish = Get-ChildItem artifacts/staging-*/SNNUAutoLogin-InstallerPayload-win-x64 -Directory | Select-Object -First 1
           python -X utf8 tools/check_deps.py $publish.FullName
       - name: Installer install, launch and uninstall smoke test
         shell: pwsh
@@ -34,7 +40,5 @@ jobs:
         with:
           name: SNNUAutoLogin-Release-win-x64
           path: |
-            artifacts/*.zip
-            artifacts/*.sha256
-            artifacts/*.exe
+            artifacts/SNNUAutoLogin-Setup-*.exe
             artifacts/SHA256SUMS.txt

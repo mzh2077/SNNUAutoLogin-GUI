@@ -21,38 +21,20 @@ public sealed partial class MainWindow
 
         await Task.Delay(1500);
 
-        sb.AppendLine($"uiReady    = {_uiReady}   field={_operator}");
+        sb.AppendLine($"uiReady    = {_uiReady}");
         sb.AppendLine($"theme      = dark={_theme.IsDark} accent=#{_theme.Accent.R:X2}{_theme.Accent.G:X2}{_theme.Accent.B:X2}");
         sb.AppendLine($"statusCard = {RectOf(StatusCard)}");
         sb.AppendLine($"accountCrd = {RectOf(AccountCard)}");
         sb.AppendLine($"behavior   = {RectOf(BehaviorCard)}");
         sb.AppendLine($"logCard    = {RectOf(LogCard)}");
         sb.AppendLine($"ringHost   = {RectOf(RingHost)}");
-        sb.AppendLine($"opBox      = {RectOf(OperatorBox)}");
-        sb.AppendLine($"ivBox      = {RectOf(IntervalBox)}");
+        sb.AppendLine($"ivBox      = {RectOf(IntervalBox)} val={IntervalBox.Value}");
+        sb.AppendLine($"guardCard  = {RectOf(DeviceGuardCard)}");
+        sb.AppendLine($"rulesCard  = {RectOf(RulesCard)}");
+        sb.AppendLine($"guardState = {RectOf(DeviceGuardStateText)}");
+        sb.AppendLine($"rulesLink  = {RectOf(RulesCurrentLinkText)}");
         sb.AppendLine($"accBox     = {RectOf(AccountBox)}");
         sb.AppendLine($"pwdBox     = {RectOf(PwdBox)}");
-
-        // 下拉框逐项切换：字段值、下拉框选中项、持久化值三者必须一致
-        var names = new[] { "campus", "mobile", "unicom", "telecom" };
-        for (int i = 0; i < 4; i++)
-        {
-            SelectOperator((Operator)i);
-            await Task.Delay(180);
-
-            var item = OperatorBox.SelectedItem as ComboBoxItem;
-            sb.AppendLine($"--- operator {names[i]} ---");
-            sb.AppendLine($"  field    = {_operator} ({(int)_operator})");
-            sb.AppendLine($"  selIndex = {OperatorBox.SelectedIndex}");
-            sb.AppendLine($"  selText  = {item?.Content}");
-            sb.AppendLine($"  hit      = {HitTest(OperatorBox)}");
-            sb.AppendLine($"  width    = {OperatorBox.ActualWidth:F1}");
-        }
-
-        // 还原本机配置
-        SelectOperator(_rt.Store.Settings.Operator);
-        await Task.Delay(200);
-        sb.AppendLine($"restored   = field={_operator} sel={OperatorBox.SelectedIndex}");
 
         // 设置项命中测试：开关与行标题不能互相遮挡
         sb.AppendLine($"hit.autoSw = {HitTest(AutoStartSwitch)}");
@@ -61,7 +43,7 @@ public sealed partial class MainWindow
         sb.AppendLine($"sw.auto    = {RectOf(AutoStartSwitch)} min={AutoStartSwitch.MinWidth} max={AutoStartSwitch.MaxWidth} pad={AutoStartSwitch.Padding}");
         sb.AppendLine($"sw.parts   = {DescribeSwitch(AutoStartSwitch)}");
         sb.AppendLine($"sw.conn    = {RectOf(AutoReconnectSwitch)}");
-        sb.AppendLine($"opBox.right= {RightOf(OperatorBox):F1}  sw.right= {RightOf(AutoStartSwitch):F1}");
+        sb.AppendLine($"accBox.right= {RightOf(AccountBox):F1}  sw.right= {RightOf(AutoStartSwitch):F1}");
 
         // 三种关键状态出图
         ApplyState(ConnState.Online, null, animate: false);

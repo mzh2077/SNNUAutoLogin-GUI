@@ -18,7 +18,7 @@ public sealed class LogEntry
 /// 窗口只是一个可随时拆卸的视图 —— 关窗到托盘时把 XAML 内容树整个丢掉，
 /// 工作集能从 ~160MB 掉到 11MB 左右，召回来再重新构建。
 /// </summary>
-public sealed class AppRuntime : IDisposable
+public sealed class AppRuntime : IAsyncDisposable
 {
     private const int MaxLogLines = 60;
 
@@ -36,8 +36,27 @@ public sealed class AppRuntime : IDisposable
     public CredentialStore Store { get; } = new();
     public ThemeColors Theme { get; }
     public LoginCoordinator Coordinator { get; }
+    public DeviceManager Devices { get; }
     public DispatcherQueue Dispatcher { get; }
     public TrayIcon? Tray { get; private set; }
+
+    /// <summary>接入方式识别（网卡类型 + SSID）。</summary>
+    public NetworkAccessService Access { get; }
+
+    /// <summary>生效档案解析（连接规则 → 账号 / 密码 / 出口）。</summary>
+    public ConnectionProfileResolver Profiles { get; }
+
+    /// <summary>门户接入端口发现者：端口由服务端分配，程序自己问门户要。</summary>
+    public PortalPortDiscovery Ports { get; }
+
+    /// <summary>独立外网探测。</summary>
+    public NetworkProbeService Probe { get; }
+
+    /// <summary>设备数守卫。</summary>
+    public DeviceGuardService Guard { get; }
+
+    /// <summary>全程序共用一个门户客户端：省 HTTP 连接池，也保证同一端口的会话是同一份。</summary>
+    private readonly PortalClient _portal = new();
 
     /// <summary>旧版本「网络加速」在系统 hosts 里留下的标记块是否还在。</summary>
     public bool HasLegacyHosts { get; private set; }
@@ -45,12 +64,15 @@ public sealed class AppRuntime : IDisposable
     public ConnState State { get; private set; } = ConnState.Idle;
     public LoginResult? LastResult { get; private set; }
     public bool Exiting { get; private set; }
+    internal bool ShutdownComplete { get; private set; }
 
     /// <summary>状态中文标题（托盘提示与窗口共用）。</summary>
     public string StateLabel { get; private set; } = "待机";
 
     public event Action<ConnState, LoginResult?>? StateChanged;
     public event Action<string>? Logged;
+    public event Action? UpdateAvailable;
+    public string? NewReleaseTag { get; private set; }
 
     /// <summary>托盘菜单里改了配置（窗口若开着需要回读）。</summary>
     public event Action? SettingsChanged;
@@ -75,17 +97,64 @@ public sealed class AppRuntime : IDisposable
 
         Theme = new ThemeColors(dispatcher);
 
-        Coordinator = new LoginCoordinator(Store, dispatcher, launchedAtStartup);
+        Access = new NetworkAccessService();
+        Probe = new NetworkProbeService();
+
+        // 接入端口是门户按线路分配的，程序自己问门户要 —— 不让用户从下拉框里挑
+        Ports = new PortalPortDiscovery(_portal);
+
+        Profiles = new ConnectionProfileResolver(Store, Access, Ports);
+
+        var eventDispatcher = new EventDispatcher(() => dispatcher.HasThreadAccess, action => dispatcher.TryEnqueue(() => action()));
+        Coordinator = new LoginCoordinator(Store, eventDispatcher, Profiles, Ports, launchedAtStartup);
         Coordinator.StateChanged += OnStateChanged;
         Coordinator.Log += AddLog;
 
+        // 门户客户端是共用的，所以这里不让 DeviceManager 负责释放它
+        Devices = new DeviceManager(eventDispatcher, _portal, ownsClient: false);
+
+        Guard = new DeviceGuardService(
+            Store,
+            _portal,
+            Probe,
+            () => Profiles.Resolve().Port,
+            () => Coordinator.RequestReauthenticate(),
+            AddLog);
+
         HasLegacyHosts = HostsCleanup.HasLegacyBlock();
         LegacyHostsEntries = HasLegacyHosts ? HostsCleanup.CountLegacyEntries() : 0;
+
+        if (!string.IsNullOrWhiteSpace(Store.LastNotice))
+            AddLog(Store.LastNotice);
 
         AddLog("程序启动");
         AddLog(Store.Settings.AutoStart && StartupManager.IsEnabled()
             ? "开机自启已注册"
             : "开机自启未启用");
+        _ = CheckForUpdateAsync();
+    }
+
+    private async Task CheckForUpdateAsync()
+    {
+        var installed = typeof(AppRuntime).Assembly.GetName().Version;
+        if (installed is null) return;
+
+        try
+        {
+            var tag = await ReleaseUpdateCheck.FindUpdateAsync(installed).ConfigureAwait(false);
+            if (tag is null) return;
+
+            Dispatcher.TryEnqueue(() =>
+            {
+                if (Exiting) return;
+                NewReleaseTag = tag;
+                AddLog($"发现新版本 {tag}");
+                UpdateAvailable?.Invoke();
+            });
+        }
+        catch (System.Net.Http.HttpRequestException) { }
+        catch (OperationCanceledException) { }
+        catch (System.Text.Json.JsonException) { }
     }
 
     public MainWindow? Window => _window;
@@ -181,6 +250,7 @@ public sealed class AppRuntime : IDisposable
 
     public void Start()
     {
+        if (Exiting || _disposed) return;
         Coordinator.Start();
         StartSessionWatch();
 
@@ -188,9 +258,16 @@ public sealed class AppRuntime : IDisposable
         _netWatch = new NetworkWatch(Dispatcher, () =>
         {
             AddLog("检测到网络状态变化，立即重新认证");
-            Coordinator.RequestImmediateCheck();
+            Access.Invalidate();          // 网卡换了，接入方式要重新判定
+            Ports.Invalidate();          // 线路可能变了，门户分配的端口也要重新问
+            Devices.Invalidate();
+            Guard.NotifyNetworkChanged(); // 换网了，守卫顺手评估一次
+            Coordinator.InvalidateNetwork();
         });
         _netWatch.Start();
+
+        // 设备数守卫：自己一个后台循环，不占巡检的锁
+        Guard.Start();
 
         // 启动期的临时分配（XAML 解析、字体排版、图标解码）用完就没价值了。
         // 6 秒后先归还一次，25 秒后再收一次尾 —— 以前只等 20 秒，任务管理器里
@@ -280,6 +357,10 @@ public sealed class AppRuntime : IDisposable
         // 睡眠会丢掉执行状态请求，醒来先重新申领，再立刻补一次认证
         _stayAwake.Reassert();
         AddLog("系统从睡眠恢复，重新检测认证状态");
+        Access.Invalidate();
+        Ports.Invalidate();
+        Devices.Invalidate();
+        Guard.NotifyNetworkChanged();
         Coordinator.RequestImmediateCheck();
     }
 
@@ -323,6 +404,9 @@ public sealed class AppRuntime : IDisposable
             if (_logs.Count > MaxLogLines) _logs.RemoveRange(0, _logs.Count - MaxLogLines);
         }
 
+        // 运行日志同时落一份到临时目录，程序关掉后还能查
+        TraceLine(text);
+
         // 调用方可能在后台线程（加速服务的测速/写入都在线程池里），
         // 而日志最终会写进绑定 ListView 的 ObservableCollection —— 必须在 UI 线程触发。
         if (Dispatcher.HasThreadAccess)
@@ -336,6 +420,23 @@ public sealed class AppRuntime : IDisposable
                 try { Logged?.Invoke(text); } catch { }
             });
         }
+    }
+
+    /// <summary>
+    /// 把一行运行日志追加到临时目录的 snnu_trace.txt。
+    ///
+    /// 界面上的日志只在内存里，程序一关就没了 —— 出问题时（比如守卫为什么没触发）
+    /// 没有痕迹根本查不了。这里只写日志文案，不含任何凭据内容。
+    /// </summary>
+    internal static void TraceLine(string text)
+    {
+        try
+        {
+            System.IO.File.AppendAllText(
+                System.IO.Path.Combine(System.IO.Path.GetTempPath(), "snnu_trace.txt"),
+                $"[{DateTime.Now:HH:mm:ss.fff}] {text}\n");
+        }
+        catch { }
     }
 
     // ────────────────────────── 旧版 hosts 残留 ──────────────────────────
@@ -392,24 +493,27 @@ public sealed class AppRuntime : IDisposable
         if (ReferenceEquals(_window, window)) _window = null;
     }
 
-    public void Exit()
+    public async void Exit()
     {
         if (Exiting) return;
-        Exiting = true;
-
         _window?.PersistToStore();
-
-        Tray?.Dispose();
-        Tray = null;
-
-        // 退出前把「不睡眠」的申领撤掉。这里只撤销请求，不做整体 Dispose：
-        // 关窗回调还会再走一次 PersistToStore，把已经释放的等待句柄重新 Set 会抛异常。
-        _stayAwake.Set(false);
-
-        try { Application.Current.Exit(); } catch { }
+        Exiting = true;
+        try
+        {
+            await DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            AddLog($"退出清理失败：{ex.Message}");
+        }
+        finally
+        {
+            ShutdownComplete = true;
+            Application.Current.Exit();
+        }
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
         _disposed = true;
@@ -417,13 +521,24 @@ public sealed class AppRuntime : IDisposable
         _netWatch?.Dispose();
         _netWatch = null;
 
-        _stayAwake.Dispose();
         _session?.Dispose();
         _session = null;
-
-        Coordinator.Dispose();
-        Theme.Dispose();
+        _stayAwake.Set(false);
         Tray?.Dispose();
         Tray = null;
+
+        try
+        {
+            await Task.WhenAll(Guard.DisposeAsync().AsTask(),
+                Coordinator.DisposeAsync().AsTask(), Devices.DisposeAsync().AsTask());
+        }
+        finally
+        {
+            _stayAwake.Dispose();
+            Ports.Dispose();
+            Probe.Dispose();
+            _portal.Dispose();
+            Theme.Dispose();
+        }
     }
 }

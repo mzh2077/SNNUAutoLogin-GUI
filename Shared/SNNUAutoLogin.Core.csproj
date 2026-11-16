@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="SNNUAutoLogin" />
+    <InternalsVisibleTo Include="LinuxCoreTests" />
+    <Compile Include="../Services/PortalClient.cs" Link="PortalClient.cs" />
+    <Compile Include="../Services/PortalPortDiscovery.cs" Link="PortalPortDiscovery.cs" />
+    <Compile Include="../Services/ConnectionProfileResolver.cs" Link="ConnectionProfileResolver.cs" />
+    <Compile Include="../Services/ConnectionRules.cs" Link="ConnectionRules.cs" />
+    <Compile Include="../Services/DeviceListParser.cs" Link="DeviceListParser.cs" />
+    <Compile Include="../Services/IOnlineDevicePortal.cs" Link="IOnlineDevicePortal.cs" />
+    <Compile Include="../Services/DeviceManager.cs" Link="DeviceManager.cs" />
+    <Compile Include="../Services/DeviceGuardService.cs" Link="DeviceGuardService.cs" />
+    <Compile Include="../Services/NetworkProbeService.cs" Link="NetworkProbeService.cs" />
+    <Compile Include="../Services/LoginCoordinator.cs" Link="LoginCoordinator.cs" />
+    <Compile Include="../Services/OperationLifetime.cs" Link="OperationLifetime.cs" />
+  </ItemGroup>
+</Project>

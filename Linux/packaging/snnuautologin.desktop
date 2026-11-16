@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=SNNU Campus Network
+Name[zh_CN]=陕师大校园网自动登录
+Exec=snnuautologin-desktop
+Icon=snnuautologin
+Terminal=false
+Categories=Network;
