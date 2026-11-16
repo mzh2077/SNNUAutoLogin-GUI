@@ -61,8 +61,8 @@ Architecture: amd64
 Maintainer: SNNUAutoLogin contributors
 Section: net
 Priority: optional
-Depends: snnuautologin (= $version), python3 (>= 3.10), python3-gi (>= 3.42), gir1.2-gtk-4.0 (>= 4.10), gir1.2-adw-1 (>= 1.2), gir1.2-pango-1.0
-Recommends: fonts-noto-cjk, librsvg2-common
+Depends: snnuautologin (= $version), python3 (>= 3.10), python3-gi (>= 3.42), gir1.2-gtk-4.0 (>= 4.10), gir1.2-adw-1 (>= 1.2), gir1.2-pango-1.0, librsvg2-common
+Recommends: fonts-noto-cjk
 Description: Desktop client for SNNU campus network login
  GTK4 与 libadwaita 写的桌面客户端，通过 Unix 域套接字与 snnuautologin 用户服务通信。
 EOF
