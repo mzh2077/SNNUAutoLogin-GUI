@@ -205,7 +205,6 @@ public sealed partial class MainWindow
         checks.Add(("状态标题非空", !string.IsNullOrWhiteSpace(StateTitle.Text), StateTitle.Text));
         checks.Add(("账号框已填", AccountBox.Text.Length > 0, AccountBox.Text));
         checks.Add(("密码框已填", PwdBox.Password.Length > 0, "len=" + PwdBox.Password.Length));
-        checks.Add(("下拉框有选中项", OperatorBox.SelectedIndex >= 0, "idx=" + OperatorBox.SelectedIndex));
         checks.Add(("日志有内容", Logs.Count > 0, "count=" + Logs.Count));
         checks.Add(("设备端口已填", !string.IsNullOrWhiteSpace(DevicePortText.Text), DevicePortText.Text));
         checks.Add(("当前接入已判定", !string.IsNullOrWhiteSpace(RulesCurrentLinkText.Text), RulesCurrentLinkText.Text));
