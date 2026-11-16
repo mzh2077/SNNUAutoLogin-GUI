@@ -91,6 +91,17 @@ jobs:
           xvfb=$!
           sleep 3
           export DISPLAY=:99
+          # 主题里有没有这个图标 vs 画不画得出来是两回事，先把这个摸清楚，
+          # 不然只能对着截图猜为什么有个方框。
+          dpkg -l | grep -Ei 'adwaita-icon|rsvg|librsvg' || true
+          ls /usr/share/icons/ || true
+          find /usr/share/icons -maxdepth 3 -name '*symbolic*' -type d | head -20
+          echo "SVG 数：$(find /usr/share/icons/Adwaita -name '*.svg' 2>/dev/null | wc -l)  PNG 数：$(find /usr/share/icons/Adwaita -name '*.png' 2>/dev/null | wc -l)"
+          find /usr/share/icons -name 'computer-symbolic*' -o -name 'network-wireless-signal-good-symbolic*' \
+               -o -name 'edit-symbolic*' -o -name 'document-edit-symbolic*' -o -name 'view-list-symbolic*' || true
+          dbus-run-session -- python3 Linux/DesktopGtk/tests/icon_probe.py \
+              computer-symbolic network-wireless-signal-good-symbolic edit-symbolic \
+              document-edit-symbolic view-list-symbolic emblem-system-symbolic || true
           dbus-run-session -- bash Linux/DesktopGtk/tests/capture.sh artifacts/linux/shots
           kill "$agent" "$xvfb" 2>/dev/null || true
           ls -l artifacts/linux/shots

@@ -92,7 +92,13 @@ def _label(mapping: dict[str, str], key: str | None) -> str:
 
 
 class MainWindow(Adw.ApplicationWindow):
-    def __init__(self, page: str = "connection", width: int = 900, height: int = 780, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        page: str = "connection",
+        width: int = 900,
+        height: int = 780,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(
             title="陕师大校园网自动登录",
             default_width=width,
