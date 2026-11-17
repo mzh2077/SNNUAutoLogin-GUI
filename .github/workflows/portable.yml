@@ -42,8 +42,8 @@ jobs:
   portable:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 8.0.x
       - name: Startup registration and login regression tests
@@ -67,7 +67,7 @@ jobs:
       - name: Installer install, launch and uninstall smoke test
         shell: pwsh
         run: ./tools/test_installer.ps1 -Installer (Resolve-Path artifacts/SNNUAutoLogin-Setup-*.exe)
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: SNNUAutoLogin-Release-win-x64

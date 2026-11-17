@@ -122,6 +122,7 @@ public sealed class CredentialStore : ICredentialSource
 
                 settings = JsonSerializer.Deserialize<AppSettings>(
                     JsonSerializer.Serialize(rest, JsonOpts), JsonOpts);
+                if (settings is null) return null;
 
                 if (root.TryGetProperty("ConnectionRules", out var rulesEl)
                     && rulesEl.ValueKind == JsonValueKind.Array)
