@@ -219,6 +219,8 @@ public static class Diagnostics
                     + (info.Kind == NetworkAccessKind.Wireless ? "（无线）" : info.Kind == NetworkAccessKind.Wired ? "（有线）" : "（未判定）"));
         sb.AppendLine($"[接入方式] SSID      : {(string.IsNullOrEmpty(info.Ssid) ? "(未取到)" : info.Ssid)}");
         sb.AppendLine($"[接入方式] SSID 可信 : {(info.SsidReliable ? "是" : "否（将降级为「无线任意」，不匹配指定 SSID 的规则）")}");
+        if (info.SsidAccessDenied)
+            sb.AppendLine("[接入方式] SSID 失败原因：Windows 拒绝读取，请检查位置访问权限");
         sb.AppendLine($"[接入方式] 网卡      : {info.InterfaceDescription}");
         sb.AppendLine();
 
@@ -242,10 +244,9 @@ public static class Diagnostics
         sb.AppendLine();
 
         var resolver = new ConnectionProfileResolver(store, access);
-        var matched = resolver.Match(info.Kind, info.Ssid, info.SsidReliable, rules ?? new List<ConnectionRule>());
-        var profile = resolver.Resolve();
+        var profile = resolver.Resolve(info);
 
-        sb.AppendLine($"[匹配] 命中规则      : {(matched is null ? "（无，落到全局默认）" : DescribeRule(matched))}");
+        sb.AppendLine($"[匹配] 命中规则      : {(profile.Rule is { } matched ? DescribeRule(matched) : "（无，落到全局默认）")}");
         sb.AppendLine($"[生效] 账号          : {profile.Account}");
         sb.AppendLine($"[生效] 出口端口      : {profile.Port}");
         sb.AppendLine($"[生效] 密码来源      : {(profile.Rule is null ? "全局密码" : (string.IsNullOrEmpty(store.LoadRulePassword(profile.Rule.CredentialKey)) ? "规则未设密码 → 回退全局密码" : "该规则独立密码"))}");

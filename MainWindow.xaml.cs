@@ -563,39 +563,46 @@ public sealed partial class MainWindow : Window
 
     // ────────────────────────── 连接规则 ──────────────────────────
 
+    private string? _displayedRuleId;
+
     /// <summary>刷新规则列表与「当前接入 / 生效规则」两行。</summary>
-    private void RefreshRulesUi()
+    private void RefreshRulesUi(bool onlyIfChanged = false)
     {
         if (!_uiBuilt) return;
 
-        var s = _rt.Store.Settings;
-        var access = _rt.Access.GetCurrent();
-        var profile = _rt.Profiles.Resolve(access);
-        bool waitingForSsid = access.Kind == NetworkAccessKind.Wireless
-            && !access.SsidReliable && ConnectionRuleSet.NeedsSsid(s.ConnectionRules);
-
-        RulesCurrentLinkText.Text = access.Kind switch
+        var rules = _rt.Store.Settings.ConnectionRules;
+        var profile = _rt.Profiles.Resolve(out var access);
+        var currentLink = access.Kind switch
         {
             NetworkAccessKind.Wired => "当前接入：有线",
-            NetworkAccessKind.Wireless => access.SsidReliable && access.Ssid.Length > 0
-                ? $"当前接入：无线 · SSID『{access.Ssid}』"
-                : "当前接入：无线",
+            NetworkAccessKind.Wireless when access.SsidReliable => $"当前接入：无线 · SSID『{access.Ssid}』",
+            NetworkAccessKind.Wireless => "当前接入：无线",
             _ => "当前接入：未知"
         };
 
-        RulesActiveText.Text = waitingForSsid
-            ? "生效规则：等待后台确认 SSID"
-            : profile.IsDefault
-                ? $"未命中任何规则，使用默认账号（{s.Account} · 端口 {profile.Port}）"
-                : $"生效规则：账号 {profile.Account} · 端口 {profile.Port}";
+        var source = profile.Rule is { } rule ? DescribeRule(rule) : "默认账号";
+        var activeRule = $"生效规则：{source} · 账号 {profile.Account} · 出口 {OperatorName(profile.Operator)} · 端口 {profile.Port}";
+        if (access.Kind == NetworkAccessKind.Wireless && !access.SsidReliable && ConnectionRuleSet.NeedsSsid(rules))
+        {
+            var reason = access.SsidAccessDenied
+                ? "Windows 拒绝读取 SSID，请检查位置访问权限"
+                : "未能读取 SSID";
+            activeRule += $"（{reason}）";
+        }
+
+        var ruleId = profile.Rule?.Id;
+        if (onlyIfChanged && _displayedRuleId == ruleId
+            && RulesCurrentLinkText.Text == currentLink && RulesActiveText.Text == activeRule)
+            return;
+
+        _displayedRuleId = ruleId;
+        RulesCurrentLinkText.Text = currentLink;
+        RulesActiveText.Text = activeRule;
 
         var items = new List<RuleItem>();
-        foreach (var r in ConnectionRuleSet.Sorted(s.ConnectionRules))
+        foreach (var r in ConnectionRuleSet.Sorted(rules))
         {
-            bool active = !waitingForSsid && !profile.IsDefault
-                && profile.Rule is not null
-                && string.Equals(profile.Rule.Id, r.Id, StringComparison.Ordinal);
-
+            bool active = string.Equals(ruleId, r.Id, StringComparison.Ordinal);
             items.Add(new RuleItem(r, active, _rt.Store.HasRulePassword(r.CredentialKey)));
         }
 
@@ -986,6 +993,7 @@ public sealed partial class MainWindow : Window
     {
         if (!_uiBuilt) return;
         ApplyState(state, result, animate: true);
+        RefreshRulesUi(onlyIfChanged: true);
     }
 
     private void OnRuntimeLog(string text)
