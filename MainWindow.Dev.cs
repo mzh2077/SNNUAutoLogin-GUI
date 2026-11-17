@@ -68,6 +68,7 @@ public sealed partial class MainWindow
     private async Task RunExitWhileHiddenAsync()
     {
         await Task.Delay(2200);
+        CheckFormInputBorders();
         HideToTray();
         await Task.Delay(2000);
 
@@ -76,6 +77,24 @@ public sealed partial class MainWindow
             $"before-exit = {Mem()} built={_uiBuilt}\n", System.Text.Encoding.UTF8);
 
         _rt.Exit();
+    }
+
+    private void CheckFormInputBorders()
+    {
+        foreach (var control in new Microsoft.UI.Xaml.Controls.Control[]
+        {
+            AccountBox, PwdBox, CaptchaBox, DeviceGuardProbeTargetBox, DeviceGuardExternalProbeTargetBox,
+            DeviceGuardThresholdBox, DeviceGuardTimeoutBox, IntervalBox
+        })
+        {
+            if (control.BorderBrush is not SolidColorBrush || !control.BorderThickness.Equals(new Thickness(1)))
+                throw new InvalidOperationException($"输入框边框样式错误：{control.Name}");
+        }
+
+        DeviceGuardThresholdBox.ApplyTemplate();
+        if (FindDescendant(DeviceGuardThresholdBox, "InputBox") is not Microsoft.UI.Xaml.Controls.TextBox
+            { BorderBrush: SolidColorBrush })
+            throw new InvalidOperationException("数字框的内部文本框未使用实色边框");
     }
 
     private async Task RunMinimizeTestAsync()

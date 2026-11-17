@@ -98,6 +98,7 @@ try
     Console.WriteLine("\n生效档案");
 
     var empty = resolver.Resolve();
+    Check(access.SsidReads == 0, "没有指定 SSID 规则时不读取 SSID");
     Check(empty.IsDefault && empty.Account == "global-account" && empty.Port == 8603, "未命中规则时用全局默认");
     Check(empty.Password == "global-password", "未命中规则时用全局密码");
     Check(empty.Operator == Operator.Mobile, "未命中规则时用全局出口");
@@ -108,7 +109,10 @@ try
     access.Ssid = "校园网";
     access.SsidReliable = true;
 
-    var hit = resolver.Resolve();
+    var hit = resolver.Resolve(out var matchedAccess);
+    Check(matchedAccess is { SsidReliable: true, Ssid: "校园网" } && access.SsidReads == 1,
+        "界面得到用于档案判定的那次 SSID 读取结果");
+    Check(resolver.Resolve().Rule?.Id == hit.Rule?.Id, "登录和界面解析得到同一条规则");
     Check(!hit.IsDefault && hit.Account == "ssid-acc", "命中规则时用规则的账号");
     Check(hit.Operator == Operator.Telecom, "命中规则时用规则的出口");
     Check(hit.Port == 8603, "命中规则时端口仍是门户分配的那个，不受规则影响");
@@ -119,6 +123,18 @@ try
     store.Save();
     var noPwd = resolver.Resolve();
     Check(noPwd.Password == "global-password", "规则没设密码时回落到全局密码");
+
+    access.Ssid = "";
+    access.SsidReliable = false;
+    access.SsidAccessDenied = true;
+    var defaultAfterDenial = resolver.Resolve(out var deniedAccess);
+    Check(deniedAccess.SsidAccessDenied && defaultAfterDenial.IsDefault,
+        "拒绝读取 SSID 时标明失败原因并使用默认档案");
+
+    store.Settings.ConnectionRules = new List<ConnectionRule> { ruleSsid, ruleAny };
+    var anyAfterDenial = resolver.Resolve(out deniedAccess);
+    Check(deniedAccess.SsidAccessDenied && anyAfterDenial.Rule?.Id == "ra"
+        && anyAfterDenial.Operator == Operator.Mobile, "拒绝读取 SSID 时仍可命中无线任意规则");
 
     store.Settings.ConnectionRules = new List<ConnectionRule>();
     store.Save();
@@ -301,8 +317,8 @@ try
     var index = NetworkAccessService.BestInterfaceIndex(System.Net.IPAddress.Parse("223.5.5.5"));
     Check(index is null || index.Value > 0, "GetBestInterfaceEx 用 16 字节 sockaddr 不会报错");
 
-    var (ssid, reliable) = NetworkAccessService.ReadSsid(null);
-    Check(ssid.Length == 0 && !reliable, "网卡标识为空时降级为取不到 SSID");
+    var (ssid, reliable, accessDenied) = NetworkAccessService.ReadSsid(null);
+    Check(ssid.Length == 0 && !reliable && !accessDenied, "网卡标识为空时降级为取不到 SSID");
 
     // 真实布局：isState(4) | mode(4) | profileName[256]WCHAR(512) | DOT11_SSID
     // 所以 uSSIDLength 在偏移 520，SSID 字节从 524 开始。

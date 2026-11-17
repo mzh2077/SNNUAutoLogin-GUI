@@ -51,10 +51,6 @@ public sealed partial class MainWindow : Window
     private const int MinIntervalSeconds = 4;
     private const int MaxIntervalSeconds = 120;
 
-    /// <summary>「关于」卡片里的两个链接。</summary>
-    private const string RepoUrl = "https://github.com/mzh2077/SNNUAutoLogin-GUI";
-    private const string IssueUrl = "https://github.com/mzh2077/SNNUAutoLogin-GUI/issues/new";
-
     public MainWindow(AppRuntime runtime)
     {
         _rt = runtime;
@@ -207,7 +203,6 @@ public sealed partial class MainWindow : Window
         LoadSettingsToUi();
         FillLogsFromRuntime();
         WireEvents();
-        FillDevicePorts();
         OnDeviceListChanged();
 
         // 在线设备默认就加载：进窗口就看到当前在线几台，不用再点一次刷新。
@@ -277,22 +272,6 @@ public sealed partial class MainWindow : Window
         catch { }
     }
 
-    /// <summary>
-    /// 关于卡片里的两个链接：源代码仓库与问题反馈。
-    /// 用系统默认浏览器打开，不自己实现一套 URL 协议。
-    /// </summary>
-    private void OpenExternal(string url)
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-        }
-        catch
-        {
-            // 打开失败不该让程序崩掉，提示一下就好
-            _rt.AddLog($"打开链接失败：{url}");
-        }
-    }
     /// <summary>把 x:Name 生成的控件字段全部置空，断开它们对已卸载树的强引用。</summary>
     private void DropElementReferences()
     {
@@ -525,18 +504,6 @@ public sealed partial class MainWindow : Window
         ScrollLogToEnd();
     }
 
-    /// <summary>
-    /// 刷新「接入端口」的显示。
-    ///
-    /// 端口不是用户能选的 —— 门户按接入线路临时分配（访问门户根路径会回一段
-    /// JS 指向具体端口），所以这里只负责把当前实际用的端口显示出来。
-    /// </summary>
-    private void FillDevicePorts()
-    {
-        int port = _rt.Devices.Port;
-        DefaultPortText.Text = $"{port}";
-    }
-
     // ────────────────────────── 设备数守卫 ──────────────────────────
 
     /// <summary>守卫状态变化（后台线程触发，切回 UI 线程刷新卡片）。</summary>
@@ -596,39 +563,46 @@ public sealed partial class MainWindow : Window
 
     // ────────────────────────── 连接规则 ──────────────────────────
 
+    private string? _displayedRuleId;
+
     /// <summary>刷新规则列表与「当前接入 / 生效规则」两行。</summary>
-    private void RefreshRulesUi()
+    private void RefreshRulesUi(bool onlyIfChanged = false)
     {
         if (!_uiBuilt) return;
 
-        var s = _rt.Store.Settings;
-        var access = _rt.Access.GetCurrent();
-        var profile = _rt.Profiles.Resolve(access);
-        bool waitingForSsid = access.Kind == NetworkAccessKind.Wireless
-            && !access.SsidReliable && ConnectionRuleSet.NeedsSsid(s.ConnectionRules);
-
-        RulesCurrentLinkText.Text = access.Kind switch
+        var rules = _rt.Store.Settings.ConnectionRules;
+        var profile = _rt.Profiles.Resolve(out var access);
+        var currentLink = access.Kind switch
         {
             NetworkAccessKind.Wired => "当前接入：有线",
-            NetworkAccessKind.Wireless => access.SsidReliable && access.Ssid.Length > 0
-                ? $"当前接入：无线 · SSID『{access.Ssid}』"
-                : "当前接入：无线",
+            NetworkAccessKind.Wireless when access.SsidReliable => $"当前接入：无线 · SSID『{access.Ssid}』",
+            NetworkAccessKind.Wireless => "当前接入：无线",
             _ => "当前接入：未知"
         };
 
-        RulesActiveText.Text = waitingForSsid
-            ? "生效规则：等待后台确认 SSID"
-            : profile.IsDefault
-                ? $"未命中任何规则，使用默认账号（{s.Account} · 端口 {profile.Port}）"
-                : $"生效规则：账号 {profile.Account} · 端口 {profile.Port}";
+        var source = profile.Rule is { } rule ? DescribeRule(rule) : "默认账号";
+        var activeRule = $"生效规则：{source} · 账号 {profile.Account} · 出口 {OperatorName(profile.Operator)} · 端口 {profile.Port}";
+        if (access.Kind == NetworkAccessKind.Wireless && !access.SsidReliable && ConnectionRuleSet.NeedsSsid(rules))
+        {
+            var reason = access.SsidAccessDenied
+                ? "Windows 拒绝读取 SSID，请检查位置访问权限"
+                : "未能读取 SSID";
+            activeRule += $"（{reason}）";
+        }
+
+        var ruleId = profile.Rule?.Id;
+        if (onlyIfChanged && _displayedRuleId == ruleId
+            && RulesCurrentLinkText.Text == currentLink && RulesActiveText.Text == activeRule)
+            return;
+
+        _displayedRuleId = ruleId;
+        RulesCurrentLinkText.Text = currentLink;
+        RulesActiveText.Text = activeRule;
 
         var items = new List<RuleItem>();
-        foreach (var r in ConnectionRuleSet.Sorted(s.ConnectionRules))
+        foreach (var r in ConnectionRuleSet.Sorted(rules))
         {
-            bool active = !waitingForSsid && !profile.IsDefault
-                && profile.Rule is not null
-                && string.Equals(profile.Rule.Id, r.Id, StringComparison.Ordinal);
-
+            bool active = string.Equals(ruleId, r.Id, StringComparison.Ordinal);
             items.Add(new RuleItem(r, active, _rt.Store.HasRulePassword(r.CredentialKey)));
         }
 
@@ -771,42 +745,36 @@ public sealed partial class MainWindow : Window
             };
         }
 
-        var matchBox = new ComboBox { Width = 320, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var inputStyle = (Style)Root.Resources["FormInputStyle"];
+        var matchBox = new ComboBox { Style = inputStyle, HorizontalAlignment = HorizontalAlignment.Stretch };
         matchBox.Items.Add("有线");
         matchBox.Items.Add("无线（任意 SSID）");
         matchBox.Items.Add("无线（指定 SSID）");
         matchBox.SelectedIndex = (int)rule.MatchType;
 
-        var ssidBox = new TextBox { Width = 320, MaxLength = 32, PlaceholderText = "例如：校园网" };
-        ssidBox.Text = rule.Ssid;
-
-        var accountBox = new TextBox { Width = 320, PlaceholderText = "学号" };
-        accountBox.Text = rule.Account;
+        var ssidBox = new TextBox { Style = inputStyle, MaxLength = 32, PlaceholderText = "例如：校园网", Text = rule.Ssid };
+        var accountBox = new TextBox { Style = inputStyle, PlaceholderText = "学号", Text = rule.Account };
 
         var pwdBox = new PasswordBox
         {
-            Width = 320,
+            Style = inputStyle,
+            Password = initialPassword,
             PasswordRevealMode = PasswordRevealMode.Peek,
             PlaceholderText = editing ? "留空表示不修改" : "校园网密码"
         };
-        // 新建时把当前生效的密码也带上：用户接着改几个字就行，
-        // 不用把密码从头敲一遍（更不用为了确认「填了没」去切到明文）。
-        // 编辑已有规则时不预填 —— 那是该规则自己的密码，留空表示不改。
-        pwdBox.Password = initialPassword;
 
-        // 出口是运营商（表单里的 yys），不是门户端口 —— 端口由服务端分配，用户选不了
-        var operatorBox = new ComboBox { Width = 320, HorizontalAlignment = HorizontalAlignment.Stretch };
-        operatorBox.Items.Add("校园网直连（教育网）");
-        operatorBox.Items.Add("中国移动");
-        operatorBox.Items.Add("中国联通");
-        operatorBox.Items.Add("中国电信");
-        operatorBox.SelectedIndex = (int)rule.Operator;
+        var operators = Enum.GetValues<Operator>();
+        var operatorBox = new ComboBox
+        {
+            Style = inputStyle,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            ItemsSource = operators.Select(OperatorName).ToArray(),
+            SelectedIndex = Array.IndexOf(operators, rule.Operator)
+        };
 
         var errorText = new TextBlock
         {
-            Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.IndianRed),
-            FontSize = 12,
-            TextWrapping = TextWrapping.Wrap,
+            Style = (Style)Root.Resources["ErrorTextStyle"],
             Visibility = Visibility.Collapsed
         };
 
@@ -820,21 +788,21 @@ public sealed partial class MainWindow : Window
 
         var panel = new StackPanel { Spacing = 10, Width = 320 };
 
-        // 每一行：标题 + 一句说明（说明这个输入框要填什么）+ 控件
-        void AddRow(string label, string desc, Microsoft.UI.Xaml.Controls.Control control)
+        var titleStyle = (Style)Root.Resources["RowTitleStyle"];
+        var hintStyle = (Style)Root.Resources["HintStyle"];
+
+        void AddRow(string label, string description, Control control)
         {
-            panel.Children.Add(new TextBlock { Text = label, FontSize = 12 });
-            if (!string.IsNullOrEmpty(desc))
+            panel.Children.Add(new StackPanel
             {
-                panel.Children.Add(new TextBlock
+                Spacing = 4,
+                Children =
                 {
-                    Text = desc,
-                    FontSize = 11.5,
-                    TextWrapping = TextWrapping.Wrap,
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Gray)
-                });
-            }
-            panel.Children.Add(control);
+                    new TextBlock { Text = label, Style = titleStyle },
+                    new TextBlock { Text = description, Style = hintStyle },
+                    control
+                }
+            });
         }
 
         AddRow("匹配方式", "按当前接入方式决定这条规则何时生效", matchBox);
@@ -859,7 +827,8 @@ public sealed partial class MainWindow : Window
             rule.MatchType = (ConnectionMatchType)Math.Max(0, matchBox.SelectedIndex);
             rule.Ssid = rule.MatchType == ConnectionMatchType.WirelessSsid ? ssidBox.Text.Trim() : "";
             rule.Account = accountBox.Text.Trim();
-            rule.Operator = (Operator)Math.Max(0, operatorBox.SelectedIndex);
+            rule.Operator = operatorBox.SelectedIndex >= 0
+                ? operators[operatorBox.SelectedIndex] : Operator.Campus;
 
             // 唯一性校验：把别的规则都算上（自己除外）
             var others = new List<ConnectionRule>();
@@ -950,9 +919,6 @@ public sealed partial class MainWindow : Window
         ConnectBtn.Click += async (_, _) => await OnConnectClicked();
         RefreshBtn.Click += async (_, _) => await OnRefreshClicked();
 
-        RepoLinkButton.Click += (_, _) => OpenExternal(RepoUrl);
-        IssueLinkButton.Click += (_, _) => OpenExternal(IssueUrl);
-
         AccountBox.TextChanged += (_, _) => ScheduleSave();
         PwdBox.PasswordChanged += (_, _) => ScheduleSave();
 
@@ -1027,6 +993,7 @@ public sealed partial class MainWindow : Window
     {
         if (!_uiBuilt) return;
         ApplyState(state, result, animate: true);
+        RefreshRulesUi(onlyIfChanged: true);
     }
 
     private void OnRuntimeLog(string text)
@@ -1561,14 +1528,20 @@ public sealed partial class MainWindow : Window
         {
             PersistToStore();
             var options = Enum.GetValues<Operator>();
-            var picker = new ComboBox { ItemsSource = options.Select(OperatorName).ToArray(),
-                SelectedIndex = Array.IndexOf(options, _rt.Coordinator.ActiveOperator) };
+            var picker = new ComboBox
+            {
+                Style = (Style)Root.Resources["FormInputStyle"],
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                ItemsSource = options.Select(OperatorName).ToArray(),
+                SelectedIndex = Array.IndexOf(options, _rt.Coordinator.ActiveOperator)
+            };
             var dialog = new ContentDialog
             {
                 XamlRoot = Root.XamlRoot,
                 Title = "切换出口",
                 Content = new StackPanel { Spacing = 12, Children =
-                    { new TextBlock { Text = "确定后将断开本机连接，并使用所选出口重新登录。" }, picker } },
+                    { new TextBlock { Text = "确定后将断开本机连接，并使用所选出口重新登录。",
+                        TextWrapping = TextWrapping.Wrap }, picker } },
                 PrimaryButtonText = "断开并重新登录",
                 CloseButtonText = "取消"
             };

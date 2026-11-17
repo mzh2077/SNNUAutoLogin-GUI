@@ -166,13 +166,16 @@ public sealed class ConnectionProfileResolver : IConnectionProfileResolver
         return null;
     }
 
-    public EffectiveProfile Resolve()
+    public EffectiveProfile Resolve() => Resolve(out _);
+
+    /// <summary>使用本次档案判定所用的同一份接入信息供界面显示。</summary>
+    public EffectiveProfile Resolve(out NetworkAccessInfo access)
     {
         var settings = _store.Settings;
 
         // 只有存在「按 SSID 匹配」的规则时才去读 SSID（那一步要走 WLAN 服务）；
         // 空规则集是绝大多数情况，完全不需要碰它。
-        var access = ConnectionRuleSet.NeedsSsid(settings.ConnectionRules)
+        access = ConnectionRuleSet.NeedsSsid(settings.ConnectionRules)
             ? _access.GetCurrentWithSsid()
             : _access.GetCurrent();
         return Resolve(access);
