@@ -20,7 +20,7 @@ public func requestLocation() {
 
 @_cdecl("snnu_wifi_kind")
 public func wifiKind(_ name: UnsafePointer<CChar>) -> Int32 {
-    return CWWiFiClient.interfaceNames()?.contains(String(cString: name)) == true ? 1 : 0
+    return CWWiFiClient.shared().interfaceNames()?.contains(String(cString: name)) == true ? 1 : 0
 }
 
 @_cdecl("snnu_ssid")

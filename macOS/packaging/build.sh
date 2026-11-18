@@ -22,8 +22,24 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "$stage/AppIcon.iconset" -o "$app/Contents/Resources/AppIcon.icns"
 for notice in LICENSE NOTICE; do cp "$root/$notice" "$app/Contents/Resources/"; done
+# Managed assemblies are data resources, not nested native executables.
+python3 - "$app" <<'PYTHON'
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+app = Path(sys.argv[1])
+mac = app / "Contents/MacOS"
+resources = app / "Contents/Resources/payload"
+resources.mkdir()
+for entry in list(mac.iterdir()):
+    if entry.is_file() and "Mach-O" in subprocess.check_output(["file", str(entry)], text=True):
+        continue
+    shutil.move(str(entry), str(resources / entry.name))
+    entry.symlink_to("../Resources/payload/" + entry.name)
+PYTHON
 while IFS= read -r -d '' binary; do
-  if file "$binary" | grep -q 'Mach-O'; then
+  if [[ "$binary" != "$app/Contents/MacOS/SNNUAutoLogin.Mac" ]] && file "$binary" | grep -q 'Mach-O'; then
     codesign --force --sign - "$binary"
   fi
 done < <(find "$app/Contents/MacOS" -type f -print0)
