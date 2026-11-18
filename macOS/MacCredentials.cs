@@ -42,8 +42,6 @@ internal sealed class MacCredentials : ICredentialSource
 
         var settings = Settings;
         var keys = settings.ConnectionRules.Select(r => r.CredentialKey).Prepend(DefaultKey).Distinct();
-        using var lookupBudget = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        lookupBudget.CancelAfter(TimeSpan.FromSeconds(7));
         try
         {
             foreach (var key in keys)

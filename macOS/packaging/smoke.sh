@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset DOTNET_ROOT
+export DOTNET_MULTILEVEL_LOOKUP=0
 app="$1"
 export SNNU_MAC_TEST_HOME="$(mktemp -d)"
 trap 'rm -rf "$SNNU_MAC_TEST_HOME"' EXIT

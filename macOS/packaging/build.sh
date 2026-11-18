@@ -34,6 +34,8 @@ resources = app / "Contents/Resources/payload"
 resources.mkdir()
 for entry in list(mac.iterdir()):
     if entry.is_file() and "Mach-O" in subprocess.check_output(["file", str(entry)], text=True):
+        if entry.name != "SNNUAutoLogin.Mac":
+            (resources / entry.name).symlink_to("../../MacOS/" + entry.name)
         continue
     shutil.move(str(entry), str(resources / entry.name))
     entry.symlink_to("../Resources/payload/" + entry.name)

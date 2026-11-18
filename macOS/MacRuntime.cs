@@ -209,10 +209,12 @@ internal sealed class MacRuntime : IAsyncDisposable
     {
         await _stop.CancelAsync();
         await _watcher;
+        var servicesStopping = Task.WhenAll(_guard.DisposeAsync().AsTask(),
+            _login.DisposeAsync().AsTask(), _devices.DisposeAsync().AsTask());
         await _requests.WaitAsync();
         try
         {
-            await Task.WhenAll(_guard.DisposeAsync().AsTask(), _login.DisposeAsync().AsTask(), _devices.DisposeAsync().AsTask());
+            await servicesStopping;
             _ports.Dispose();
             _probe.Dispose();
             _portal.Dispose();
