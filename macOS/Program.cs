@@ -94,7 +94,7 @@ public sealed class DesktopApp : Application
             if (smoke)
             {
                 await Task.Delay(1500);
-                window.Hide();
+                window.Close();
                 await Task.Delay(1000);
                 var status = await _runtime.SendAsync(new("status"), CancellationToken.None);
                 if (!status.Success || window.IsVisible) throw new InvalidOperationException("后台未运行");
