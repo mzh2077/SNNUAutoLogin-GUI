@@ -1,0 +1,46 @@
+name: macOS Apple Silicon preview
+on:
+  push:
+    paths:
+      - 'macOS/**'
+      - 'Shared/**'
+      - 'Services/**'
+      - '.github/workflows/macos.yml'
+  pull_request:
+    paths:
+      - 'macOS/**'
+      - 'Shared/**'
+      - 'Services/**'
+      - '.github/workflows/macos.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Verify Apple Silicon runner
+        run: test "$(uname -m)" = arm64
+      - name: Build ARM64 app and disk image
+        run: bash macOS/packaging/build.sh
+      - name: Simulated portal and application lifecycle checks
+        run: bash macOS/packaging/smoke.sh artifacts/macos/SNNUAutoLogin.app
+      - name: Check disk image and checksum
+        run: |
+          hdiutil verify artifacts/macos/*.dmg
+          cd artifacts/macos
+          shasum -a 256 -c SHA256SUMS-macos-arm64.txt
+      - uses: actions/upload-artifact@v6
+        with:
+          name: SNNUAutoLogin-1.6.5-macos-preview.1-macos-arm64
+          if-no-files-found: error
+          path: |
+            artifacts/macos/*.dmg
+            artifacts/macos/SHA256SUMS-macos-arm64.txt
+            macOS/README.md

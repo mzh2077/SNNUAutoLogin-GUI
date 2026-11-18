@@ -2,7 +2,19 @@ name: Linux build and regression tests
 on:
   push:
     branches: [main]
+    paths:
+      - 'Linux/**'
+      - 'Shared/**'
+      - 'Services/**'
+      - 'tests/LinuxCoreTests/**'
+      - '.github/workflows/linux.yml'
   pull_request:
+    paths:
+      - 'Linux/**'
+      - 'Shared/**'
+      - 'Services/**'
+      - 'tests/LinuxCoreTests/**'
+      - '.github/workflows/linux.yml'
   workflow_dispatch:
 
 permissions:
