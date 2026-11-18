@@ -11,8 +11,9 @@ internal sealed class MacNetworkAccess : INetworkAccessService
     private string _interface = "";
     private string _addresses = "";
     private long _ssidChecked;
+    private int _generation;
     public NetworkAccessInfo GetCurrent() { lock (_gate) return _current; }
-    public void Invalidate() { lock (_gate) { _current = new(); _ssidChecked = 0; } }
+    public void Invalidate() { lock (_gate) { _generation++; _current = new(); _ssidChecked = 0; } }
 
     public NetworkAccessInfo GetCurrentWithSsid()
     {
@@ -33,6 +34,8 @@ internal sealed class MacNetworkAccess : INetworkAccessService
     public Task InitializeAsync(CancellationToken ct) => RefreshAsync(ct);
     private async Task<bool> RefreshAsync(CancellationToken ct)
     {
+        int generation;
+        lock (_gate) generation = _generation;
         var info = new ProcessStartInfo("/sbin/route") { RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (string value in new[] { "-n", "get", "202.117.144.205" }) info.ArgumentList.Add(value);
         using var process = Process.Start(info) ?? throw new IOException("无法读取门户路由");
@@ -54,6 +57,7 @@ internal sealed class MacNetworkAccess : INetworkAccessService
             : nic.NetworkInterfaceType == NetworkInterfaceType.Ethernet ? NetworkAccessKind.Wired : NetworkAccessKind.Unknown;
         lock (_gate)
         {
+            if (generation != _generation) return false;
             bool changed = device != _interface || addresses != _addresses || kind != _current.Kind;
             if (!changed) return false;
             _interface = device; _addresses = addresses; _ssidChecked = 0;
@@ -65,8 +69,13 @@ internal sealed class MacNetworkAccess : INetworkAccessService
     public async Task WatchAsync(Action changed, CancellationToken ct)
     {
         int dirty = 0;
-        NetworkAddressChangedEventHandler address = (_, _) => Interlocked.Exchange(ref dirty, 1);
-        NetworkAvailabilityChangedEventHandler available = (_, _) => Interlocked.Exchange(ref dirty, 1);
+        void NetworkEvent()
+        {
+            Invalidate();
+            if (Interlocked.Exchange(ref dirty, 1) == 0) changed();
+        }
+        NetworkAddressChangedEventHandler address = (_, _) => NetworkEvent();
+        NetworkAvailabilityChangedEventHandler available = (_, _) => NetworkEvent();
         NetworkChange.NetworkAddressChanged += address;
         NetworkChange.NetworkAvailabilityChanged += available;
         try
@@ -77,7 +86,6 @@ internal sealed class MacNetworkAccess : INetworkAccessService
                 try
                 {
                     bool eventRaised = Interlocked.Exchange(ref dirty, 0) != 0;
-                    if (eventRaised) Invalidate();
                     if (await RefreshAsync(ct) || eventRaised) changed();
                 }
                 catch (IOException) { Invalidate(); changed(); }
