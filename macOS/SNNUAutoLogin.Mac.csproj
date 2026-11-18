@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>SNNUAutoLogin.Mac</AssemblyName>
+    <Version>1.6.5-macos-preview.1</Version>
+    <ApplicationManifest></ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Shared/SNNUAutoLogin.Core.csproj" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
+    <Compile Remove="Tests/**/*.cs" />
+    <EmbeddedResource Include="../Assets/app_256.png" LogicalName="AppIcon.png" />
+  </ItemGroup>
+</Project>

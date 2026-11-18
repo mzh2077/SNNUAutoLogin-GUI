@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>org.snnuautologin.mac</string>
+<key>CFBundleName</key><string>SNNUAutoLogin</string>
+<key>CFBundleDisplayName</key><string>陕师大校园网自动登录</string>
+<key>CFBundleExecutable</key><string>SNNUAutoLogin.Mac</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>1.6.5</string>
+<key>CFBundleVersion</key><string>16501</string>
+<key>CFBundleIconFile</key><string>AppIcon.icns</string>
+<key>LSMinimumSystemVersion</key><string>14.0</string>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSLocationWhenInUseUsageDescription</key><string>读取当前 Wi-Fi 名称，以匹配您添加的指定 SSID 登录规则。</string>
+<key>NSLocationUsageDescription</key><string>读取当前 Wi-Fi 名称，以匹配您添加的指定 SSID 登录规则。</string>
+</dict></plist>
