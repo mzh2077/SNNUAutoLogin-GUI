@@ -114,6 +114,7 @@ internal sealed class MacRuntime : IAsyncDisposable
                 }
                 _settingsVersion = Guid.NewGuid();
                 await _credentials.LoadMissingPasswordsAsync(ct);
+                InvalidateDeviceSnapshot();
                 _login.InvalidateNetwork();
                 return StatusReply();
             case "unlock":
@@ -126,15 +127,16 @@ internal sealed class MacRuntime : IAsyncDisposable
             case "refresh":
                 return StatusReply(true, await _login.RefreshStatusAsync() ?? "");
             case "reconnect":
-                _devices.Invalidate();
+                InvalidateDeviceSnapshot();
                 await _login.ManualConnectAsync(reconnect: true);
                 return StatusReply(_login.LastResult?.Success == true);
             case "switch-outlet":
                 if (request.Outlet is null || !Enum.IsDefined(request.Outlet.Value)) return new(false, "出口无效");
-                _devices.Invalidate();
+                InvalidateDeviceSnapshot();
                 await _login.ManualConnectAsync(request.Outlet, reconnect: true);
                 return StatusReply(_login.LastResult?.Success == true);
             case "login":
+                InvalidateDeviceSnapshot();
                 await _login.ManualConnectAsync();
                 return StatusReply(_login.LastResult?.Success == true);
             case "captcha":
@@ -177,6 +179,12 @@ internal sealed class MacRuntime : IAsyncDisposable
             default:
                 return new(false, "未知命令");
         }
+    }
+
+    private void InvalidateDeviceSnapshot()
+    {
+        _devices.Invalidate();
+        Interlocked.Increment(ref _networkVersion);
     }
 
     private AgentStatus Status()
