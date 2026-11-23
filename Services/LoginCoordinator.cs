@@ -530,6 +530,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
                 _startupLoginPending = false;
                 _failures = 0;
                 ClearCaptcha();
+                _periodicAnchor = DateTimeOffset.UtcNow;
                 SetState(ConnState.Online, r);
                 LogLine(r.AlreadyOnline ? "当前已在线" : $"登录成功 · {r.Account ?? account} · {r.Ip ?? "IP 未知"}");
             }
@@ -622,6 +623,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
                 _startupLoginPending = false;
                 _failures = 0;
                 ClearCaptcha();
+                _periodicAnchor = DateTimeOffset.UtcNow;
                 SetState(ConnState.Online, r);
                 LogLine($"登录成功 · {r.Account ?? account} · {r.Ip ?? "IP 未知"}");
                 return r;
