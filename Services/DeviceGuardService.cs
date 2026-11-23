@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 
 namespace SNNUAutoLogin.Services;
 
-/// <summary>设备数守卫的状态。</summary>
+/// <summary>同时在线设备监测的状态。</summary>
 public enum DeviceGuardState
 {
     /// <summary>守卫关闭。</summary>
@@ -61,7 +61,7 @@ public sealed record DeviceGuardStatus
 }
 
 /// <summary>
-/// 设备数守卫。
+/// 同时在线设备监测。
 ///
 /// 逻辑很直白：账号下的在线设备数超过阈值，说明可能有人在蹭网或者会话已经废了；
 /// 这时候拿独立的外网探测确认一下「我这台机器到底还能不能出网」——
@@ -283,7 +283,7 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
         if (!settings.DeviceGuardEnabled)
         {
             _failedProbeRounds = 0;
-            SetState(DeviceGuardState.Disabled, "设备数守卫已关闭");
+            SetState(DeviceGuardState.Disabled, "同时在线设备监测已关闭");
             return;
         }
         if (!_canEvaluate())
@@ -627,3 +627,4 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
         _gate.Dispose();
     }
 }
+

@@ -58,7 +58,7 @@ public sealed partial class MainWindow : Window
 
         BuildUi();
 
-        Title = "陕师大校园网自动登录";
+        Title = "SNNU 校园网助手";
         ConfigureWindow();
 
         _saveTimer.Tick += (_, _) =>
@@ -463,6 +463,12 @@ public sealed partial class MainWindow : Window
 
         AccountBox.Text = s.Account;
         PwdBox.Password = _rt.Store.LoadPassword();
+        DefaultOperatorBox.SelectedIndex = Array.IndexOf(new[] { Operator.Campus, Operator.Mobile, Operator.Unicom, Operator.Telecom }, s.Operator);
+        int hours = Math.Clamp(s.ReauthenticateIntervalHours, 0, 8760);
+        ReauthenticateSwitch.IsOn = hours > 0;
+        ReauthenticateUnitBox.SelectedIndex = hours > 0 && hours % 24 == 0 ? 1 : 0;
+        ReauthenticateValueBox.Value = hours == 0 ? 24 : ReauthenticateUnitBox.SelectedIndex == 1 ? hours / 24 : hours;
+        UpdateReauthenticateControls();
         AutoStartSwitch.IsOn = s.AutoStart && StartupManager.IsEnabled();
         AutoReconnectSwitch.IsOn = s.AutoReconnect;
         TraySwitch.IsOn = s.MinimizeToTray;
@@ -504,7 +510,7 @@ public sealed partial class MainWindow : Window
         ScrollLogToEnd();
     }
 
-    // ────────────────────────── 设备数守卫 ──────────────────────────
+    // ────────────────────────── 同时在线设备监测 ──────────────────────────
 
     /// <summary>守卫状态变化（后台线程触发，切回 UI 线程刷新卡片）。</summary>
     private void OnGuardChanged(DeviceGuardStatus status)
@@ -914,6 +920,13 @@ public sealed partial class MainWindow : Window
         ScheduleSave();
     }
 
+    private void UpdateReauthenticateControls()
+    {
+        ReauthenticateValueBox.IsEnabled = ReauthenticateSwitch.IsOn;
+        ReauthenticateUnitBox.IsEnabled = ReauthenticateSwitch.IsOn;
+        ReauthenticateValueBox.Maximum = ReauthenticateUnitBox.SelectedIndex == 1 ? 365 : 8760;
+    }
+
     private void WireEvents()
     {
         ConnectBtn.Click += async (_, _) => await OnConnectClicked();
@@ -921,6 +934,10 @@ public sealed partial class MainWindow : Window
 
         AccountBox.TextChanged += (_, _) => ScheduleSave();
         PwdBox.PasswordChanged += (_, _) => ScheduleSave();
+        DefaultOperatorBox.SelectionChanged += (_, _) => ScheduleSave();
+        ReauthenticateSwitch.Toggled += (_, _) => { UpdateReauthenticateControls(); ScheduleSave(); };
+        ReauthenticateValueBox.ValueChanged += (_, _) => ScheduleSave();
+        ReauthenticateUnitBox.SelectionChanged += (_, _) => { UpdateReauthenticateControls(); ScheduleSave(); };
 
         AutoStartSwitch.Toggled += (_, _) =>
         {
@@ -940,7 +957,7 @@ public sealed partial class MainWindow : Window
         };
         IntervalBox.ValueChanged += (_, _) => ScheduleSave();
 
-        // 设备数守卫
+        // 同时在线设备监测
         DeviceGuardSwitch.Toggled += (_, _) =>
         {
             UpdateGuardUiEnabledState();
@@ -1664,6 +1681,13 @@ public sealed partial class MainWindow : Window
 
         var s = _rt.Store.Settings;
         s.Account = AccountBox.Text.Trim();
+        var operators = new[] { Operator.Campus, Operator.Mobile, Operator.Unicom, Operator.Telecom };
+        if (DefaultOperatorBox.SelectedIndex >= 0) s.Operator = operators[DefaultOperatorBox.SelectedIndex];
+        double interval = ReauthenticateValueBox.Value;
+        int multiplier = ReauthenticateUnitBox.SelectedIndex == 1 ? 24 : 1;
+        s.ReauthenticateIntervalHours = ReauthenticateSwitch.IsOn
+            ? (int)Math.Clamp(double.IsFinite(interval) ? Math.Round(interval) * multiplier : 24, 1, 8760)
+            : 0;
         s.AutoReconnect = AutoReconnectSwitch.IsOn;
         s.MinimizeToTray = TraySwitch.IsOn;
         s.KeepAliveOnLock = LockKeepSwitch.IsOn;
@@ -1738,3 +1762,4 @@ internal static class BrushCache
         return b;
     }
 }
+

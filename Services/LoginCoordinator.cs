@@ -49,6 +49,24 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
 
     /// <summary>有守卫要求强制重新认证：下一轮不能走「已在线」的快捷路径。</summary>
     private int _forceRelogin;
+    private DateTimeOffset _periodicAnchor = DateTimeOffset.UtcNow;
+    private int _periodicHours;
+
+    private bool PeriodicReauthenticationDue()
+    {
+        int hours = Math.Clamp(_store.Settings.ReauthenticateIntervalHours, 0, 8760);
+        var now = DateTimeOffset.UtcNow;
+        if (hours != _periodicHours)
+        {
+            _periodicHours = hours;
+            _periodicAnchor = now;
+        }
+        if (hours == 0 || _suppressAuto || _awaitingCaptcha || !HasEffectiveCredentials()
+            || now - _periodicAnchor < TimeSpan.FromHours(hours)) return false;
+        // Advance before attempting: failures use normal reconnect backoff, not repeated forced logins.
+        _periodicAnchor = now;
+        return true;
+    }
 
     /// <summary>解析当前生效的账号 / 密码 / 端口。没有它就只会用全局默认账号。</summary>
     private readonly IConnectionProfileResolver? _resolver;
@@ -155,7 +173,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// 请求重新认证（设备数守卫处置完本机连接后调用）。
+    /// 请求重新认证（同时在线设备监测处置完本机连接后调用）。
     ///
     /// 刻意做成无锁：只置一个标志位 + 唤醒等待中的循环。
     /// 守卫那边正拿着自己的锁，如果这里去取协调器的锁就会形成「守卫等协调器、协调器等守卫」的环，
@@ -340,7 +358,8 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
             if (networkVersion != Volatile.Read(ref _networkVersion)) return (true, false);
             int port = profile.Port;
 
-            bool force = Interlocked.Exchange(ref _forceRelogin, 0) == 1;
+            bool periodic = PeriodicReauthenticationDue();
+            bool force = Interlocked.Exchange(ref _forceRelogin, 0) == 1 || periodic;
 
             var status = await _client.GetStatusAsync(port, ct).ConfigureAwait(false);
             if (networkVersion != Volatile.Read(ref _networkVersion)) return (true, false);
@@ -353,6 +372,17 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
                 if (_awaitingCaptcha) ClearCaptcha();   // 用户在浏览器里登上了，面板该收起来
                 SetState(ConnState.Online, status);
                 return (true, false);
+            }
+
+            if (periodic && status.Success && !_awaitingCaptcha)
+            {
+                LogLine("定时重新认证到期，正在断开原连接…");
+                if (!await _client.DisconnectAsync(port, ct).ConfigureAwait(false))
+                {
+                    SetState(ConnState.Failed, LoginResult.Fail("断开原连接失败，未执行定时重新认证"));
+                    return (false, false);
+                }
+                if (networkVersion != Volatile.Read(ref _networkVersion)) return (true, false);
             }
 
             if (force)
@@ -404,6 +434,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
             {
                 ClearCaptcha();
                 _startupLoginPending = false;
+                _periodicAnchor = DateTimeOffset.UtcNow;
                 SetState(ConnState.Online, r);
                 LogLine($"登录成功 · {r.Account ?? account} · {r.Ip ?? "IP 未知"}");
                 return (true, false);
@@ -774,3 +805,4 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
         _gate.Dispose();
     }
 }
+

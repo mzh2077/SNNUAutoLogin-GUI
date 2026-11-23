@@ -1,4 +1,4 @@
-# 架构设计：设备数守卫 · 自定义巡检时长 · 按连接方式区分账号与出口
+# 架构设计：同时在线设备监测 · 自定义巡检时长 · 按连接方式区分账号与出口
 
 | 项目 | 内容 |
 | --- | --- |
@@ -52,7 +52,7 @@
 
 ### 1.1 一句话方案
 
-新增三个**可单测的纯逻辑/可注入服务**（`NetworkAccessService` 判接入方式、`ConnectionProfileResolver` 解析生效账号、`DeviceGuardService` 守卫状态机 + `NetworkProbeService` 独立外网探测），把 `PortalClient` 改成**按端口参数化 + 按端口隔离 Cookie**，`CredentialStore` 扩成**多份 DPAPI 凭据 + 兼容迁移**，`LoginCoordinator` 改为**每次巡检先解析生效档案（账号/密码/端口）再发起登录**；界面新增「设备数守卫」「连接规则」两张卡片并把巡检时长改成 `NumberBox`。
+新增三个**可单测的纯逻辑/可注入服务**（`NetworkAccessService` 判接入方式、`ConnectionProfileResolver` 解析生效账号、`DeviceGuardService` 守卫状态机 + `NetworkProbeService` 独立外网探测），把 `PortalClient` 改成**按端口参数化 + 按端口隔离 Cookie**，`CredentialStore` 扩成**多份 DPAPI 凭据 + 兼容迁移**，`LoginCoordinator` 改为**每次巡检先解析生效档案（账号/密码/端口）再发起登录**；界面新增「同时在线设备监测」「连接规则」两张卡片并把巡检时长改成 `NumberBox`。
 
 ### 1.2 组件关系图
 
@@ -207,13 +207,13 @@ graph TD
 | `Services/PortalClient.cs` | 修改 | ① `Root` 常量 → `RootFor(port)` 参与全部请求；② 新增 `ConcurrentDictionary<int, Lazy<HttpClient>> _clients`，**每端口独立 `CookieContainer`**（E5）；③ `GetStatusAsync`/`LoginAsync`×2/`FetchCaptchaAsync`/`IsPortalReachableAsync` 全部加 `int port` **首参**；④ `GetOnlineDevicesAsync(port)`/`DisconnectAsync(port)`/`ForceOfflineAsync` 签名不变（`IOnlineDevicePortal` 零改动）；⑤ `Dispose()` 释放全部按端口创建的 `HttpClient` | +70 / −25 |
 | `Services/LoginCoordinator.cs` | 修改 | ① 构造注入 `IConnectionProfileResolver`（保留原 3 参重载以兼容 `tests/StartupTests`）；② `TickAsync`/`ManualConnectAsync`/`SubmitCaptchaAsync` 每轮先 `Resolve()` 取生效账号/密码/端口，再按端口调 `PortalClient`；③ 新增 `RequestReauthenticate()`（无锁唤醒 + `_forceRelogin` 标志，下一轮**跳过「已在线」快捷路径**直接登录）；④ `NextDelay` 的 `Math.Max(5, …)` → `Math.Max(4, …)`（Q5） | +70 / −30 |
 | `AppRuntime.cs` | 修改 | ① **单实例** `PortalClient`（同时给 `LoginCoordinator` 与 `DeviceManager`，消除现有两个实例的重复 HTTP 客户端）；② 装配 `NetworkAccessService`/`ConnectionProfileResolver`/`NetworkProbeService`/`DeviceGuardService`；③ `NetworkWatch` 回调里追加 `NetworkAccessService.Invalidate()` + 守卫即时评估；④ `Start()` 启动守卫后台循环，`Dispose()` 停守卫 | +60 / −15 |
-| `MainWindow.xaml` | 修改 | ① 卡片顺序调整为「在线设备 → 设备数守卫 → 连接规则 → 默认账号与出口 → 自动化 → 关于」（PRD §4.0）；② 新增 `DeviceGuardCard`（`DeviceGuardSwitch`/`DeviceGuardThresholdBox`/`DeviceGuardProbeTargetBox`/`DeviceGuardTimeoutBox`/`DeviceGuardStateText`/`DeviceGuardLastText`/`DeviceGuardProbeNowBtn`）；③ 新增 `RulesCard`（`RulesCurrentLinkText`/`RulesActiveText`/`RulesList`/`RulesAddBtn`/`RulesFallbackHint`）+ 添加/编辑规则 `ContentDialog`（含端口 `ComboBox` 数据源 `PortalClient.KnownPorts`）；④ `AccountCard` 更名「默认账号与出口」，字段名改「默认学号/默认密码/默认网络出口」，新增 `DefaultPortBox`；⑤ `IntervalBox` 由 `ComboBox` 换 `NumberBox` + `IntervalUnitText` + `IntervalQuick4/8/15/30` + `IntervalHint` | +400 / −30 |
+| `MainWindow.xaml` | 修改 | ① 卡片顺序调整为「在线设备 → 同时在线设备监测 → 连接规则 → 默认账号与出口 → 自动化 → 关于」（PRD §4.0）；② 新增 `DeviceGuardCard`（`DeviceGuardSwitch`/`DeviceGuardThresholdBox`/`DeviceGuardProbeTargetBox`/`DeviceGuardTimeoutBox`/`DeviceGuardStateText`/`DeviceGuardLastText`/`DeviceGuardProbeNowBtn`）；③ 新增 `RulesCard`（`RulesCurrentLinkText`/`RulesActiveText`/`RulesList`/`RulesAddBtn`/`RulesFallbackHint`）+ 添加/编辑规则 `ContentDialog`（含端口 `ComboBox` 数据源 `PortalClient.KnownPorts`）；④ `AccountCard` 更名「默认账号与出口」，字段名改「默认学号/默认密码/默认网络出口」，新增 `DefaultPortBox`；⑤ `IntervalBox` 由 `ComboBox` 换 `NumberBox` + `IntervalUnitText` + `IntervalQuick4/8/15/30` + `IntervalHint` | +400 / −30 |
 | `MainWindow.xaml.cs` | 修改 | ① `LoadSettingsToUi`/`PersistToStore` 增守卫 4 项 + `DefaultPort` + 规则集合读写；② 巡检时长三处改法（见 §2.7）；③ 事件接线：`DeviceGuardSwitch.Toggled`（联动三项置灰）、`DeviceGuardProbeNowBtn.Click`、阈值/目标/超时 `ValueChanged`/`TextChanged`；④ `DeviceGuardService.Changed` → 刷新守卫卡片两行状态；⑤ 规则卡片：当前接入/生效规则两行刷新、增删改对话框、唯一性校验提示、删除二次确认；⑥ 处置进行中禁用「断开连接」「立即登录」（F1-13） | +430 / −40 |
 | `MainWindow.Dev.cs` | 修改 | `interval = {RectOf(IntervalBox)} sel={IntervalBox.SelectedIndex}` → 改为 `val={IntervalBox.Value}`（`NumberBox` 无 `SelectedIndex`，不改则**编译失败**） | ±3 |
 | `MainWindow.UiTest.cs` | 修改 | `ivBox` 行补 `val={IntervalBox.Value}`；新增守卫卡片与规则卡片的 `RectOf` 输出（PRD B13 要求自检同步） | +10 / −2 |
 | `tests/StartupTests/Fakes.cs` | 修改 | `PortalClient` 假替身补齐新签名：`GetStatusAsync(int port, ct)`、`LoginAsync(int port, …)`×2、`FetchCaptchaAsync(int port, ct)`；`CredentialStore` 假替身补 `Settings` 新字段与 `LoadRulePassword` 等 | +25 / −5 |
 | `tests/CredentialTests/Program.cs` | 修改 | 新增断言：`secrets.json` 生成与幂等（连跑 5 次内容不变）、`secret.bin` 保留、迁移失败回退、规则密码互不影响、删规则连带删凭据、新字段越界回落 | +110 / −2 |
-| `README.md` | 修改 | 特性补三条；「使用」补「连接规则」「设备数守卫」；**「隐私与数据」补探测对外流量说明**（PRD §8 明确要求）；更新记录新增小节 | +60 |
+| `README.md` | 修改 | 特性补三条；「使用」补「连接规则」「同时在线设备监测」；**「隐私与数据」补探测对外流量说明**（PRD §8 明确要求）；更新记录新增小节 | +60 |
 | `docs/porting-guide.md` | 修改 | 补「换学校时怎么改规则 / 守卫 / 探测目标」一节 | +40 |
 | `SNNUAutoLogin.csproj` | 修改 | `<Version>`/`<FileVersion>`/`<AssemblyVersion>` 同步（X-03） | ±3 |
 | `installer/SNNUAutoLogin.iss` | 修改 | `#define AppVer` 同步（X-03） | ±1 |
@@ -375,7 +375,7 @@ public interface INetworkProbe
 // Services/DeviceGuardService.cs
 namespace SNNUAutoLogin.Services;
 
-/// <summary>设备数守卫的状态。</summary>
+/// <summary>同时在线设备监测的状态。</summary>
 public enum DeviceGuardState
 {
     /// <summary>守卫关闭。</summary>
@@ -413,7 +413,7 @@ public sealed record DeviceGuardStatus
     public bool Busy { get; init; }
 }
 
-/// <summary>设备数守卫：设备数超阈值 → 探测外网 → 失败则断开本机并重新认证。</summary>
+/// <summary>同时在线设备监测：设备数超阈值 → 探测外网 → 失败则断开本机并重新认证。</summary>
 public sealed class DeviceGuardService : IDisposable
 {
     /// <summary>守卫评估间隔（秒）。</summary>
@@ -531,7 +531,7 @@ public sealed class AppSettings
 {
     // 既有：Account、Operator、AutoStart、AutoReconnect、MinimizeToTray、KeepAliveOnLock、CheckIntervalSeconds
 
-    /// <summary>设备数守卫开关（F1-02：默认关闭）。</summary>
+    /// <summary>同时在线设备监测开关（F1-02：默认关闭）。</summary>
     public bool DeviceGuardEnabled { get; set; } = false;
     /// <summary>设备数阈值（F1-03：设备数 &gt; 阈值才触发；有效 1–50，越界回落 2）。</summary>
     public int DeviceGuardThreshold { get; set; } = 2;
@@ -951,7 +951,7 @@ sequenceDiagram
 
 - **改哪些文件**：`MainWindow.xaml`（改）、`MainWindow.xaml.cs`（改）、`MainWindow.Dev.cs`（改）、`MainWindow.UiTest.cs`（改）。
 - **做什么**：
-  1. `MainWindow.xaml`：按 PRD §4.0 调整卡片顺序；新增「设备数守卫」卡片（PRD §4.1 控件清单，名称照用：`DeviceGuardCard`/`DeviceGuardSwitch`/`DeviceGuardThresholdBox`/`DeviceGuardProbeTargetBox`/`DeviceGuardTimeoutBox`/`DeviceGuardStateText`/`DeviceGuardLastText`/`DeviceGuardProbeNowBtn`）；新增「连接规则」卡片（PRD §4.2：`RulesCard`/`RulesCurrentLinkText`/`RulesActiveText`/`RulesList`/`RulesAddBtn`/`RulesFallbackHint`）+ 添加/编辑规则 `ContentDialog`（端口 `ComboBox` 数据源 `PortalClient.KnownPorts`）；「账号与出口」→「**默认账号与出口**」（字段名改「默认学号/默认密码/默认网络出口」+ 新增 `DefaultPortBox` + 说明行）；`IntervalBox` 换 `NumberBox` + `IntervalUnitText` + `IntervalQuick4/8/15/30` + `IntervalHint`。
+  1. `MainWindow.xaml`：按 PRD §4.0 调整卡片顺序；新增「同时在线设备监测」卡片（PRD §4.1 控件清单，名称照用：`DeviceGuardCard`/`DeviceGuardSwitch`/`DeviceGuardThresholdBox`/`DeviceGuardProbeTargetBox`/`DeviceGuardTimeoutBox`/`DeviceGuardStateText`/`DeviceGuardLastText`/`DeviceGuardProbeNowBtn`）；新增「连接规则」卡片（PRD §4.2：`RulesCard`/`RulesCurrentLinkText`/`RulesActiveText`/`RulesList`/`RulesAddBtn`/`RulesFallbackHint`）+ 添加/编辑规则 `ContentDialog`（端口 `ComboBox` 数据源 `PortalClient.KnownPorts`）；「账号与出口」→「**默认账号与出口**」（字段名改「默认学号/默认密码/默认网络出口」+ 新增 `DefaultPortBox` + 说明行）；`IntervalBox` 换 `NumberBox` + `IntervalUnitText` + `IntervalQuick4/8/15/30` + `IntervalHint`。
   2. `MainWindow.xaml.cs`：巡检时长三处（`LoadSettingsToUi` / `WireEvents` / `PersistToStore`，见 §2.7，`PersistToStore` **不再做索引反写**，`NaN` 保留上次合法值）；守卫 4 项 + `DefaultPort` + 规则集合的读写；`DeviceGuardSwitch` 关闭时三项置灰但**保留已填的值**；`DeviceGuardProbeNowBtn` 点击置灰显示「检测中…」；订阅 `DeviceGuardService.Changed` 刷新守卫卡片两行；规则增删改 + 唯一性校验提示 + 删除二次确认；**处置进行中禁用「断开连接」「立即登录」**（F1-13）。
   3. `MainWindow.Dev.cs`：`IntervalBox.SelectedIndex` → `IntervalBox.Value`（**不改则编译失败**）。
   4. `MainWindow.UiTest.cs`：同步 `IntervalBox` 引用 + 增守卫/规则卡片 `RectOf` 输出（PRD B13）。
@@ -968,7 +968,7 @@ sequenceDiagram
 - **改哪些文件**：`AppRuntime.cs`（改）、`README.md`（改）、`docs/porting-guide.md`（改）、`SNNUAutoLogin.csproj`（改）、`installer/SNNUAutoLogin.iss`（改）、`.github/workflows/portable.yml`（改）。
 - **做什么**：
   1. `AppRuntime.cs`：**单实例** `PortalClient` 同时注入 `LoginCoordinator` 与 `DeviceManager`（消除现有的两个实例 ⇒ 不重复建 HTTP 客户端）；装配 `NetworkAccessService` / `ConnectionProfileResolver` / `NetworkProbeService` / `DeviceGuardService`；`NetworkWatch` 回调里追加 `Invalidate()` + `NotifyNetworkChanged()`；`Start()`/`Dispose()` 管理守卫循环生命周期。
-  2. `README.md`：特性补三条；「使用」补「连接规则」「设备数守卫」；**「隐私与数据」必须补一句：外网探测会向用户配置的探测目标地址发一次 ICMP 或 HTTP 请求**（PRD §8 明确要求）；更新记录新增小节。
+  2. `README.md`：特性补三条；「使用」补「连接规则」「同时在线设备监测」；**「隐私与数据」必须补一句：外网探测会向用户配置的探测目标地址发一次 ICMP 或 HTTP 请求**（PRD §8 明确要求）；更新记录新增小节。
   3. `docs/porting-guide.md`：补「换学校时怎么改规则 / 守卫 / 探测目标」。
   4. 版本号三处同步（`csproj` 的 `Version`/`FileVersion`/`AssemblyVersion` + `.iss` 的 `AppVer`，X-03）。
   5. `.github/workflows/portable.yml` 增加 `dotnet run --project tests/GuardTests -c Release` 步骤（X-02）。
@@ -1097,3 +1097,4 @@ graph TD
 | 3 | 守卫自取设备数、只把统计结果显示在**守卫卡片**上，不改写「在线设备」卡片的手动端口 | 已定 | PRD §4.5 要求端口下拉与守卫统计端口「互不强制绑定」；PRD §4.1 线框把「在线设备 N 台 · 阈值 M · 统计端口 P」放在守卫卡片内 |
 
 > 另有一处**实现期需在真实 WLAN 环境复验**的点（非待确认项）：本机 `WlanQueryInterface(current_connection)` 解不出 SSID（E9），设计已用「合法性校验 + 降级为无线（任意）」兜底；工程师在真实无线环境首次运行时，请确认能读到真实 SSID，若仍读不到需按 `netsh wlan show interfaces` 备选方案补一条兜底路径。
+

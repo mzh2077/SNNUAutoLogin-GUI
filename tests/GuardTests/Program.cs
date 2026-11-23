@@ -182,7 +182,7 @@ try
     Check(!canceled.Success && canceled.Detail.Contains("取消"), "主动取消与探测超时分开显示");
 
     // ══════════════ 守卫状态机 ══════════════
-    Console.WriteLine("\n设备数守卫");
+    Console.WriteLine("\n同时在线设备监测");
 
     int effectivePort = 8605;
     int reauthCalls = 0;
@@ -393,3 +393,4 @@ sealed class ProbeHttpHandler : HttpMessageHandler
         return new HttpResponseMessage(HttpStatusCode.OK);
     }
 }
+

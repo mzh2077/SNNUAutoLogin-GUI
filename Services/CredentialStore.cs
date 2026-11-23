@@ -174,6 +174,7 @@ public sealed class CredentialStore : ICredentialSource
     private void NormalizeSettings()
     {
         Settings.Account ??= "";
+        if (Settings.ReauthenticateIntervalHours is < 0 or > 8760) Settings.ReauthenticateIntervalHours = 0;
         if (!Enum.IsDefined(Settings.Operator)) Settings.Operator = Operator.Mobile;
         if (Settings.CheckIntervalSeconds is < 4 or > 120) Settings.CheckIntervalSeconds = 8;
 
@@ -496,3 +497,4 @@ public sealed class CredentialStore : ICredentialSource
         }
     }
 }
+

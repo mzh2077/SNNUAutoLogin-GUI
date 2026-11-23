@@ -80,7 +80,7 @@ public static class Diagnostics
     /// 出网探测自检：按当前设置做一次独立探测，确认「这台机器现在到底能不能出网」。
     ///
     /// 这条路径不碰门户、不改认证状态，只发一次 ICMP 或 HTTP 请求。
-    /// 用来验证「设备数守卫」的探测目标填对没有。
+    /// 用来验证「同时在线设备监测」的探测目标填对没有。
     /// </summary>
     public static string RunProbe()
     {
@@ -123,7 +123,7 @@ public static class Diagnostics
     /// <summary>
     /// 在线设备列表自检：只读地取一次在线设备表，打印设备数与明细。
     ///
-    /// 「设备数守卫」判定的就是这张表的行数，所以这个入口是守卫触发条件的
+    /// 「同时在线设备监测」判定的就是这张表的行数，所以这个入口是守卫触发条件的
     /// 事实依据 —— 用户可以直接看到「守卫认为有 N 台」的 N 从哪来。
     /// 全程只读，不改任何认证状态。
     /// </summary>
@@ -300,3 +300,4 @@ public static class Diagnostics
         Console.WriteLine(text);
     }
 }
+

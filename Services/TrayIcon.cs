@@ -8,7 +8,7 @@ public sealed class TrayMenuState
     public bool AutoStart { get; set; }
     public bool AutoReconnect { get; set; }
     public bool MinimizeToTray { get; set; } = true;
-    public string Tip { get; set; } = "校园网自动登录";
+    public string Tip { get; set; } = "SNNU 校园网助手";
 }
 
 /// <summary>
@@ -415,3 +415,4 @@ public sealed class TrayIcon : IDisposable
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr LoadIconW(IntPtr hInstance, IntPtr iconName);
 }
+
