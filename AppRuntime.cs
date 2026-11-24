@@ -52,7 +52,7 @@ public sealed class AppRuntime : IAsyncDisposable
     /// <summary>独立外网探测。</summary>
     public NetworkProbeService Probe { get; }
 
-    /// <summary>设备数守卫。</summary>
+    /// <summary>同时在线设备监测。</summary>
     public DeviceGuardService Guard { get; }
 
     /// <summary>全程序共用一个门户客户端：省 HTTP 连接池，也保证同一端口的会话是同一份。</summary>
@@ -194,7 +194,7 @@ public sealed class AppRuntime : IAsyncDisposable
         AutoStart = Store.Settings.AutoStart,
         AutoReconnect = Store.Settings.AutoReconnect,
         MinimizeToTray = Store.Settings.MinimizeToTray,
-        Tip = $"校园网自动登录 · {StateLabel}"
+        Tip = $"SNNU 校园网助手 · {StateLabel}"
     };
 
     public void RefreshTray() => Tray?.UpdateState(MenuState());
@@ -266,7 +266,7 @@ public sealed class AppRuntime : IAsyncDisposable
         });
         _netWatch.Start();
 
-        // 设备数守卫：自己一个后台循环，不占巡检的锁
+        // 同时在线设备监测：自己一个后台循环，不占巡检的锁
         Guard.Start();
 
         // 启动期的临时分配（XAML 解析、字体排版、图标解码）用完就没价值了。
@@ -373,7 +373,7 @@ public sealed class AppRuntime : IAsyncDisposable
         LastResult = result;
         StateLabel = LabelOf(state);
 
-        Tray?.UpdateTip($"校园网自动登录 · {StateLabel}");
+        Tray?.UpdateTip($"SNNU 校园网助手 · {StateLabel}");
 
         // 要验证码就得有人看着：把窗口叫回来（驻留托盘时也算）。
         // 锁屏时叫了也看不见，等解锁时再召回。
@@ -542,3 +542,4 @@ public sealed class AppRuntime : IAsyncDisposable
         }
     }
 }
+

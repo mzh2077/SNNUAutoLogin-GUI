@@ -8,10 +8,10 @@ def lerp(a, b, t):
 # ── 圆角矩形 + 渐变 + wifi ──
 def render(size):
     W = H = size
-    r = size * 0.225                    # 圆角半径
-    cxp, cyp = W * 0.5, H * 0.745       # wifi 原点
-    arcs = [(0.300, 0.072), (0.205, 0.072), (0.110, 0.072)]
-    dot_r = 0.072
+    r = size * 0.5                    # 圆角半径
+    cxp, cyp = W * 0.5, H * 0.70       # wifi 原点
+    arcs = [(0.365, 0.044), (0.245, 0.044), (0.125, 0.044)]
+    dot_r = 0.035
 
     top = (0x3A, 0x93, 0xF2)
     bot = (0x0A, 0x5B, 0xC2)
@@ -151,3 +151,4 @@ with open(os.path.join(os.path.dirname(out_path), 'app_256.png'), 'wb') as f:
     f.write(pngs[0][0])
 
 print('ico written:', out_path, os.path.getsize(out_path), 'bytes')
+

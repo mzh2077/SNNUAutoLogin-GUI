@@ -26,7 +26,7 @@ internal sealed class MainWindow : Window
     private readonly CheckBox _autoStart = new() { Content = "用户登录后自动启动" };
     private readonly CheckBox _reconnect = new() { Content = "断线自动重连" };
     private readonly TextBox _interval = new() { PlaceholderText = "巡检间隔（秒）" };
-    private readonly CheckBox _enableGuard = new() { Content = "启用设备数守卫" };
+    private readonly CheckBox _enableGuard = new() { Content = "启用同时在线设备监测" };
     private readonly TextBox _threshold = new() { PlaceholderText = "在线设备数阈值" };
     private readonly TextBox _target = new() { PlaceholderText = "探测地址" };
     private readonly TextBox _externalTarget = new() { PlaceholderText = "www.baidu.com" };
@@ -48,7 +48,7 @@ internal sealed class MainWindow : Window
 
     public MainWindow()
     {
-        Title = "陕师大校园网自动登录";
+        Title = "SNNU 校园网助手";
         Width = 780;
         Height = 660;
         MinWidth = 540;
@@ -370,3 +370,4 @@ internal static class PanelChildren
         return panel;
     }
 }
+

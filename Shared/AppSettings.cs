@@ -15,7 +15,10 @@ public sealed class AppSettings
 
     public int CheckIntervalSeconds { get; set; } = 8;
 
-    /// <summary>设备数守卫开关。默认关闭，老用户升级后行为与从前完全一致。</summary>
+    /// <summary>定时重新认证间隔（小时），0 表示关闭。</summary>
+    public int ReauthenticateIntervalHours { get; set; } = 0;
+
+    /// <summary>同时在线设备监测开关。默认关闭，老用户升级后行为与从前完全一致。</summary>
     public bool DeviceGuardEnabled { get; set; } = false;
 
     /// <summary>设备数阈值。语义是「设备数 &gt; 阈值」才触发。</summary>
@@ -34,3 +37,4 @@ public sealed class AppSettings
     /// <summary>连接规则集合。默认空。</summary>
     public List<ConnectionRule> ConnectionRules { get; set; } = new();
 }
+

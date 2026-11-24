@@ -187,4 +187,48 @@ using (var coordinator = new LoginCoordinator(switchStore, new DispatcherQueue()
     Check(PortalClient.DisconnectCallsAtLogin == previousDisconnects + 1 && PortalClient.LastForce
         && PortalClient.LastOperator == Operator.Telecom, "reconnect disconnects before forcing login on the current outlet");
 }
+// Advance only the scheduler anchor; these checks never wait for wall-clock hours.
+void MakePeriodicDue(LoginCoordinator coordinator)
+{
+    const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+    typeof(LoginCoordinator).GetField("_periodicAnchor", flags)!.SetValue(coordinator, DateTimeOffset.UtcNow.AddHours(-25));
+}
+var periodicStore = new CredentialStore();
+periodicStore.Settings.ReauthenticateIntervalHours = 24;
+using (var coordinator = new LoginCoordinator(periodicStore, new DispatcherQueue()))
+{
+    PortalClient.Status = ok;
+    PortalClient.Login = ok;
+    PortalClient.LoginCalls = 0;
+    PortalClient.DisconnectCalls = 0;
+    PortalClient.DisconnectSucceeds = true;
+    await coordinator.RefreshAsync();
+    Check(PortalClient.LoginCalls == 0, "periodic login waits for its interval");
+    MakePeriodicDue(coordinator);
+    await coordinator.RefreshAsync();
+    Check(PortalClient.LoginCalls == 1 && PortalClient.DisconnectCallsAtLogin == 1 && PortalClient.LastForce,
+        "periodic login disconnects before forced authentication even when reconnect is off");
+    await coordinator.RefreshAsync();
+    Check(PortalClient.LoginCalls == 1, "successful periodic login starts a fresh interval");
+    MakePeriodicDue(coordinator);
+    coordinator.SuppressAuto(true);
+    await coordinator.RefreshAsync();
+    Check(PortalClient.LoginCalls == 1, "periodic authentication respects suppression");
+    coordinator.SuppressAuto(false);
+    PortalClient.DisconnectSucceeds = false;
+    await coordinator.RefreshAsync();
+    Check(PortalClient.LoginCalls == 1, "failed periodic disconnect does not submit credentials");
+    PortalClient.DisconnectSucceeds = true;
+    await coordinator.RefreshAsync();
+    Check(PortalClient.LoginCalls == 1, "failed periodic attempt does not create a forced login storm");
+    MakePeriodicDue(coordinator);
+    periodicStore.Settings.ReauthenticateIntervalHours = 48;
+    await coordinator.RefreshAsync();
+    Check(PortalClient.LoginCalls == 1, "changing the interval resets the countdown");
+    MakePeriodicDue(coordinator);
+    periodicStore.Settings.ReauthenticateIntervalHours = 0;
+    await coordinator.RefreshAsync();
+    Check(PortalClient.LoginCalls == 1, "disabled periodic authentication never forces a login");
+}
 Console.WriteLine($"{checks} checks passed.");
+

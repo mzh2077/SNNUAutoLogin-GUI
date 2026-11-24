@@ -1,5 +1,5 @@
 ﻿; ============================================================================
-;  陕师大校园网自动登录 —— 安装包构建脚本（Inno Setup 6）
+;  SNNU 校园网助手 —— 安装包构建脚本（Inno Setup 6）
 ;
 ;  构建：  build_installer.bat
 ;  或手工：ISCC.exe SNNUAutoLogin.iss
@@ -7,10 +7,10 @@
 ;  产物：  installer\Output\SNNUAutoLogin-Setup-<版本>.exe
 ; ============================================================================
 
-#define AppName        "陕师大校园网自动登录"
+#define AppName        "SNNU 校园网助手"
 #define AppNameEn      "SNNUAutoLogin"
-#define AppVer         "1.6.5"
-#define AppVerFull     "1.6.5.0"
+#define AppVer         "1.6.6"
+#define AppVerFull     "1.6.6.0"
 #ifndef AppExe
   #define AppExe       "SNNUAutoLogin.exe"
 #endif
@@ -275,3 +275,4 @@ begin
 
   RegWriteStringValue(HKCU, RunKey, RunValue, '"' + InstallExe + '" --tray');
 end;
+
