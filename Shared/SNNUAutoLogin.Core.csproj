@@ -6,6 +6,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="SNNUAutoLogin" />
     <InternalsVisibleTo Include="LinuxCoreTests" />
+    <InternalsVisibleTo Include="SNNUAutoLogin.Mac" />
     <Compile Include="../Services/PortalClient.cs" Link="PortalClient.cs" />
     <Compile Include="../Services/PortalPortDiscovery.cs" Link="PortalPortDiscovery.cs" />
     <Compile Include="../Services/ConnectionProfileResolver.cs" Link="ConnectionProfileResolver.cs" />
