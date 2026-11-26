@@ -465,6 +465,8 @@ public sealed partial class MainWindow
                 $"appwindow  = {AppWindow.Size.Width} x {AppWindow.Size.Height}\n" +
                 $"root       = {Root.ActualWidth} x {Root.ActualHeight}\n" +
                 $"statusCard = {StatusCard.ActualWidth} x {StatusCard.ActualHeight}\n" +
+                $"gearBtn    = {RectOf(SettingsNavBtn)}\n" +
+                $"tbRegion   = {_titleBarRegion}\n" +
                 $"ringHost   = {RingHost.ActualWidth} x {RingHost.ActualHeight}\n" +
                 $"connectBtn = {ConnectBtn.ActualWidth} x {ConnectBtn.ActualHeight}\n" +
                 $"accountCard= {AccountCard.ActualWidth} x {AccountCard.ActualHeight}\n" +

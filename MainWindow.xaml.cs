@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.UI;
+using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -43,6 +44,7 @@ public sealed partial class MainWindow : Window
     private bool _startHidden;
     private bool _settingsOpen;
     private bool _guardStatusSeen;
+    private string _titleBarRegion = "unset";
     private bool _logScrollQueued;
     private bool _legacyDismissed;
     private bool _legacyCleaning;
@@ -142,6 +144,56 @@ public sealed partial class MainWindow : Window
             SetTitleBar(AppTitleBar);
         }
         catch { }
+
+        DispatcherQueue.TryEnqueue(UpdateTitleBarInteractiveRegion);
+    }
+
+    /// <summary>
+    /// SetTitleBar 之后整条标题栏都算拖动区，齿轮按钮会被吃掉点击。
+    /// 把按钮那块显式声明成 Passthrough（属于客户端），拖动与点击各归各位。
+    /// 坐标要物理像素，且窗口每次改尺寸都得重算。
+    /// </summary>
+    private void UpdateTitleBarInteractiveRegion()
+    {
+        if (_appWindow is null || SettingsNavBtn is null)
+        {
+            _titleBarRegion = $"skip appWindow={_appWindow is not null} btn={SettingsNavBtn is not null}";
+            return;
+        }
+
+        try
+        {
+            double w = SettingsNavBtn.ActualWidth, h = SettingsNavBtn.ActualHeight;
+            if (w <= 0 || h <= 0)
+            {
+                _titleBarRegion = $"zero {w:F0}x{h:F0} vis={SettingsNavBtn.Visibility}";
+                return;
+            }
+
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            double scale = GetDpiForWindow(hwnd) / 96.0;
+            if (scale <= 0) scale = 1.0;
+
+            var origin = SettingsNavBtn.TransformToVisual(Root)
+                .TransformPoint(new Windows.Foundation.Point(0, 0));
+
+            // 四周各外扩 2px：按钮边缘那一像素的判定别留给运气
+            var rect = new RectInt32(
+                (int)Math.Round(origin.X * scale) - 2,
+                (int)Math.Round(origin.Y * scale) - 2,
+                (int)Math.Round(w * scale) + 4,
+                (int)Math.Round(h * scale) + 4);
+
+            var id = Win32Interop.GetWindowIdFromWindow(hwnd);
+            InputNonClientPointerSource.GetForWindowId(id)
+                .SetRegionRects(NonClientRegionKind.Passthrough, new[] { rect });
+
+            _titleBarRegion = $"{rect.X},{rect.Y} {rect.Width}x{rect.Height}";
+        }
+        catch (Exception ex)
+        {
+            _titleBarRegion = "err:" + ex.GetType().Name + ":" + ex.Message;
+        }
     }
 
     // ────────────────────────── 页面导航（首页 ↔ 设置） ──────────────────────────
@@ -197,8 +249,10 @@ public sealed partial class MainWindow : Window
         Fx.FallIn(el, delayMs, 12, Fx.SlowMs);
     }
 
-    private void OnSettingsNavClicked(object sender, RoutedEventArgs e) => ShowSettingsPage(true);
+    /// <summary>标题栏首次布局完成（以及每次改尺寸）时，按钮才量得到实际宽高。</summary>
+    private void OnTitleBarSized(object sender, SizeChangedEventArgs e) => UpdateTitleBarInteractiveRegion();
 
+    private void OnSettingsNavClicked(object sender, RoutedEventArgs e) => ShowSettingsPage(true);
     private void OnSettingsBackClicked(object sender, RoutedEventArgs e) => ShowSettingsPage(false);
 
     /// <summary>探测地址、超时这些一年改不上一次，默认收起。</summary>
@@ -224,6 +278,9 @@ public sealed partial class MainWindow : Window
     /// <summary>窗口最小化：延迟一拍归还工作集，避免打断最小化过渡动画。</summary>
     private async void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
     {
+        // 齿轮的点击区按客户区坐标算，窗口一改尺寸就得重报
+        if (args.DidSizeChange) DispatcherQueue.TryEnqueue(UpdateTitleBarInteractiveRegion);
+
         if (!args.DidPresenterChange) return;
         if (sender.Presenter is not OverlappedPresenter presenter) return;
         if (presenter.State != OverlappedPresenterState.Minimized) return;
@@ -538,6 +595,9 @@ public sealed partial class MainWindow : Window
         // 窗口被激活说明用户可能刚换了网：重新判一次接入方式，规则卡片要跟上
         _rt.Access.Invalidate();
         RefreshRulesUi();
+
+        // 首帧布局这时才算完，齿轮才量得到实际宽高
+        UpdateTitleBarInteractiveRegion();
     }
 
     // ────────────────────────── 初始化 ──────────────────────────
