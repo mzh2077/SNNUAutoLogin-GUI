@@ -145,6 +145,7 @@ public sealed partial class MainWindow : Window
             ExtendsContentIntoTitleBar = true;
             AppTitleBar.Background = new SolidColorBrush(Colors.Transparent);
             SetTitleBar(AppTitleBar);
+            ApplyTitleBarMetrics();
         }
         catch { }
 
@@ -152,9 +153,58 @@ public sealed partial class MainWindow : Window
         UpdateTitleBarInset();
         DispatcherQueue.TryEnqueue(() =>
         {
+            ApplyTitleBarMetrics();
             UpdateTitleBarInset();
             UpdateTitleBarInteractiveRegion();
         });
+    }
+
+    private bool _tallTried;
+
+    /// <summary>
+    /// 标题栏行高、齿轮按钮尺寸都跟着系统给的真实标题栏高度走。
+    ///
+    /// Edge 那一类应用用的是 Tall：标题栏 48 高，系统的 caption 按钮跟着一起变高，
+    /// 齿轮做成 48 就与它们同高同中线，不用再靠 ±3 像素的偏移去凑。
+    /// Win10 上没有 Tall，读回的仍然是 32，行高与按钮就一起退回 32。
+    /// </summary>
+    private void ApplyTitleBarMetrics()
+    {
+        if (_appWindow is null || TitleBarRow is null) return;
+
+        if (!_tallTried)
+        {
+            _tallTried = true;
+            try
+            {
+                var tb = _appWindow.TitleBar;
+                tb.PreferredHeightOption = TitleBarHeightOption.Tall;
+                Trace($"标题栏高度：opt={tb.PreferredHeightOption} 物理高={tb.Height} " +
+                      $"inset={tb.RightInset}");
+            }
+            catch (Exception ex) { Trace("Tall 设置失败：" + ex.Message); }
+        }
+
+        // ⚠ TitleBar.Height 与 RightInset 一样是【物理像素】，XAML 用逻辑像素。
+        // 不除 DPI 的话 175% 下会把 72 当成 72 逻辑像素，齿轮比系统按钮低一截。
+        double h;
+        try
+        {
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            double scale = GetDpiForWindow(hwnd) / 96.0;
+            if (scale <= 0) scale = 1.0;
+
+            double px = _appWindow.TitleBar.Height;
+            h = px > 0 ? px / scale : 32;
+            if (h < 20 || h > 120) h = 32;
+        }
+        catch { h = 32; }
+
+        if (Math.Abs(TitleBarRow.Height.Value - h) > 0.5)
+            TitleBarRow.Height = new GridLength(h);
+
+        if (Math.Abs(SettingsNavBtn.Height - h) > 0.5)
+            SettingsNavBtn.Height = h;
     }
 
     /// <summary>
@@ -181,7 +231,9 @@ public sealed partial class MainWindow : Window
             if (Math.Abs(inset - _titleBarInset) < 0.5) return;
 
             _titleBarInset = inset;
-            _titleBarInsetText = $"raw={insetPx} scale={scale:F2} logical={inset:F1}";
+            _titleBarInsetText =
+                $"raw={insetPx} scale={scale:F2} logical={inset:F1} " +
+                $"tbH={_appWindow.TitleBar.Height} opt={_appWindow.TitleBar.PreferredHeightOption}";
             AppTitleBar.Margin = new Thickness(0, 0, inset, 0);
 
             // caption 按钮宽度随 DPI 变（175% 下每枚只有 39 逻辑像素），齿轮跟着它一起缩放才不显突兀
@@ -276,8 +328,10 @@ public sealed partial class MainWindow : Window
         {
             SettingsScroll.ChangeView(null, 0, null, true);
             Reenter(AccountCard, 0);
-            Reenter(BehaviorCard, 30);
-            Reenter(RulesCard, 45);
+            Reenter(RulesCard, 25);
+            Reenter(IntervalCard, 50);
+            Reenter(DeviceGuardCard, 75);
+            Reenter(BehaviorCard, 100);
         }
         else
         {

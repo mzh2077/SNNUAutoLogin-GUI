@@ -9,8 +9,8 @@
 
 #define AppName        "SNNU 校园网助手"
 #define AppNameEn      "SNNUAutoLogin"
-#define AppVer         "1.7.1"
-#define AppVerFull     "1.7.1.0"
+#define AppVer         "1.7.2"
+#define AppVerFull     "1.7.2.0"
 #ifndef AppExe
   #define AppExe       "SNNUAutoLogin.exe"
 #endif

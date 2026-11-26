@@ -13,10 +13,14 @@
         ThemeResource 里的 Fluent 语义刷子，强调色用系统口音色（AccentFillColor*），
         状态色用 SystemFillColor*。不自己从壁纸算颜色。
 
-        版式（WinUI 习惯）：
-          标题栏右上角齿轮 → 整页设置；设置页左上角返回箭头回到首页。
-          首页只留日常要看的：连接状态 / 在线设备 / 运行日志。
-          账号、规则、自动化、阈值这些配一次就不动的，全部收进设置。
+        版式遵循 WinUI 的几条硬规矩：
+          · 页面左右留白统一 24，标题栏左侧起点也是 24，三者的左边缘落在同一条线上；
+          · 卡片内边距统一 16，行高统一 44，分隔线顶格不留缝；
+          · 「标签在左、控件在右」的行，控件列固定 220 且右对齐，所有行的右边缘齐平；
+          · 设置内容最宽 780 居中，窗口再宽也不会把一行拉成两里地。
+
+        分区：首页只留日常要看的（连接状态 / 在线设备 / 运行日志），
+        其余配置全在设置页，关于单独一页。
     -->
     <Grid x:Name="Root" IsTabStop="True">
         <Grid.Resources>
@@ -28,6 +32,12 @@
 
             <!--  bool → Visibility：设备行里「点击下线」与「断开连接」按会话类型二选一  -->
             <local:BoolToVisibilityConverter x:Key="BoolToVisibility" />
+
+            <!--  ══ 尺寸：三条线，改这里就够  ══  -->
+            <x:Double x:Key="PagePadding">24</x:Double>
+            <x:Double x:Key="CardPadding">16</x:Double>
+            <x:Double x:Key="RowHeight">44</x:Double>
+            <x:Double x:Key="ControlWidth">220</x:Double>
 
             <Style x:Key="CardStyle" TargetType="Border">
                 <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
@@ -44,7 +54,7 @@
             </Style>
 
             <Style x:Key="SectionIconStyle" TargetType="FontIcon">
-                <Setter Property="FontSize" Value="14" />
+                <Setter Property="FontSize" Value="15" />
                 <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
                 <Setter Property="VerticalAlignment" Value="Center" />
             </Style>
@@ -56,15 +66,15 @@
             </Style>
 
             <Style x:Key="HintStyle" TargetType="TextBlock">
-                <Setter Property="FontSize" Value="11.5" />
+                <Setter Property="FontSize" Value="12" />
                 <Setter Property="Foreground" Value="{ThemeResource TextFillColorTertiaryBrush}" />
                 <Setter Property="TextWrapping" Value="Wrap" />
             </Style>
 
-            <!--  设置项之间的分隔线（与系统设置一致的 1px 细分隔）  -->
+            <!--  设置项之间的分隔线：顶格，不留额外缝，行高自己撑开呼吸感  -->
             <Style x:Key="DividerStyle" TargetType="Border">
                 <Setter Property="Height" Value="1" />
-                <Setter Property="Margin" Value="0,3" />
+                <Setter Property="Margin" Value="0" />
                 <Setter Property="Background" Value="{ThemeResource DividerStrokeColorDefaultBrush}" />
             </Style>
 
@@ -103,11 +113,12 @@
             </Style>
 
             <Style x:Key="ValueTextStyle" TargetType="TextBlock">
-                <Setter Property="FontSize" Value="12" />
+                <Setter Property="FontSize" Value="12.5" />
                 <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
                 <Setter Property="VerticalAlignment" Value="Center" />
             </Style>
 
+            <!--  表单控件底子：描边走系统语义色，高度对齐 32  -->
             <Style x:Key="FormInputStyle" TargetType="Control">
                 <Setter Property="BorderBrush" Value="{ThemeResource ControlStrokeColorDefaultBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
@@ -116,9 +127,10 @@
                 <Setter Property="VerticalAlignment" Value="Center" />
             </Style>
 
+            <!--  行内输入框：固定 220 宽，所有行的右边缘才会齐  -->
             <Style x:Key="RowInputBase" TargetType="Control" BasedOn="{StaticResource FormInputStyle}">
-                <Setter Property="Width" Value="264" />
-                <Setter Property="HorizontalAlignment" Value="Left" />
+                <Setter Property="Width" Value="220" />
+                <Setter Property="HorizontalAlignment" Value="Right" />
             </Style>
 
             <Style
@@ -144,10 +156,10 @@
                 <Setter Property="SpinButtonPlacementMode" Value="Compact" />
             </Style>
 
-            <!--  标题栏与设置页里那种「只有一个图标」的按钮：平时透明，悬停才浮出底色  -->
-            <Style x:Key="NavIconButtonStyle" TargetType="Button">
-                <Setter Property="Width" Value="36" />
-                <Setter Property="Height" Value="32" />
+            <!--  标题栏按钮：高度与系统的 caption 按钮一致（Tall = 48），宽度由代码按 DPI 覆写  -->
+            <Style x:Key="TitleBarButtonStyle" TargetType="Button">
+                <Setter Property="Width" Value="46" />
+                <Setter Property="Height" Value="48" />
                 <Setter Property="Padding" Value="0" />
                 <Setter Property="Background" Value="Transparent" />
                 <Setter Property="BorderThickness" Value="0" />
@@ -155,9 +167,9 @@
                 <Setter Property="VerticalAlignment" Value="Center" />
             </Style>
 
-            <!--  标题栏按钮：与系统的最小化/最大化/关闭同宽同高，视觉上并成一组  -->
-            <Style x:Key="TitleBarButtonStyle" TargetType="Button">
-                <Setter Property="Width" Value="46" />
+            <!--  页头与卡片里的「只有一个图标」的按钮：平时透明，悬停才浮出底色  -->
+            <Style x:Key="NavIconButtonStyle" TargetType="Button">
+                <Setter Property="Width" Value="32" />
                 <Setter Property="Height" Value="32" />
                 <Setter Property="Padding" Value="0" />
                 <Setter Property="Background" Value="Transparent" />
@@ -167,7 +179,7 @@
             </Style>
 
             <Style x:Key="PageTitleStyle" TargetType="TextBlock">
-                <Setter Property="FontSize" Value="19" />
+                <Setter Property="FontSize" Value="20" />
                 <Setter Property="FontWeight" Value="SemiBold" />
                 <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
                 <Setter Property="VerticalAlignment" Value="Center" />
@@ -176,19 +188,21 @@
         </Grid.Resources>
 
         <Grid.RowDefinitions>
-            <!--  32 是 Win11 标题栏的标准高度：系统的三枚按钮就在这 32 里居中，
-                  我们用 48 的话齿轮会比它们低一截，怎么调都差半个按钮  -->
-            <RowDefinition Height="32" />
+            <!--  48 = WinUI 的 TitleBarHeightOption.Tall：系统的三枚 caption 按钮也是 48 高，
+                  齿轮做成 48 就与它们同高同中线，不需要任何垂直偏移补偿。
+                  代码会在运行时把这里改成系统实际给的高度（Win10 只有 32）  -->
+            <RowDefinition x:Name="TitleBarRow" Height="48" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
         <!--  ══════════ 标题栏  ══════════  -->
-        <!--  右边距由代码按系统真实的 RightInset 覆盖，这里 146 只是首帧兜底  -->
+        <!--  右边距由代码按系统真实的 RightInset 覆盖，146 只是首帧兜底。
+              左内边距 24 与页面留白取同一个数，图标左沿正好压在卡片左沿上。  -->
         <Grid
             x:Name="AppTitleBar"
             Grid.Row="0"
             Margin="0,0,146,0"
-            Padding="20,0,0,0"
+            Padding="24,0,0,0"
             Background="Transparent"
             SizeChanged="OnTitleBarSized">
             <Grid.ColumnDefinitions>
@@ -200,55 +214,40 @@
                 Grid.Column="0"
                 VerticalAlignment="Center"
                 Orientation="Horizontal"
-                Spacing="9">
+                Spacing="10">
                 <FontIcon
                     x:Name="TitleIcon"
-                    FontSize="14"
+                    FontSize="16"
                     Glyph="&#xE701;" />
 
                 <TextBlock
                     VerticalAlignment="Center"
-                    FontSize="12"
+                    FontSize="13"
                     FontWeight="SemiBold"
                     Foreground="{ThemeResource TextFillColorPrimaryBrush}"
                     Text="SNNU 校园网助手" />
 
-                <Border
-                    Width="1"
-                    Height="10"
-                    Margin="2,0"
-                    VerticalAlignment="Center"
-                    Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
-
-                <TextBlock
-                    VerticalAlignment="Center"
-                    FontSize="12"
-                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                    Text="陕西师范大学" />
-
                 <StackPanel
-                    Margin="6,0,0,0"
+                    Margin="2,0,0,0"
                     VerticalAlignment="Center"
                     Orientation="Horizontal"
                     Spacing="6">
                     <Ellipse
                         x:Name="TitleDot"
-                        Width="6"
-                        Height="6"
+                        Width="7"
+                        Height="7"
                         VerticalAlignment="Center"
                         Fill="{ThemeResource TextFillColorTertiaryBrush}" />
                     <TextBlock
                         x:Name="TitleState"
                         VerticalAlignment="Center"
-                        FontSize="11"
+                        FontSize="12"
                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                         Text="检测中" />
                 </StackPanel>
             </StackPanel>
 
-            <!--  设置入口：与系统标题按钮同尺寸，紧挨最小化左侧。
-                  图标字号跟着系统的 10pt 走，14 会比旁边的 — □ × 大一圈。
-                  系统的 caption 字形本身在按钮里偏上约 3，不补这一下齿轮看着发沉  -->
+            <!--  设置入口：与系统 caption 按钮同宽同高，紧挨最小化左侧  -->
             <Button
                 x:Name="SettingsNavBtn"
                 Grid.Column="1"
@@ -256,157 +255,190 @@
                 IsTabStop="False"
                 Click="OnSettingsNavClicked"
                 ToolTipService.ToolTip="设置">
-                <FontIcon Margin="0,-3,0,0" FontSize="12" Glyph="&#xE713;" />
+                <FontIcon FontSize="11" Glyph="&#xE713;" />
             </Button>
         </Grid>
 
-        <!--  ══════════ 首页：连接状态 + 在线设备 + 运行日志  ══════════  -->
+        <!--  ══════════ 首页  ══════════  -->
         <Grid
             x:Name="HomePage"
             Grid.Row="1"
             Margin="24,0,24,20"
-            ColumnSpacing="16">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="336" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
+            RowSpacing="12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
 
-            <!--  ────────── 左：连接状态（撑满整列，内容垂直居中）  ──────────  -->
-            <Border x:Name="StatusCard" Style="{StaticResource CardStyle}">
-                <Grid Padding="24,18,24,20">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
+            <!--  1.4.0 起移除了网络加速：只在检测到旧版残留时出现，一键还原  -->
+            <Border
+                x:Name="LegacyHostsBar"
+                Padding="14,9,8,9"
+                Background="{ThemeResource SystemFillColorAttentionBackgroundBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Visibility="Collapsed">
+                <Grid ColumnSpacing="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
 
-                    <!--  卡头：标题 + 自动登录状态  -->
-                    <Grid>
-                        <TextBlock
-                            Style="{StaticResource CardTitleStyle}"
-                            Text="连接状态" />
+                    <FontIcon
+                        VerticalAlignment="Center"
+                        FontSize="14"
+                        Foreground="{ThemeResource SystemFillColorAttentionBrush}"
+                        Glyph="&#xE946;" />
 
-                        <Border
-                            x:Name="AutoPill"
-                            Padding="8,3"
-                            HorizontalAlignment="Right"
-                            VerticalAlignment="Center"
-                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
-                            CornerRadius="4">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <Ellipse
-                                    x:Name="AutoDot"
-                                    Width="6"
-                                    Height="6"
-                                    VerticalAlignment="Center"
-                                    Fill="{ThemeResource SystemFillColorSuccessBrush}" />
-                                <TextBlock
-                                    x:Name="AutoLabel"
-                                    FontSize="11"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Text="自动登录 · 已启用" />
-                            </StackPanel>
-                        </Border>
+                    <TextBlock
+                        x:Name="LegacyHostsText"
+                        Grid.Column="1"
+                        VerticalAlignment="Center"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                        TextWrapping="Wrap" />
+
+                    <Button
+                        x:Name="LegacyCleanBtn"
+                        Grid.Column="2"
+                        Height="28"
+                        Padding="12,0"
+                        VerticalAlignment="Center"
+                        Content="还原解析"
+                        FontSize="12"
+                        Style="{StaticResource AccentButtonStyle}" />
+
+                    <Button
+                        x:Name="LegacyDismissBtn"
+                        Grid.Column="3"
+                        Width="28"
+                        Height="28"
+                        Padding="0"
+                        VerticalAlignment="Center"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        ToolTipService.ToolTip="本次不再提示">
+                        <FontIcon
+                            FontSize="11"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Glyph="&#xE711;" />
+                    </Button>
+                </Grid>
+            </Border>
+
+            <!--  ────────── 连接状态：整条横幅，左环 / 中文案 / 右操作 ──────────  -->
+            <Border
+                x:Name="StatusCard"
+                Grid.Row="1"
+                Style="{StaticResource CardStyle}">
+                <Grid Padding="20,16,20,16" ColumnSpacing="20">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <Grid
+                        x:Name="RingHost"
+                        Width="72"
+                        Height="72"
+                        VerticalAlignment="Center">
+                        <Ellipse x:Name="HaloRing" Width="72" Height="72" />
+
+                        <ProgressRing
+                            x:Name="BusyRing"
+                            Width="72"
+                            Height="72"
+                            Visibility="Collapsed" />
+
+                        <FontIcon
+                            x:Name="StateIcon"
+                            FontSize="30"
+                            Glyph="&#xE73E;" />
                     </Grid>
 
-                    <!--  状态主体：在剩余高度里居中  -->
                     <StackPanel
-                        Grid.Row="1"
+                        Grid.Column="1"
                         VerticalAlignment="Center"
-                        Spacing="0">
+                        Spacing="4">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <TextBlock
+                                x:Name="StateTitle"
+                                VerticalAlignment="Center"
+                                FontSize="20"
+                                FontWeight="SemiBold"
+                                Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                Text="正在初始化" />
 
-                        <Grid
-                            x:Name="RingHost"
-                            Width="92"
-                            Height="92"
-                            HorizontalAlignment="Center">
-                            <Ellipse x:Name="HaloRing" Width="92" Height="92" />
-
-                            <ProgressRing
-                                x:Name="BusyRing"
-                                Width="92"
-                                Height="92"
-                                Visibility="Collapsed" />
-
-                            <FontIcon
-                                x:Name="StateIcon"
-                                FontSize="34"
-                                Glyph="&#xE73E;" />
-                        </Grid>
-
-                        <TextBlock
-                            x:Name="StateTitle"
-                            Margin="0,16,0,0"
-                            HorizontalAlignment="Center"
-                            FontSize="22"
-                            FontWeight="SemiBold"
-                            Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                            Text="正在初始化" />
+                            <Border
+                                x:Name="AutoPill"
+                                Padding="8,2"
+                                VerticalAlignment="Center"
+                                Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                CornerRadius="4">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <Ellipse
+                                        x:Name="AutoDot"
+                                        Width="6"
+                                        Height="6"
+                                        VerticalAlignment="Center"
+                                        Fill="{ThemeResource SystemFillColorSuccessBrush}" />
+                                    <TextBlock
+                                        x:Name="AutoLabel"
+                                        FontSize="11"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        Text="自动登录 · 已启用" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
 
                         <TextBlock
                             x:Name="StateSubtitle"
-                            MaxWidth="272"
-                            Margin="0,6,0,0"
-                            HorizontalAlignment="Center"
+                            MaxWidth="520"
                             FontSize="12.5"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                             Text="正在读取本机状态…"
-                            TextAlignment="Center"
                             TextWrapping="Wrap" />
+
+                        <!--  明细：三项横排，与标题左边缘对齐  -->
+                        <StackPanel
+                            Margin="0,4,0,0"
+                            Orientation="Horizontal"
+                            Spacing="18">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Style="{StaticResource DetailLabelStyle}" Text="账号" />
+                                <TextBlock
+                                    x:Name="AccText"
+                                    Style="{StaticResource ValueTextStyle}"
+                                    Text="—" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Style="{StaticResource DetailLabelStyle}" Text="本机 IP" />
+                                <TextBlock
+                                    x:Name="IpText"
+                                    Style="{StaticResource ValueTextStyle}"
+                                    Text="—" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Style="{StaticResource DetailLabelStyle}" Text="出口 IP" />
+                                <TextBlock
+                                    x:Name="PublicIpText"
+                                    Style="{StaticResource ValueTextStyle}"
+                                    Text="—" />
+                            </StackPanel>
+                        </StackPanel>
                     </StackPanel>
 
-                    <!--  页脚：明细 + 操作  -->
                     <StackPanel
-                        Grid.Row="2"
-                        Margin="0,18,0,0"
-                        Spacing="0">
-                        <Grid Height="30">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Style="{StaticResource DetailLabelStyle}" Text="账号" />
-                            <TextBlock
-                                x:Name="AccText"
-                                Grid.Column="1"
-                                HorizontalAlignment="Right"
-                                Style="{StaticResource ValueTextStyle}"
-                                Text="—" />
-                        </Grid>
-
-                        <Border Style="{StaticResource DividerStyle}" />
-
-                        <Grid Height="30">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Style="{StaticResource DetailLabelStyle}" Text="本机 IP" />
-                            <TextBlock
-                                x:Name="IpText"
-                                Grid.Column="1"
-                                HorizontalAlignment="Right"
-                                Style="{StaticResource ValueTextStyle}"
-                                Text="—" />
-                        </Grid>
-
-                        <Grid Height="30">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Style="{StaticResource DetailLabelStyle}" Text="出口 IP" />
-                            <TextBlock
-                                x:Name="PublicIpText"
-                                Grid.Column="1"
-                                HorizontalAlignment="Right"
-                                Style="{StaticResource ValueTextStyle}"
-                                Text="—" />
-                        </Grid>
-
-                        <Border Margin="0,10,0,0" Style="{StaticResource DividerStyle}" />
-
-                        <Grid Margin="0,10,0,0" ColumnSpacing="8">
+                        Grid.Column="2"
+                        Width="156"
+                        VerticalAlignment="Center"
+                        Spacing="8">
+                        <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
@@ -414,7 +446,7 @@
 
                             <Button
                                 x:Name="ConnectBtn"
-                                Height="34"
+                                Height="32"
                                 HorizontalAlignment="Stretch"
                                 Style="{StaticResource AccentButtonStyle}">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
@@ -429,14 +461,18 @@
                             <Button
                                 x:Name="RefreshBtn"
                                 Grid.Column="1"
-                                Width="34"
-                                Height="34"
+                                Width="32"
+                                Height="32"
                                 Padding="0"
                                 ToolTipService.ToolTip="刷新状态">
                                 <Grid>
                                     <FontIcon x:Name="StatusRefreshIcon" FontSize="14" Glyph="&#xE72C;" />
-                                    <ProgressRing x:Name="StatusRefreshProgress" Width="16" Height="16"
-                                        IsActive="False" Visibility="Collapsed" />
+                                    <ProgressRing
+                                        x:Name="StatusRefreshProgress"
+                                        Width="16"
+                                        Height="16"
+                                        IsActive="False"
+                                        Visibility="Collapsed" />
                                 </Grid>
                             </Button>
                         </Grid>
@@ -444,143 +480,93 @@
                         <!--  切换出口：会先断开再按新出口认证，属于「有影响但不破坏数据」，用次要按钮  -->
                         <Button
                             x:Name="SwitchOutletBtn"
-                            Margin="0,8,0,0"
-                            Height="34"
+                            Height="32"
                             HorizontalAlignment="Stretch"
                             Content="切换出口"
                             Click="OnSwitchOutletClicked" />
 
-                        <HyperlinkButton x:Name="UpdateLink" Margin="0,6,0,0"
-                            Style="{StaticResource InlineLinkStyle}" Visibility="Collapsed" />
-                        <TextBlock x:Name="StatusRefreshMessage" Style="{StaticResource HintStyle}"
-                            Margin="0,6,0,0" TextWrapping="Wrap" Visibility="Collapsed"
+                        <HyperlinkButton
+                            x:Name="UpdateLink"
+                            HorizontalAlignment="Left"
+                            Style="{StaticResource InlineLinkStyle}"
+                            Visibility="Collapsed" />
+                        <TextBlock
+                            x:Name="StatusRefreshMessage"
+                            Style="{StaticResource HintStyle}"
+                            Visibility="Collapsed"
                             AutomationProperties.LiveSetting="Polite" />
                     </StackPanel>
                 </Grid>
             </Border>
 
-            <!--  ────────── 右：在线设备 + 运行日志  ──────────  -->
-            <Grid Grid.Column="1" RowSpacing="12">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                </Grid.RowDefinitions>
+            <!--  ────────── 在线设备 + 运行日志  ──────────  -->
+            <Grid Grid.Row="2" ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="380" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
 
-                <!--  1.4.0 起移除了网络加速：只在检测到旧版残留时出现，一键还原  -->
-                <Border
-                    x:Name="LegacyHostsBar"
-                    Padding="14,9,8,9"
-                    Background="{ThemeResource SystemFillColorAttentionBackgroundBrush}"
-                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1"
-                    CornerRadius="8"
-                    Visibility="Collapsed">
-                    <Grid ColumnSpacing="10">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
+                <Border x:Name="DeviceCard" Style="{StaticResource CardStyle}">
+                    <Grid Padding="16,12,16,12" RowSpacing="0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
 
-                        <FontIcon
-                            FontSize="14"
-                            Foreground="{ThemeResource SystemFillColorAttentionBrush}"
-                            Glyph="&#xE946;"
-                            VerticalAlignment="Center" />
+                        <!--  卡头：标题 + 端口 + 刷新  -->
+                        <Grid>
+                            <StackPanel
+                                VerticalAlignment="Center"
+                                Orientation="Horizontal"
+                                Spacing="8">
+                                <FontIcon Style="{StaticResource SectionIconStyle}" Glyph="&#xE968;" />
+                                <TextBlock Style="{StaticResource CardTitleStyle}" Text="在线设备" />
+                            </StackPanel>
+
+                            <StackPanel
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"
+                                Orientation="Horizontal"
+                                Spacing="6">
+                                <TextBlock
+                                    x:Name="DevicePortText"
+                                    VerticalAlignment="Center"
+                                    Style="{StaticResource HintStyle}"
+                                    Text="—" />
+                                <Button
+                                    x:Name="DeviceRefreshBtn"
+                                    Width="28"
+                                    Height="28"
+                                    Padding="0"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    CornerRadius="4"
+                                    ToolTipService.ToolTip="刷新设备列表">
+                                    <FontIcon FontSize="13" Glyph="&#xE72C;" />
+                                </Button>
+                            </StackPanel>
+                        </Grid>
 
                         <TextBlock
-                            x:Name="LegacyHostsText"
-                            Grid.Column="1"
-                            VerticalAlignment="Center"
-                            FontSize="12"
-                            Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                            TextWrapping="Wrap" />
+                            x:Name="DeviceSummary"
+                            Grid.Row="1"
+                            Margin="0,6,0,10"
+                            Style="{StaticResource HintStyle}"
+                            Text="尚未加载" />
 
-                        <Button
-                            x:Name="LegacyCleanBtn"
-                            Grid.Column="2"
-                            Height="28"
-                            Padding="12,0"
-                            VerticalAlignment="Center"
-                            Content="还原解析"
-                            FontSize="12"
-                            Style="{StaticResource AccentButtonStyle}" />
-
-                        <Button
-                            x:Name="LegacyDismissBtn"
-                            Grid.Column="3"
-                            Width="28"
-                            Height="28"
-                            Padding="0"
-                            VerticalAlignment="Center"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            ToolTipService.ToolTip="本次不再提示">
-                            <FontIcon
-                                FontSize="11"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                Glyph="&#xE711;" />
-                        </Button>
-                    </Grid>
-                </Border>
-
-                <!--  在线设备：门户在线控制页里的设备表格  -->
-                <ScrollViewer
-                    Grid.Row="1"
-                    MaxHeight="376"
-                    HorizontalScrollBarVisibility="Disabled"
-                    VerticalScrollBarVisibility="Auto">
-                    <Border x:Name="DeviceCard" Style="{StaticResource CardStyle}">
-                        <StackPanel Padding="20,14,20,14" Spacing="0">
-
-                            <Grid>
-                                <StackPanel
-                                    VerticalAlignment="Center"
-                                    Orientation="Horizontal"
-                                    Spacing="8">
-                                    <FontIcon Style="{StaticResource SectionIconStyle}" Glyph="&#xE968;" />
-                                    <TextBlock Style="{StaticResource CardTitleStyle}" Text="在线设备" />
-                                </StackPanel>
-
-                                <StackPanel
-                                    HorizontalAlignment="Right"
-                                    VerticalAlignment="Center"
-                                    Orientation="Horizontal"
-                                    Spacing="8">
-
-                                    <TextBlock
-                                        x:Name="DevicePortText"
-                                        VerticalAlignment="Center"
-                                        FontSize="12"
-                                        Style="{StaticResource HintStyle}"
-                                        Text="—" />
-
-                                    <Button
-                                        x:Name="DeviceRefreshBtn"
-                                        Width="30"
-                                        Height="30"
-                                        Padding="0"
-                                        ToolTipService.ToolTip="刷新设备列表">
-                                        <FontIcon FontSize="13" Glyph="&#xE72C;" />
-                                    </Button>
-                                </StackPanel>
-                            </Grid>
-
-                            <!--  列表说明：当前端口的在线控制  -->
-                            <TextBlock
-                                x:Name="DeviceSummary"
-                                Margin="0,8,0,0"
-                                Style="{StaticResource HintStyle}"
-                                Text="尚未加载" />
-
-                            <Border Style="{StaticResource DividerStyle}" />
-
+                        <ScrollViewer
+                            Grid.Row="2"
+                            HorizontalScrollBarVisibility="Disabled"
+                            VerticalScrollBarVisibility="Auto">
                             <ItemsControl x:Name="DeviceList">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Grid Padding="0,10">
+                                        <Grid
+                                            Padding="0,10"
+                                            BorderThickness="0,1,0,0"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
                                             <Grid.RowDefinitions>
                                                 <RowDefinition Height="Auto" />
                                                 <RowDefinition Height="Auto" />
@@ -598,7 +584,8 @@
                                                     FontSize="13"
                                                     FontWeight="SemiBold"
                                                     Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                                                    Text="{Binding DisplayName}" />
+                                                    Text="{Binding DisplayName}"
+                                                    TextTrimming="CharacterEllipsis" />
 
                                                 <TextBlock
                                                     Grid.Column="1"
@@ -611,7 +598,7 @@
                                             <!--  第二行：明细 + 操作  -->
                                             <Grid
                                                 Grid.Row="1"
-                                                Margin="0,5,0,0"
+                                                Margin="0,4,0,0"
                                                 ColumnSpacing="8">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*" />
@@ -626,7 +613,8 @@
                                                     <TextBlock
                                                         FontSize="11"
                                                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                                        Text="{Binding Detail}" TextWrapping="Wrap" />
+                                                        Text="{Binding Detail}"
+                                                        TextWrapping="Wrap" />
                                                 </StackPanel>
 
                                                 <StackPanel
@@ -656,14 +644,16 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
+                        </ScrollViewer>
 
-                            <Border Style="{StaticResource DividerStyle}" />
-
+                        <StackPanel Grid.Row="3">
                             <TextBlock
                                 x:Name="DeviceErrorText"
-                                Margin="0,8,0,0"
+                                Margin="0,4,0,0"
                                 Style="{StaticResource ErrorTextStyle}"
                                 Visibility="Collapsed" />
+
+                            <Border Margin="0,8,0,10" Style="{StaticResource DividerStyle}" />
 
                             <!--
                                 页面级主控：断开本机当前连接。
@@ -673,7 +663,7 @@
                             -->
                             <Button
                                 x:Name="DeviceDisconnectBtn"
-                                Margin="0,12,0,2"
+                                Height="32"
                                 HorizontalAlignment="Stretch"
                                 HorizontalContentAlignment="Center"
                                 Style="{StaticResource AccentButtonStyle}"
@@ -687,21 +677,20 @@
                             </Button>
 
                             <TextBlock
-                                Margin="0,2,0,0"
+                                Margin="0,6,0,0"
                                 HorizontalAlignment="Center"
                                 Style="{StaticResource HintStyle}"
                                 Text="断开本机当前连接，巡检会按设置自动重新认证" />
-
                         </StackPanel>
-                    </Border>
-                </ScrollViewer>
+                    </Grid>
+                </Border>
 
                 <!--  运行日志：填满右侧剩余高度  -->
                 <Border
                     x:Name="LogCard"
-                    Grid.Row="2"
+                    Grid.Column="1"
                     Style="{StaticResource CardStyle}">
-                    <Grid Padding="20,14,20,14" RowSpacing="10">
+                    <Grid Padding="16,12,16,12" RowSpacing="8">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
@@ -738,9 +727,7 @@
                                     </ItemsControl.ItemContainerTransitions>
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Grid
-                                                Padding="0,2"
-                                                ColumnSpacing="10">
+                                            <Grid Padding="0,2" ColumnSpacing="10">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="Auto" />
                                                     <ColumnDefinition Width="*" />
@@ -777,38 +764,44 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!--  页头：返回箭头 + 标题（WinUI 子页面的标准页眉）  -->
-            <Grid Height="40" Margin="0,0,0,10">
-                <StackPanel
-                    VerticalAlignment="Center"
-                    Orientation="Horizontal"
-                    Spacing="2">
-                    <Button
-                        x:Name="SettingsBackBtn"
-                        Style="{StaticResource NavIconButtonStyle}"
-                        IsTabStop="False"
-                        Click="OnSettingsBackClicked"
-                        ToolTipService.ToolTip="返回">
-                        <FontIcon FontSize="14" Glyph="&#xE72B;" />
-                    </Button>
-                    <TextBlock
-                        Margin="8,0,0,0"
-                        Style="{StaticResource PageTitleStyle}"
-                        Text="设置" />
-                </StackPanel>
+            <!--  页头：返回箭头 + 标题；右端是「即时保存」说明与关于入口。
+                  整块与下面的卡片同宽同左沿，右端也收在同一条线上。  -->
+            <Grid
+                Height="44"
+                Margin="0,0,0,8"
+                MaxWidth="780">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <Button
+                    x:Name="SettingsBackBtn"
+                    Style="{StaticResource NavIconButtonStyle}"
+                    IsTabStop="False"
+                    Click="OnSettingsBackClicked"
+                    ToolTipService.ToolTip="返回">
+                    <FontIcon FontSize="14" Glyph="&#xE72B;" />
+                </Button>
+
+                <TextBlock
+                    Grid.Column="1"
+                    Margin="12,0,0,0"
+                    Style="{StaticResource PageTitleStyle}"
+                    Text="设置" />
 
                 <StackPanel
-                    HorizontalAlignment="Right"
+                    Grid.Column="2"
                     VerticalAlignment="Center"
                     Orientation="Horizontal"
-                    Spacing="6">
+                    Spacing="8">
                     <TextBlock
                         VerticalAlignment="Center"
                         Style="{StaticResource HintStyle}"
                         Text="改动即时保存" />
                     <Button
                         x:Name="AboutNavBtn"
-                        Margin="6,0,0,0"
                         Style="{StaticResource NavIconButtonStyle}"
                         IsTabStop="False"
                         Click="OnAboutNavClicked"
@@ -821,7 +814,6 @@
             <ScrollViewer
                 x:Name="SettingsScroll"
                 Grid.Row="1"
-                Padding="0,0,8,0"
                 VerticalScrollBarVisibility="Auto">
                 <ScrollViewer.Resources>
                     <!--  轨道更宽、拇指更粗：默认的细滚动条在这个宽度的设置面板上不好抓  -->
@@ -833,596 +825,655 @@
                     </Style>
                 </ScrollViewer.Resources>
 
-                <Grid ColumnSpacing="16" VerticalAlignment="Top">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
+                <Grid>
+                    <StackPanel MaxWidth="780" Spacing="12">
 
-                    <!--  ────────── 左列：账号 / 规则 / 关于  ──────────  -->
-                    <StackPanel x:Name="SettingsLeft" Spacing="12">
-
-                        <!--  默认账号  -->
-                        <Border x:Name="AccountCard" Style="{StaticResource CardStyle}">
-                            <StackPanel Padding="20,14,20,14" Spacing="0">
-                                <StackPanel
-                                    Margin="0,0,0,10"
-                                    Orientation="Horizontal"
-                                    Spacing="8">
-                                    <FontIcon Style="{StaticResource SectionIconStyle}" Glyph="&#xE77B;" />
-                                    <TextBlock Style="{StaticResource CardTitleStyle}" Text="默认账号" />
-                                </StackPanel>
-
-                                <Grid MinHeight="42">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock
-                                        VerticalAlignment="Center"
-                                        Style="{StaticResource RowTitleStyle}"
-                                        Text="默认学号" />
-                                    <TextBox
-                                        x:Name="AccountBox"
-                                        Grid.Column="1"
-                                        Style="{StaticResource RowTextBoxStyle}"
-                                        PlaceholderText="请输入学号" />
-                                </Grid>
-
-                                <Border Style="{StaticResource DividerStyle}" />
-
-                                <Grid MinHeight="42">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock
-                                        VerticalAlignment="Center"
-                                        Style="{StaticResource RowTitleStyle}"
-                                        Text="默认密码" />
-                                    <PasswordBox
-                                        x:Name="PwdBox"
-                                        Grid.Column="1"
-                                        Style="{StaticResource RowPasswordBoxStyle}"
-                                        PlaceholderText="校园网密码" />
-                                </Grid>
-
-                                <Border Style="{StaticResource DividerStyle}" />
-                                <Grid MinHeight="42">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                    <TextBlock VerticalAlignment="Center" Style="{StaticResource RowTitleStyle}" Text="默认出口" />
-                                    <ComboBox x:Name="DefaultOperatorBox" Grid.Column="1" Width="180" SelectedIndex="1">
-                                        <ComboBoxItem Content="校园网直连" />
-                                        <ComboBoxItem Content="中国移动" />
-                                        <ComboBoxItem Content="中国联通" />
-                                        <ComboBoxItem Content="中国电信" />
-                                    </ComboBox>
-                                </Grid>
-                                <TextBlock Margin="0,8,0,0" Style="{StaticResource HintStyle}" Text="未命中连接规则时，使用默认账号、密码和出口认证。" TextWrapping="Wrap" />
-
-                                <!--  验证码：只在 Portal 要求时出现  -->
-                                <StackPanel
-                                    x:Name="CaptchaPanel"
-                                    Margin="0,4,0,0"
-                                    Spacing="6"
-                                    Visibility="Collapsed">
-                                    <Border Style="{StaticResource DividerStyle}" />
-
-                                    <Grid ColumnSpacing="8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel VerticalAlignment="Center" Spacing="1">
-                                            <TextBlock Style="{StaticResource RowTitleStyle}" Text="验证码" />
-                                            <TextBlock
-                                                x:Name="CaptchaHint"
-                                                Style="{StaticResource HintStyle}"
-                                                Text="按图输入后按回车" />
-                                        </StackPanel>
-                                        <Button
-                                            x:Name="CaptchaRefreshBtn"
-                                            Grid.Column="1"
-                                            VerticalAlignment="Center"
-                                            Content="换一张" />
-                                    </Grid>
-
-                                    <Grid ColumnSpacing="8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-
-                                        <Border
-                                            Width="112"
-                                            Height="40"
-                                            Background="{ThemeResource ControlFillColorDefaultBrush}"
-                                            BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
-                                            BorderThickness="1"
-                                            CornerRadius="4">
-                                            <Image
-                                                x:Name="CaptchaPic"
-                                                Margin="3"
-                                                Stretch="Uniform" />
-                                        </Border>
-
-                                        <TextBox
-                                            x:Name="CaptchaBox"
-                                            Grid.Column="1"
-                                            Style="{StaticResource FormInputStyle}"
-                                            MaxLength="8"
-                                            PlaceholderText="输入图片中的字符" />
-
-                                        <Button
-                                            x:Name="CaptchaSubmitBtn"
-                                            Grid.Column="2"
-                                            VerticalAlignment="Center"
-                                            Content="验证并登录"
-                                            Style="{ThemeResource AccentButtonStyle}" />
-                                    </Grid>
-                                </StackPanel>
+                    <!--  ────────── 默认账号  ──────────  -->
+                    <Border x:Name="AccountCard" Style="{StaticResource CardStyle}">
+                        <StackPanel Padding="16,12,16,12" Spacing="0">
+                            <StackPanel
+                                Margin="0,0,0,4"
+                                Orientation="Horizontal"
+                                Spacing="8">
+                                <FontIcon Style="{StaticResource SectionIconStyle}" Glyph="&#xE77B;" />
+                                <TextBlock Style="{StaticResource CardTitleStyle}" Text="默认账号" />
                             </StackPanel>
-                        </Border>
 
-                        <!--  连接规则：不同接入方式用不同账号与出口  -->
-                        <Border x:Name="RulesCard" Style="{StaticResource CardStyle}">
-                            <StackPanel Padding="20,14,20,14" Spacing="0">
+                            <Grid MinHeight="44">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="220" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock
+                                    VerticalAlignment="Center"
+                                    Style="{StaticResource RowTitleStyle}"
+                                    Text="默认学号" />
+                                <TextBox
+                                    x:Name="AccountBox"
+                                    Grid.Column="1"
+                                    Style="{StaticResource RowTextBoxStyle}"
+                                    PlaceholderText="请输入学号" />
+                            </Grid>
 
-                                <Grid>
-                                    <StackPanel
-                                        VerticalAlignment="Center"
-                                        Orientation="Horizontal"
-                                        Spacing="8">
-                                        <FontIcon Style="{StaticResource SectionIconStyle}" Glyph="&#xE8F1;" />
-                                        <TextBlock Style="{StaticResource CardTitleStyle}" Text="连接规则" />
+                            <Border Style="{StaticResource DividerStyle}" />
+
+                            <Grid MinHeight="44">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="220" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock
+                                    VerticalAlignment="Center"
+                                    Style="{StaticResource RowTitleStyle}"
+                                    Text="默认密码" />
+                                <PasswordBox
+                                    x:Name="PwdBox"
+                                    Grid.Column="1"
+                                    Style="{StaticResource RowPasswordBoxStyle}"
+                                    PlaceholderText="校园网密码" />
+                            </Grid>
+
+                            <Border Style="{StaticResource DividerStyle}" />
+
+                            <Grid MinHeight="44">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="220" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock
+                                    VerticalAlignment="Center"
+                                    Style="{StaticResource RowTitleStyle}"
+                                    Text="默认出口" />
+                                <ComboBox
+                                    x:Name="DefaultOperatorBox"
+                                    Grid.Column="1"
+                                    Width="220"
+                                    SelectedIndex="1">
+                                    <ComboBoxItem Content="校园网直连" />
+                                    <ComboBoxItem Content="中国移动" />
+                                    <ComboBoxItem Content="中国联通" />
+                                    <ComboBoxItem Content="中国电信" />
+                                </ComboBox>
+                            </Grid>
+
+                            <TextBlock
+                                Margin="0,6,0,2"
+                                Style="{StaticResource HintStyle}"
+                                Text="未命中连接规则时，使用默认账号、密码和出口认证。"
+                                TextWrapping="Wrap" />
+
+                            <!--  验证码：只在 Portal 要求时出现  -->
+                            <StackPanel
+                                x:Name="CaptchaPanel"
+                                Margin="0,4,0,0"
+                                Spacing="8"
+                                Visibility="Collapsed">
+                                <Border Style="{StaticResource DividerStyle}" />
+
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center" Spacing="1">
+                                        <TextBlock Style="{StaticResource RowTitleStyle}" Text="验证码" />
+                                        <TextBlock
+                                            x:Name="CaptchaHint"
+                                            Style="{StaticResource HintStyle}"
+                                            Text="按图输入后按回车" />
                                     </StackPanel>
+                                    <Button
+                                        x:Name="CaptchaRefreshBtn"
+                                        Grid.Column="1"
+                                        VerticalAlignment="Center"
+                                        Content="换一张" />
+                                </Grid>
+
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border
+                                        Width="112"
+                                        Height="40"
+                                        Background="{ThemeResource ControlFillColorDefaultBrush}"
+                                        BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="4">
+                                        <Image
+                                            x:Name="CaptchaPic"
+                                            Margin="3"
+                                            Stretch="Uniform" />
+                                    </Border>
+
+                                    <TextBox
+                                        x:Name="CaptchaBox"
+                                        Grid.Column="1"
+                                        Style="{StaticResource FormInputStyle}"
+                                        MaxLength="8"
+                                        PlaceholderText="输入图片中的字符" />
 
                                     <Button
-                                        x:Name="RulesAddBtn"
-                                        HorizontalAlignment="Right"
+                                        x:Name="CaptchaSubmitBtn"
+                                        Grid.Column="2"
                                         VerticalAlignment="Center"
-                                        Click="OnRuleAddClicked"
-                                        Content="添加规则"
-                                        FontSize="12" />
+                                        Content="验证并登录"
+                                        Style="{ThemeResource AccentButtonStyle}" />
                                 </Grid>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
 
-                                <TextBlock
-                                    x:Name="RulesCurrentLinkText"
-                                    Margin="0,8,0,0"
-                                    Style="{StaticResource HintStyle}"
-                                    Text="当前接入：未知" />
+                    <!--  ────────── 连接规则  ──────────  -->
+                    <Border x:Name="RulesCard" Style="{StaticResource CardStyle}">
+                        <StackPanel Padding="16,12,16,12" Spacing="0">
 
-                                <TextBlock
-                                    x:Name="RulesActiveText"
-                                    Margin="0,2,0,0"
-                                    Style="{StaticResource HintStyle}"
-                                    Text="未命中任何规则，使用默认账号" />
+                            <Grid Margin="0,0,0,6">
+                                <StackPanel
+                                    VerticalAlignment="Center"
+                                    Orientation="Horizontal"
+                                    Spacing="8">
+                                    <FontIcon Style="{StaticResource SectionIconStyle}" Glyph="&#xE8F1;" />
+                                    <TextBlock Style="{StaticResource CardTitleStyle}" Text="连接规则" />
+                                </StackPanel>
 
-                                <Border Style="{StaticResource DividerStyle}" />
+                                <Button
+                                    x:Name="RulesAddBtn"
+                                    Height="28"
+                                    Padding="12,0"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Center"
+                                    Click="OnRuleAddClicked"
+                                    Content="添加规则"
+                                    FontSize="12" />
+                            </Grid>
 
-                                <ItemsControl x:Name="RulesList">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Grid Padding="0,8" ColumnSpacing="8">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
+                            <TextBlock
+                                x:Name="RulesCurrentLinkText"
+                                Style="{StaticResource HintStyle}"
+                                Text="当前接入：未知" />
 
-                                                <StackPanel Spacing="2">
-                                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                                        <TextBlock
-                                                            FontSize="13"
-                                                            FontWeight="SemiBold"
-                                                            Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                                                            Text="{Binding MatchText}" />
-                                                        <TextBlock
-                                                            FontSize="11"
-                                                            Foreground="{ThemeResource SystemFillColorSuccessBrush}"
-                                                            Text="生效"
-                                                            Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}" />
-                                                    </StackPanel>
+                            <TextBlock
+                                x:Name="RulesActiveText"
+                                Margin="0,2,0,0"
+                                Style="{StaticResource HintStyle}"
+                                Text="未命中任何规则，使用默认账号" />
+
+                            <Border Margin="0,8,0,0" Style="{StaticResource DividerStyle}" />
+
+                            <ItemsControl x:Name="RulesList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid
+                                            Padding="0,10"
+                                            ColumnSpacing="8"
+                                            BorderThickness="0,1,0,0"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="220" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <StackPanel Spacing="2">
+                                                <StackPanel Orientation="Horizontal" Spacing="6">
                                                     <TextBlock
-                                                        FontSize="11.5"
-                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                        Text="{Binding DetailText}" />
+                                                        FontSize="13"
+                                                        FontWeight="SemiBold"
+                                                        Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                                        Text="{Binding MatchText}" />
+                                                    <TextBlock
+                                                        FontSize="11"
+                                                        Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                                        Text="生效"
+                                                        Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}" />
                                                 </StackPanel>
+                                                <TextBlock
+                                                    FontSize="11.5"
+                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                    Text="{Binding DetailText}" />
+                                            </StackPanel>
 
-                                                <StackPanel
-                                                    Grid.Column="1"
-                                                    VerticalAlignment="Center"
-                                                    Orientation="Horizontal"
-                                                    Spacing="6">
-                                                    <Button
-                                                        Click="OnRuleEditClicked"
-                                                        Content="编辑"
-                                                        FontSize="12"
-                                                        Tag="{Binding Rule}" />
-                                                    <Button
-                                                        Click="OnRuleDeleteClicked"
-                                                        Content="删除"
-                                                        FontSize="12"
-                                                        Tag="{Binding Rule}" />
-                                                </StackPanel>
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
+                                            <StackPanel
+                                                Grid.Column="1"
+                                                VerticalAlignment="Center"
+                                                Orientation="Horizontal"
+                                                Spacing="6">
+                                                <Button
+                                                    Height="28"
+                                                    Padding="12,0"
+                                                    Click="OnRuleEditClicked"
+                                                    Content="编辑"
+                                                    FontSize="12"
+                                                    Tag="{Binding Rule}" />
+                                                <Button
+                                                    Height="28"
+                                                    Padding="12,0"
+                                                    Click="OnRuleDeleteClicked"
+                                                    Content="删除"
+                                                    FontSize="12"
+                                                    Tag="{Binding Rule}" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
 
-                                <TextBlock
-                                    x:Name="RulesEmptyText"
-                                    Margin="0,4,0,4"
-                                    HorizontalAlignment="Center"
-                                    FontSize="12"
-                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                    Text="还没有连接规则"
-                                    Visibility="Collapsed" />
+                            <TextBlock
+                                x:Name="RulesEmptyText"
+                                Margin="0,10,0,6"
+                                FontSize="12"
+                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                Text="还没有连接规则"
+                                Visibility="Collapsed" />
 
-                                <TextBlock
-                                    x:Name="RulesFallbackHint"
-                                    Margin="0,8,0,0"
-                                    Style="{StaticResource HintStyle}"
-                                    Text="没有匹配到规则时，使用默认账号、密码和出口。" />
-                                <TextBlock
-                                    Margin="0,4,0,0"
-                                    Style="{StaticResource HintStyle}"
-                                    Text="充分利用教学区有线接入则不记流量这一规则"
-                                    TextWrapping="Wrap" />
+                            <TextBlock
+                                x:Name="RulesFallbackHint"
+                                Margin="0,8,0,0"
+                                Style="{StaticResource HintStyle}"
+                                Text="没有匹配到规则时，使用默认账号、密码和出口。" />
+                            <TextBlock
+                                Margin="0,4,0,0"
+                                Style="{StaticResource HintStyle}"
+                                Text="充分利用教学区有线接入则不记流量这一规则"
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+
+                    <!--  ────────── 巡检与重新认证  ──────────  -->
+                    <Border x:Name="IntervalCard" Style="{StaticResource CardStyle}">
+                        <StackPanel Padding="16,12,16,12" Spacing="0">
+                            <StackPanel
+                                Margin="0,0,0,4"
+                                Orientation="Horizontal"
+                                Spacing="8">
+                                <FontIcon Style="{StaticResource SectionIconStyle}" Glyph="&#xE823;" />
+                                <TextBlock Style="{StaticResource CardTitleStyle}" Text="巡检与重新认证" />
                             </StackPanel>
-                        </Border>
 
-                        <!--  自动化  -->
-                        <Border x:Name="BehaviorCard" Style="{StaticResource CardStyle}">
-                            <StackPanel Padding="20,14,20,14" Spacing="0">
-                                <StackPanel
-                                    Margin="0,0,0,10"
-                                    Orientation="Horizontal"
-                                    Spacing="8">
-                                    <FontIcon Style="{StaticResource SectionIconStyle}" Glyph="&#xE945;" />
-                                    <TextBlock Style="{StaticResource CardTitleStyle}" Text="自动化" />
+                            <Grid MinHeight="52" ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="220" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Spacing="1">
+                                    <TextBlock Style="{StaticResource RowTitleStyle}" Text="巡检时长" />
+                                    <TextBlock Style="{StaticResource HintStyle}" Text="已连接时多久检查一次状态（4–120 秒）" />
                                 </StackPanel>
-
-                                <Grid MinHeight="42">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource RowTitleStyle}" Text="开机自动登录" />
-                                        <TextBlock Style="{StaticResource HintStyle}" Text="登录系统后静默完成认证" />
-                                    </StackPanel>
-                                    <ToggleSwitch
-                                        x:Name="AutoStartSwitch"
-                                        Grid.Column="1"
-                                        Style="{StaticResource RowToggleStyle}" />
-                                </Grid>
-
-                                <Border Style="{StaticResource DividerStyle}" />
-
-                                <Grid MinHeight="42">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource RowTitleStyle}" Text="断线自动重连" />
-                                        <TextBlock Style="{StaticResource HintStyle}" Text="掉线后自动补认证，失败会逐渐放缓重试" />
-                                    </StackPanel>
-                                    <ToggleSwitch
-                                        x:Name="AutoReconnectSwitch"
-                                        Grid.Column="1"
-                                        Style="{StaticResource RowToggleStyle}" />
-                                </Grid>
-
-                                <Border Style="{StaticResource DividerStyle}" />
-
-                                <Grid MinHeight="42">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource RowTitleStyle}" Text="锁屏保持连接" />
-                                        <TextBlock Style="{StaticResource HintStyle}" Text="锁屏后暂不睡眠，认证会话不断" />
-                                    </StackPanel>
-                                    <ToggleSwitch
-                                        x:Name="LockKeepSwitch"
-                                        Grid.Column="1"
-                                        Style="{StaticResource RowToggleStyle}" />
-                                </Grid>
-
-                                <Border Style="{StaticResource DividerStyle}" />
-
-                                <Grid MinHeight="42">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource RowTitleStyle}" Text="关闭时驻留托盘" />
-                                        <TextBlock Style="{StaticResource HintStyle}" Text="关窗口不退出，后台继续守候网络" />
-                                    </StackPanel>
-                                    <ToggleSwitch
-                                        x:Name="TraySwitch"
-                                        Grid.Column="1"
-                                        Style="{StaticResource RowToggleStyle}" />
-                                </Grid>
-
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-
-                    <!--  ────────── 右列：自动化 / 定时 / 设备监测  ──────────  -->
-                    <StackPanel
-                        x:Name="SettingsRight"
-                        Grid.Column="1"
-                        Spacing="12">
-
-
-                        <!--  巡检与重新认证：多久查一次 + 多久主动换一次会话  -->
-                        <Border Style="{StaticResource CardStyle}">
-                            <StackPanel Padding="20,14,20,14" Spacing="0">
                                 <StackPanel
-                                    Margin="0,0,0,10"
-                                    Orientation="Horizontal"
-                                    Spacing="8">
-                                    <FontIcon Style="{StaticResource SectionIconStyle}" Glyph="&#xE823;" />
-                                    <TextBlock Style="{StaticResource CardTitleStyle}" Text="巡检与重新认证" />
-                                </StackPanel>
-
-                                <!--  巡检时长：最常改的一项，放在卡头  -->
-                                <Grid MinHeight="42">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource RowTitleStyle}" Text="巡检时长" />
-                                        <TextBlock Style="{StaticResource HintStyle}" Text="已连接时多久检查一次状态（4–120 秒）" />
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
-                                        <NumberBox
-                                            x:Name="IntervalBox"
-                                            Style="{StaticResource RowNumberBoxStyle}"
-                                            Minimum="4"
-                                            Maximum="120"
-                                            SmallChange="1" />
-                                        <TextBlock x:Name="IntervalUnitText" VerticalAlignment="Center" Text="秒" />
-                                    </StackPanel>
-                                </Grid>
-
-                                <StackPanel
-                                    Margin="0,6,0,0"
+                                    Grid.Column="1"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Center"
                                     Orientation="Horizontal"
                                     Spacing="6">
+                                    <NumberBox
+                                        x:Name="IntervalBox"
+                                        Style="{StaticResource RowNumberBoxStyle}"
+                                        Minimum="4"
+                                        Maximum="120"
+                                        SmallChange="1" />
                                     <TextBlock
+                                        x:Name="IntervalUnitText"
                                         VerticalAlignment="Center"
-                                        Style="{StaticResource HintStyle}"
-                                        Text="常用值" />
+                                        Style="{StaticResource ValueTextStyle}"
+                                        Text="秒" />
+                                </StackPanel>
+                            </Grid>
+
+                            <!--  常用值：贴在控件下方右对齐，与控件右边缘同一条线  -->
+                            <Grid ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="220" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel
+                                    Grid.Column="1"
+                                    HorizontalAlignment="Right"
+                                    Orientation="Horizontal"
+                                    Spacing="6">
                                     <Button
                                         x:Name="IntervalQuick4"
+                                        Height="26"
+                                        Padding="10,0"
                                         Click="OnIntervalQuickClicked"
                                         Content="4 秒"
                                         FontSize="12"
                                         Tag="4" />
                                     <Button
                                         x:Name="IntervalQuick8"
+                                        Height="26"
+                                        Padding="10,0"
                                         Click="OnIntervalQuickClicked"
                                         Content="8 秒"
                                         FontSize="12"
                                         Tag="8" />
                                     <Button
                                         x:Name="IntervalQuick15"
+                                        Height="26"
+                                        Padding="10,0"
                                         Click="OnIntervalQuickClicked"
                                         Content="15 秒"
                                         FontSize="12"
                                         Tag="15" />
                                     <Button
                                         x:Name="IntervalQuick30"
+                                        Height="26"
+                                        Padding="10,0"
                                         Click="OnIntervalQuickClicked"
                                         Content="30 秒"
                                         FontSize="12"
                                         Tag="30" />
                                 </StackPanel>
+                            </Grid>
 
-                                <Border Style="{StaticResource DividerStyle}" />
+                            <Border Margin="0,8,0,0" Style="{StaticResource DividerStyle}" />
 
-                                <Grid MinHeight="42">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource RowTitleStyle}" Text="按固定间隔重新认证" />
-                                        <TextBlock Style="{StaticResource HintStyle}" Text="到期断开当前会话再重登，可能短暂断网" />
-                                    </StackPanel>
-                                    <ToggleSwitch
-                                        x:Name="ReauthenticateSwitch"
-                                        Grid.Column="1"
-                                        Style="{StaticResource RowToggleStyle}" />
-                                </Grid>
+                            <Grid MinHeight="52" ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="220" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Spacing="1">
+                                    <TextBlock Style="{StaticResource RowTitleStyle}" Text="按固定间隔重新认证" />
+                                    <TextBlock Style="{StaticResource HintStyle}" Text="到期断开当前会话再重登，可能短暂断网" />
+                                </StackPanel>
+                                <ToggleSwitch
+                                    x:Name="ReauthenticateSwitch"
+                                    Grid.Column="1"
+                                    Style="{StaticResource RowToggleStyle}" />
+                            </Grid>
 
-                                <Border Style="{StaticResource DividerStyle}" />
+                            <Border Style="{StaticResource DividerStyle}" />
 
-                                <Grid MinHeight="42">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock
-                                        VerticalAlignment="Center"
-                                        Style="{StaticResource RowTitleStyle}"
-                                        Text="重新认证间隔" />
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
-                                        <NumberBox
-                                            x:Name="ReauthenticateValueBox"
-                                            Width="120"
-                                            Minimum="1"
-                                            Maximum="8760"
-                                            Value="24"
-                                            SmallChange="1"
-                                            SpinButtonPlacementMode="Compact"
-                                            Style="{StaticResource FormInputStyle}" />
-                                        <ComboBox x:Name="ReauthenticateUnitBox" Width="80" SelectedIndex="0">
-                                            <ComboBoxItem Content="小时" /><ComboBoxItem Content="天" />
-                                        </ComboBox>
-                                    </StackPanel>
-                                </Grid>
-
+                            <Grid MinHeight="44">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="220" />
+                                </Grid.ColumnDefinitions>
                                 <TextBlock
-                                    Margin="0,8,0,0"
-                                    Style="{StaticResource HintStyle}"
-                                    Text="巡检负责发现掉线，定时重认证负责主动换会话，两者互不影响。"
-                                    TextWrapping="Wrap" />
-                            </StackPanel>
-                        </Border>
-
-                        <!--  同时在线设备监测：设备数超阈值时确认还能不能出网  -->
-                        <Border x:Name="DeviceGuardCard" Style="{StaticResource CardStyle}">
-                            <StackPanel Padding="20,14,20,14" Spacing="0">
-
+                                    VerticalAlignment="Center"
+                                    Style="{StaticResource RowTitleStyle}"
+                                    Text="重新认证间隔" />
                                 <StackPanel
-                                    Margin="0,0,0,10"
+                                    Grid.Column="1"
+                                    HorizontalAlignment="Right"
                                     Orientation="Horizontal"
-                                    Spacing="8">
-                                    <FontIcon Style="{StaticResource SectionIconStyle}" Glyph="&#xE7BA;" />
-                                    <TextBlock Style="{StaticResource CardTitleStyle}" Text="同时在线设备监测" />
-                                </StackPanel>
-
-                                <Grid MinHeight="42">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource RowTitleStyle}" Text="启用同时在线设备监测" />
-                                        <TextBlock Style="{StaticResource HintStyle}" Text="设备数超过阈值，校内和校外连续三轮均不可达才重连" />
-                                    </StackPanel>
-                                    <ToggleSwitch
-                                        x:Name="DeviceGuardSwitch"
-                                        Grid.Column="1"
-                                        Style="{StaticResource RowToggleStyle}" />
-                                </Grid>
-
-                                <Border Style="{StaticResource DividerStyle}" />
-
-                                <Grid MinHeight="42">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource RowTitleStyle}" Text="设备数阈值" />
-                                        <TextBlock Style="{StaticResource HintStyle}" Text="在线设备数（含本机）大于此值才检测" />
-                                    </StackPanel>
+                                    Spacing="6">
                                     <NumberBox
-                                        x:Name="DeviceGuardThresholdBox"
-                                        Grid.Column="1"
-                                        Style="{StaticResource RowNumberBoxStyle}"
+                                        x:Name="ReauthenticateValueBox"
+                                        Width="120"
                                         Minimum="1"
-                                        Maximum="50"
-                                        SmallChange="1" />
+                                        Maximum="8760"
+                                        Value="24"
+                                        SmallChange="1"
+                                        SpinButtonPlacementMode="Compact"
+                                        Style="{StaticResource FormInputStyle}" />
+                                    <ComboBox
+                                        x:Name="ReauthenticateUnitBox"
+                                        Width="94"
+                                        SelectedIndex="0">
+                                        <ComboBoxItem Content="小时" />
+                                        <ComboBoxItem Content="天" />
+                                    </ComboBox>
+                                </StackPanel>
+                            </Grid>
+
+                            <TextBlock
+                                Margin="0,8,0,2"
+                                Style="{StaticResource HintStyle}"
+                                Text="巡检负责发现掉线，定时重认证负责主动换会话，两者互不影响。"
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+
+                    <!--  ────────── 同时在线设备监测  ──────────  -->
+                    <Border x:Name="DeviceGuardCard" Style="{StaticResource CardStyle}">
+                        <StackPanel Padding="16,12,16,12" Spacing="0">
+
+                            <StackPanel
+                                Margin="0,0,0,4"
+                                Orientation="Horizontal"
+                                Spacing="8">
+                                <FontIcon Style="{StaticResource SectionIconStyle}" Glyph="&#xE7BA;" />
+                                <TextBlock Style="{StaticResource CardTitleStyle}" Text="同时在线设备监测" />
+                            </StackPanel>
+
+                            <Grid MinHeight="52" ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="220" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Spacing="1">
+                                    <TextBlock Style="{StaticResource RowTitleStyle}" Text="启用同时在线设备监测" />
+                                    <TextBlock Style="{StaticResource HintStyle}" Text="设备数超过阈值，校内和校外连续三轮均不可达才重连" />
+                                </StackPanel>
+                                <ToggleSwitch
+                                    x:Name="DeviceGuardSwitch"
+                                    Grid.Column="1"
+                                    Style="{StaticResource RowToggleStyle}" />
+                            </Grid>
+
+                            <Border Style="{StaticResource DividerStyle}" />
+
+                            <Grid MinHeight="52" ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="220" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Spacing="1">
+                                    <TextBlock Style="{StaticResource RowTitleStyle}" Text="设备数阈值" />
+                                    <TextBlock Style="{StaticResource HintStyle}" Text="在线设备数（含本机）大于此值才检测" />
+                                </StackPanel>
+                                <NumberBox
+                                    x:Name="DeviceGuardThresholdBox"
+                                    Grid.Column="1"
+                                    Style="{StaticResource RowNumberBoxStyle}"
+                                    Minimum="1"
+                                    Maximum="50"
+                                    SmallChange="1" />
+                            </Grid>
+
+                            <Border Style="{StaticResource DividerStyle}" />
+
+                            <TextBlock
+                                x:Name="DeviceGuardStateText"
+                                Margin="0,10,0,0"
+                                Style="{StaticResource HintStyle}"
+                                Text="守卫未启用" />
+
+                            <TextBlock
+                                x:Name="DeviceGuardLastText"
+                                Margin="0,2,0,0"
+                                Style="{StaticResource HintStyle}"
+                                Text="尚未检测" />
+
+                            <StackPanel
+                                Margin="0,10,0,2"
+                                Orientation="Horizontal"
+                                Spacing="8">
+                                <Button
+                                    x:Name="DeviceGuardProbeNowBtn"
+                                    Height="30"
+                                    Padding="12,0"
+                                    Click="OnGuardProbeNowClicked"
+                                    Content="立即检测一次"
+                                    FontSize="12" />
+                                <!--  探测地址、超时这些一年改不上一次，收起来，别占版面  -->
+                                <HyperlinkButton
+                                    x:Name="GuardAdvancedToggle"
+                                    Padding="4,0"
+                                    Click="OnGuardAdvancedToggled">
+                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                        <TextBlock
+                                            x:Name="GuardAdvancedToggleText"
+                                            FontSize="12"
+                                            Text="高级探测设置" />
+                                        <FontIcon
+                                            x:Name="GuardAdvancedChevron"
+                                            FontSize="9"
+                                            Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                            Glyph="&#xE70D;" />
+                                    </StackPanel>
+                                </HyperlinkButton>
+                            </StackPanel>
+
+                            <StackPanel
+                                x:Name="GuardAdvancedPanel"
+                                Margin="0,4,0,0"
+                                Spacing="0"
+                                Visibility="Collapsed">
+                                <Border Style="{StaticResource DividerStyle}" />
+
+                                <Grid MinHeight="52" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="220" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center" Spacing="1">
+                                        <TextBlock Style="{StaticResource RowTitleStyle}" Text="校内探测地址" />
+                                        <TextBlock Style="{StaticResource HintStyle}" Text="IP 走 ping，域名默认走 HTTPS" />
+                                    </StackPanel>
+                                    <TextBox
+                                        x:Name="DeviceGuardProbeTargetBox"
+                                        Grid.Column="1"
+                                        Style="{StaticResource RowTextBoxStyle}"
+                                        MaxLength="255"
+                                        PlaceholderText="www.snnu.edu.cn" />
                                 </Grid>
 
                                 <Border Style="{StaticResource DividerStyle}" />
 
-                                <TextBlock
-                                    x:Name="DeviceGuardStateText"
-                                    Margin="0,10,0,0"
-                                    Style="{StaticResource HintStyle}"
-                                    Text="守卫未启用" />
+                                <Grid MinHeight="52" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="220" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center" Spacing="1">
+                                        <TextBlock Style="{StaticResource RowTitleStyle}" Text="校外探测地址" />
+                                        <TextBlock Style="{StaticResource HintStyle}" Text="校内地址不可达时用它判断是不是全校断网" />
+                                    </StackPanel>
+                                    <TextBox
+                                        x:Name="DeviceGuardExternalProbeTargetBox"
+                                        Grid.Column="1"
+                                        Style="{StaticResource RowTextBoxStyle}"
+                                        MaxLength="255"
+                                        PlaceholderText="www.baidu.com" />
+                                </Grid>
 
-                                <TextBlock
-                                    x:Name="DeviceGuardLastText"
-                                    Margin="0,2,0,0"
-                                    Style="{StaticResource HintStyle}"
-                                    Text="尚未检测" />
+                                <Border Style="{StaticResource DividerStyle}" />
 
-                                <StackPanel Margin="0,10,0,0" Orientation="Horizontal" Spacing="8">
-                                    <Button
-                                        x:Name="DeviceGuardProbeNowBtn"
-                                        Click="OnGuardProbeNowClicked"
-                                        Content="立即检测一次" />
-                                    <!--  探测地址、超时这些一年改不上一次，收起来，别占版面  -->
-                                    <HyperlinkButton
-                                        x:Name="GuardAdvancedToggle"
-                                        Padding="4,0"
-                                        Click="OnGuardAdvancedToggled">
-                                        <StackPanel Orientation="Horizontal" Spacing="4">
-                                            <TextBlock
-                                                x:Name="GuardAdvancedToggleText"
-                                                FontSize="12"
-                                                Text="高级探测设置" />
-                                            <FontIcon
-                                                x:Name="GuardAdvancedChevron"
-                                                FontSize="9"
-                                                Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
-                                                Glyph="&#xE70D;" />
-                                        </StackPanel>
-                                    </HyperlinkButton>
-                                </StackPanel>
-
-                                <StackPanel
-                                    x:Name="GuardAdvancedPanel"
-                                    Margin="0,4,0,0"
-                                    Spacing="0"
-                                    Visibility="Collapsed">
-                                    <Border Style="{StaticResource DividerStyle}" />
-
-                                    <Grid MinHeight="42">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel VerticalAlignment="Center" Spacing="2">
-                                            <TextBlock Style="{StaticResource RowTitleStyle}" Text="校内探测地址" />
-                                            <TextBlock Style="{StaticResource HintStyle}" Text="IP 走 ping，域名默认走 HTTPS" />
-                                        </StackPanel>
-                                        <TextBox
-                                            x:Name="DeviceGuardProbeTargetBox"
-                                            Grid.Column="1"
-                                            Style="{StaticResource RowTextBoxStyle}"
-                                            MaxLength="255"
-                                            PlaceholderText="www.snnu.edu.cn" />
-                                    </Grid>
-
-                                    <Border Style="{StaticResource DividerStyle}" />
-
-                                    <Grid MinHeight="42" ColumnSpacing="8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock VerticalAlignment="Center" Style="{StaticResource RowTitleStyle}" Text="校外探测地址" />
-                                        <TextBox x:Name="DeviceGuardExternalProbeTargetBox" Grid.Column="1"
-                                            Style="{StaticResource RowTextBoxStyle}" MaxLength="255" PlaceholderText="www.baidu.com" />
-                                    </Grid>
-
-                                    <Border Style="{StaticResource DividerStyle}" />
-
-                                    <Grid MinHeight="42">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel VerticalAlignment="Center" Spacing="2">
-                                            <TextBlock Style="{StaticResource RowTitleStyle}" Text="探测超时" />
-                                            <TextBlock Style="{StaticResource HintStyle}" Text="每个地址最多等待此时长" />
-                                        </StackPanel>
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
-                                            <NumberBox
-                                                x:Name="DeviceGuardTimeoutBox"
-                                                Style="{StaticResource RowNumberBoxStyle}"
-                                                Minimum="1"
-                                                Maximum="30"
-                                                SmallChange="1" />
-                                            <TextBlock VerticalAlignment="Center" Text="秒" />
-                                        </StackPanel>
-                                    </Grid>
-                                </StackPanel>
+                                <Grid MinHeight="52" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="220" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center" Spacing="1">
+                                        <TextBlock Style="{StaticResource RowTitleStyle}" Text="探测超时" />
+                                        <TextBlock Style="{StaticResource HintStyle}" Text="每个地址最多等待此时长" />
+                                    </StackPanel>
+                                    <StackPanel
+                                        Grid.Column="1"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Center"
+                                        Orientation="Horizontal"
+                                        Spacing="6">
+                                        <NumberBox
+                                            x:Name="DeviceGuardTimeoutBox"
+                                            Style="{StaticResource RowNumberBoxStyle}"
+                                            Minimum="1"
+                                            Maximum="30"
+                                            SmallChange="1" />
+                                        <TextBlock
+                                            VerticalAlignment="Center"
+                                            Style="{StaticResource ValueTextStyle}"
+                                            Text="秒" />
+                                    </StackPanel>
+                                </Grid>
                             </StackPanel>
-                        </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <!--  ────────── 自动化  ──────────  -->
+                    <Border x:Name="BehaviorCard" Style="{StaticResource CardStyle}">
+                        <StackPanel Padding="16,12,16,12" Spacing="0">
+                            <StackPanel
+                                Margin="0,0,0,4"
+                                Orientation="Horizontal"
+                                Spacing="8">
+                                <FontIcon Style="{StaticResource SectionIconStyle}" Glyph="&#xE945;" />
+                                <TextBlock Style="{StaticResource CardTitleStyle}" Text="自动化" />
+                            </StackPanel>
+
+                            <Grid MinHeight="52" ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="220" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Spacing="1">
+                                    <TextBlock Style="{StaticResource RowTitleStyle}" Text="开机自动登录" />
+                                    <TextBlock Style="{StaticResource HintStyle}" Text="登录系统后静默完成认证" />
+                                </StackPanel>
+                                <ToggleSwitch
+                                    x:Name="AutoStartSwitch"
+                                    Grid.Column="1"
+                                    Style="{StaticResource RowToggleStyle}" />
+                            </Grid>
+
+                            <Border Style="{StaticResource DividerStyle}" />
+
+                            <Grid MinHeight="52" ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="220" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Spacing="1">
+                                    <TextBlock Style="{StaticResource RowTitleStyle}" Text="断线自动重连" />
+                                    <TextBlock Style="{StaticResource HintStyle}" Text="掉线后自动补认证，失败会逐渐放缓重试" />
+                                </StackPanel>
+                                <ToggleSwitch
+                                    x:Name="AutoReconnectSwitch"
+                                    Grid.Column="1"
+                                    Style="{StaticResource RowToggleStyle}" />
+                            </Grid>
+
+                            <Border Style="{StaticResource DividerStyle}" />
+
+                            <Grid MinHeight="52" ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="220" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Spacing="1">
+                                    <TextBlock Style="{StaticResource RowTitleStyle}" Text="锁屏保持连接" />
+                                    <TextBlock Style="{StaticResource HintStyle}" Text="锁屏后暂不睡眠，认证会话不断" />
+                                </StackPanel>
+                                <ToggleSwitch
+                                    x:Name="LockKeepSwitch"
+                                    Grid.Column="1"
+                                    Style="{StaticResource RowToggleStyle}" />
+                            </Grid>
+
+                            <Border Style="{StaticResource DividerStyle}" />
+
+                            <Grid MinHeight="52" ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="220" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Spacing="1">
+                                    <TextBlock Style="{StaticResource RowTitleStyle}" Text="关闭时驻留托盘" />
+                                    <TextBlock Style="{StaticResource HintStyle}" Text="关窗口不退出，后台继续守候网络" />
+                                </StackPanel>
+                                <ToggleSwitch
+                                    x:Name="TraySwitch"
+                                    Grid.Column="1"
+                                    Style="{StaticResource RowToggleStyle}" />
+                            </Grid>
+
+                        </StackPanel>
+                    </Border>
                     </StackPanel>
                 </Grid>
             </ScrollViewer>
@@ -1439,53 +1490,51 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <Grid Height="40" Margin="0,0,0,10">
-                <StackPanel
-                    VerticalAlignment="Center"
-                    Orientation="Horizontal"
-                    Spacing="2">
-                    <Button
-                        x:Name="AboutBackBtn"
-                        Style="{StaticResource NavIconButtonStyle}"
-                        IsTabStop="False"
-                        Click="OnAboutBackClicked"
-                        ToolTipService.ToolTip="返回设置">
-                        <FontIcon FontSize="14" Glyph="&#xE72B;" />
-                    </Button>
-                    <TextBlock
-                        Margin="8,0,0,0"
-                        Style="{StaticResource PageTitleStyle}"
-                        Text="关于" />
-                </StackPanel>
+            <Grid
+                Height="44"
+                Margin="0,0,0,8"
+                MaxWidth="780">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Button
+                    x:Name="AboutBackBtn"
+                    Style="{StaticResource NavIconButtonStyle}"
+                    IsTabStop="False"
+                    Click="OnAboutBackClicked"
+                    ToolTipService.ToolTip="返回设置">
+                    <FontIcon FontSize="14" Glyph="&#xE72B;" />
+                </Button>
+                <TextBlock
+                    Grid.Column="1"
+                    Margin="12,0,0,0"
+                    Style="{StaticResource PageTitleStyle}"
+                    Text="关于" />
             </Grid>
 
             <ScrollViewer
                 x:Name="AboutScroll"
                 Grid.Row="1"
                 VerticalScrollBarVisibility="Auto">
-                <StackPanel
-                    Width="700"
-                    HorizontalAlignment="Left"
-                    Spacing="12">
+                <Grid>
+                    <StackPanel MaxWidth="780" Spacing="12">
 
                     <!--  抬头：品牌圆 + 名称 + 版本  -->
                     <Border x:Name="AboutHero" Style="{StaticResource CardStyle}">
-                        <StackPanel Padding="24,22,24,22" Spacing="0">
+                        <StackPanel Padding="20,18,20,18" Spacing="0">
                             <StackPanel Orientation="Horizontal" Spacing="16">
                                 <Grid
                                     Width="64"
                                     Height="64"
                                     VerticalAlignment="Top">
                                     <Ellipse Width="64" Height="64" Fill="#1677FF" />
-                                    <FontIcon
-                                        FontSize="34"
-                                        Foreground="White"
-                                        Glyph="&#xE701;" />
+                                    <FontIcon FontSize="34" Foreground="White" Glyph="&#xE701;" />
                                 </Grid>
 
                                 <StackPanel VerticalAlignment="Center" Spacing="3">
                                     <TextBlock
-                                        FontSize="21"
+                                        FontSize="20"
                                         FontWeight="SemiBold"
                                         Foreground="{ThemeResource TextFillColorPrimaryBrush}"
                                         Text="SNNU 校园网助手" />
@@ -1500,7 +1549,7 @@
                             </StackPanel>
 
                             <TextBlock
-                                Margin="0,18,0,0"
+                                Margin="0,16,0,0"
                                 Style="{StaticResource HintStyle}"
                                 Text="连上校园网后自动完成 Portal 认证。掉线会补认证，锁屏期间保持会话，断网前一般不用管它。"
                                 TextWrapping="Wrap" />
@@ -1509,7 +1558,7 @@
 
                     <!--  链接与许可  -->
                     <Border x:Name="AboutLinks" Style="{StaticResource CardStyle}">
-                        <StackPanel Padding="20,6,20,6" Spacing="0">
+                        <StackPanel Padding="16,4,16,4" Spacing="0">
                             <Grid MinHeight="44">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
@@ -1606,6 +1655,7 @@
                         Text="仅限非商业用途。校园网账号与密码只保存在本机，不会上传到任何服务器。"
                         TextWrapping="Wrap" />
                 </StackPanel>
+                </Grid>
             </ScrollViewer>
         </Grid>
     </Grid>
