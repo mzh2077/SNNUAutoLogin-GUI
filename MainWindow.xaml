@@ -1676,11 +1676,13 @@
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Style="{StaticResource RowTitleStyle}" Text="认证门户" />
-                                        <TextBlock
+                                        <HyperlinkButton
+                                            x:Name="PortalLink"
                                             Grid.Column="1"
-                                            VerticalAlignment="Center"
-                                            Style="{StaticResource MetaValueStyle}"
-                                            Text="202.117.144.205" />
+                                            Style="{StaticResource InlineLinkStyle}"
+                                            Content="202.117.144.205"
+                                            NavigateUri="http://202.117.144.205/"
+                                            AutomationProperties.Name="打开校园网认证门户 202.117.144.205" />
                                     </Grid>
 
                                     <Border Style="{StaticResource DividerStyle}" />

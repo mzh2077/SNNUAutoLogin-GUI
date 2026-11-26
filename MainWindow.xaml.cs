@@ -116,6 +116,7 @@ public sealed partial class MainWindow : Window
 
         appWindow.Changed += OnAppWindowChanged;
         _closeHook = new WindowCloseHook(hwnd) { InterceptClose = OnCloseRequested };
+        InitializeEdgeDock(hwnd);
 
         double scale = GetDpiForWindow(hwnd) / 96.0;
         if (scale <= 0) scale = 1.0;
@@ -479,7 +480,7 @@ public sealed partial class MainWindow : Window
 
         // 在线设备默认就加载：进窗口就看到当前在线几台，不用再点一次刷新。
         // 放在这里而不是构造函数里，是为了让「加载中」的状态能正常显示出来。
-        _ = RefreshDevicesAsync();
+        if (!_rt.IsUiTest) _ = RefreshDevicesAsync();
 
         ApplyThemeColors();
         ApplyState(_rt.State, _rt.LastResult, animate: false);
@@ -627,6 +628,7 @@ public sealed partial class MainWindow : Window
     /// <summary>从托盘召回：内容树在就只显示，不在就重建后再显示。</summary>
     public void RestoreFromTray()
     {
+        _edgeDock?.Reveal();
         _hiddenToTray = false;
 
         BuildUi();
@@ -644,6 +646,7 @@ public sealed partial class MainWindow : Window
     private void HideToTray()
     {
         if (_rt.Tray?.IsVisible != true) return;
+        _edgeDock?.Reveal();
 
         _hiddenToTray = true;
         _saveTimer.Stop();
@@ -789,7 +792,9 @@ public sealed partial class MainWindow : Window
 
     private void OnWindowActivated(object sender, WindowActivatedEventArgs args)
     {
+        _windowActive = args.WindowActivationState != WindowActivationState.Deactivated;
         if (args.WindowActivationState == WindowActivationState.Deactivated) return;
+        _edgeDock?.Reveal();
 
         if (_startHidden)
         {
@@ -1056,7 +1061,10 @@ public sealed partial class MainWindow : Window
         }
 
         RulesList.ItemsSource = items;
-        RulesEmptyText.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        bool hasRules = items.Count > 0;
+        RulesEmptyPanel.Visibility = hasRules ? Visibility.Collapsed : Visibility.Visible;
+        RulesListPanel.Visibility = hasRules ? Visibility.Visible : Visibility.Collapsed;
+        RulesFallbackHint.Visibility = hasRules ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>添加一条规则。</summary>
@@ -1113,7 +1121,7 @@ public sealed partial class MainWindow : Window
             DefaultButton = ContentDialogButton.Secondary
         };
 
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
 
         var rules = _rt.Store.Settings.ConnectionRules;
         rules.RemoveAll(r => string.Equals(r.Id, target.Id, StringComparison.Ordinal));
@@ -1315,7 +1323,7 @@ public sealed partial class MainWindow : Window
             }
         };
 
-        var result = await dialog.ShowAsync();
+        var result = await ShowDialogAsync(dialog);
         return result == ContentDialogResult.Primary ? rule : null;
     }
 
@@ -1431,8 +1439,11 @@ public sealed partial class MainWindow : Window
             UpdateGuardUiEnabledState();
             SyncToggleLabels();
             ScheduleSave();
+            UpdateGuardSummarySettings();
         };
-        DeviceGuardThresholdBox.ValueChanged += (_, _) => ScheduleSave();
+        DeviceGuardThresholdBox.ValueChanged += (_, _) => UpdateGuardSummarySettings();
+        DeviceGuardThresholdBox.RegisterPropertyChangedCallback(NumberBox.TextProperty,
+            (_, _) => UpdateGuardSummarySettings());
         DeviceGuardProbeTargetBox.TextChanged += (_, _) => ScheduleSave();
         DeviceGuardExternalProbeTargetBox.TextChanged += (_, _) => ScheduleSave();
         DeviceGuardTimeoutBox.ValueChanged += (_, args) =>
@@ -1631,7 +1642,7 @@ public sealed partial class MainWindow : Window
             DefaultButton = ContentDialogButton.Close
         };
 
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
 
         Events.Clear();
         Logs.Clear();
@@ -1770,6 +1781,7 @@ public sealed partial class MainWindow : Window
     {
         if (!_uiBuilt) return;
         LoadSettingsToUi();
+        RefreshDeviceSummary();
     }
 
     private void ScrollLogToEnd()
@@ -1929,31 +1941,7 @@ public sealed partial class MainWindow : Window
 
         DeviceList.ItemsSource = dm.Devices;
 
-        int count = dm.Devices.Count;
-        var s = _rt.Store.Settings;
-        bool guard = s.DeviceGuardEnabled;
-
-        switch (dm.State)
-        {
-            case DeviceListState.Loading:
-                DeviceSummary.Text = count > 0 ? $"当前 {count} 台设备在线" : "正在读取在线设备…";
-                break;
-
-            case DeviceListState.Ready:
-                DeviceSummary.Text = count == 0
-                    ? "当前没有在线设备"
-                    : guard ? $"当前 {count} 台设备在线（上限 {s.DeviceGuardThreshold}）" : $"当前 {count} 台设备在线";
-                break;
-
-            case DeviceListState.Failed:
-                // 读不到就照实说，不编数字也不算进总状态
-                DeviceSummary.Text = count > 0 ? $"当前 {count} 台设备在线" : "在线设备暂时读不到";
-                break;
-
-            default:
-                DeviceSummary.Text = "尚未读取在线设备";
-                break;
-        }
+        RefreshDeviceSummary();
 
         bool failed = dm.State == DeviceListState.Failed || !string.IsNullOrEmpty(dm.Error);
         DeviceErrorRow.Visibility = failed ? Visibility.Visible : Visibility.Collapsed;
@@ -2010,18 +1998,21 @@ public sealed partial class MainWindow : Window
         if (!_uiBuilt) return;
         if ((sender as FrameworkElement)?.Tag is not OnlineDevice device) return;
 
-        if (!device.CanForceOffline)
+        if (device.IsCurrent || !device.CanForceOffline)
         {
             _rt.AddLog("这是本机的连接，请用「更多 → 断开本机连接」");
             return;
         }
 
-        _rt.AddLog($"正在下线 {device.DisplayName}（{device.Ip}）…");
-        device.Status = "下线中";
-        OnDeviceListChanged();
-
-        var ok = await _rt.Devices.TakeOfflineAsync(device);
-        _rt.AddLog(ok ? $"{device.DisplayName} 已下线" : $"{device.DisplayName} 下线失败");
+        var button = sender as Button;
+        if (button is not null) button.IsEnabled = false;
+        try
+        {
+            _rt.AddLog($"正在下线 {device.DisplayName}（{device.Ip}）…");
+            var outcome = await _deviceActions.RunAsync(ct => _rt.Devices.TakeOfflineAsync(device, ct));
+            ShowDeviceActionResult(outcome, $"{device.DisplayName} 已下线");
+        }
+        finally { if (button is not null) button.IsEnabled = true; }
     }
 
     /// <summary>断开本机当前这条连接：收在「更多」里，且要二次确认。</summary>
@@ -2039,13 +2030,13 @@ public sealed partial class MainWindow : Window
             DefaultButton = ContentDialogButton.Close
         };
 
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
 
         _rt.AddLog("正在断开本机连接…");
 
-        var ok = await _rt.Devices.DisconnectSelfAsync();
-        _rt.AddLog(ok ? "本机连接已断开，稍后会自动重连" : "断开失败，请稍后再试");
-        if (ok) _rt.Coordinator.RequestImmediateCheck();
+        var outcome = await _deviceActions.RunAsync(ct => _rt.Devices.DisconnectSelfAsync(ct));
+        ShowDeviceActionResult(outcome, "本机连接已断开");
+        if (outcome == DeviceActionOutcome.Succeeded) _rt.Coordinator.RequestImmediateCheck();
     }
 
     // ────────────────────────── 旧版 hosts 残留 ──────────────────────────
@@ -2235,7 +2226,7 @@ public sealed partial class MainWindow : Window
                 PrimaryButtonText = "断开并重新登录",
                 CloseButtonText = "取消"
             };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary || picker.SelectedIndex < 0) return;
+            if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary || picker.SelectedIndex < 0) return;
             var selected = options[picker.SelectedIndex];
             await _rt.Coordinator.ManualConnectAsync(selected);
             _rt.Devices.Invalidate();
@@ -2318,6 +2309,7 @@ public sealed partial class MainWindow : Window
 
     private void ScheduleSave()
     {
+        if (!_uiReady) return;
         _saveTimer.Stop();
         _saveTimer.Start();
     }
@@ -2367,8 +2359,7 @@ public sealed partial class MainWindow : Window
 
         s.DeviceGuardEnabled = DeviceGuardSwitch.IsOn;
 
-        double threshold = DeviceGuardThresholdBox.Value;
-        s.DeviceGuardThreshold = double.IsNaN(threshold) ? 2 : Math.Clamp((int)Math.Round(threshold), 1, 50);
+        s.DeviceGuardThreshold = ReadGuardThreshold();
 
         UpdateGuardProbeSettings();
 
@@ -2377,17 +2368,20 @@ public sealed partial class MainWindow : Window
         if (!settingsSaved || !passwordSaved)
             _rt.AddLog("账号或密码保存失败，重启后可能丢失，请检查本地配置目录的写入权限");
 
-        if (AutoStartSwitch.IsOn != s.AutoStart
-            || AutoStartSwitch.IsOn != StartupManager.IsEnabled())
+        if (!_rt.IsUiTest && (AutoStartSwitch.IsOn != s.AutoStart
+            || AutoStartSwitch.IsOn != StartupManager.IsEnabled()))
             _rt.SetAutoStart(AutoStartSwitch.IsOn);
 
         UpdateAutoPill();
+        RefreshDeviceSummary();
         _rt.ApplyLockPolicy();
         _rt.RefreshTray();
     }
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        _edgeDock?.Dispose();
+        _deviceActions.Dispose();
         PersistToStore();
 
         _saveTimer.Stop();

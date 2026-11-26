@@ -34,6 +34,7 @@ public sealed class AppRuntime : IAsyncDisposable
     public static AppRuntime? Current { get; private set; }
 
     public CredentialStore Store { get; } = new();
+    internal bool IsUiTest { get; }
     public ThemeColors Theme { get; }
     public LoginCoordinator Coordinator { get; }
     public DeviceManager Devices { get; }
@@ -95,15 +96,19 @@ public sealed class AppRuntime : IAsyncDisposable
     /// <summary>旧 hosts 残留状态变化（清理完成后界面收起提示条）。</summary>
     public event Action? LegacyHostsChanged;
 
-    public AppRuntime(DispatcherQueue dispatcher, bool launchedAtStartup = false)
+    public AppRuntime(DispatcherQueue dispatcher, bool launchedAtStartup = false, bool uiTest = false)
     {
         Current = this;
         Dispatcher = dispatcher;
+        IsUiTest = uiTest;
+        if (uiTest)
+            Store = new CredentialStore(System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                "SNNUAutoLogin-ui-" + Guid.NewGuid().ToString("N")));
 
         Store.Load();
 
         // 首次启动与便携目录移动后也要注册/修复；关闭时清除遗留项。
-        if (!StartupManager.SetEnabled(Store.Settings.AutoStart))
+        if (!uiTest && !StartupManager.SetEnabled(Store.Settings.AutoStart))
         {
             Store.Settings.AutoStart = StartupManager.IsEnabled();
             Store.Save();
