@@ -58,6 +58,7 @@
             </Style>
 
             <Style x:Key="RowTitleStyle" TargetType="TextBlock">
+                <Setter Property="VerticalAlignment" Value="Center" />
                 <Setter Property="FontSize" Value="13" />
                 <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
                 <Setter Property="TextWrapping" Value="NoWrap" />
@@ -99,6 +100,12 @@
                 <Setter Property="VerticalAlignment" Value="Center" />
                 <Setter Property="MinHeight" Value="32" />
                 <Setter Property="CornerRadius" Value="4" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="BorderThickness" Value="1" />
+            </Style>
+
+            <Style x:Key="FormInputStyle" TargetType="Control" BasedOn="{StaticResource RowInputStyle}">
+                <Setter Property="HorizontalAlignment" Value="Stretch" />
             </Style>
 
             <Style x:Key="RowTextBoxStyle" BasedOn="{StaticResource RowInputStyle}" TargetType="TextBox">
@@ -135,6 +142,8 @@
                 <Setter Property="Padding" Value="0" />
                 <Setter Property="FontSize" Value="12" />
                 <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="MinWidth" Value="0" />
+                <Setter Property="MinHeight" Value="32" />
             </Style>
 
             <Style x:Key="NavIconButtonStyle" TargetType="Button">
@@ -282,6 +291,8 @@
                         </Button>
                     </Grid>
                 </Border>
+
+                <InfoBar x:Name="OperationNotice" IsOpen="False" IsClosable="True" />
 
                 <!--  ────────── 状态卡：图标 + 一句人话 + 信息格 + 主操作  ──────────  -->
                 <Border x:Name="StatusCard" Style="{StaticResource CardStyle}">
@@ -1387,11 +1398,13 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Style="{StaticResource RowTitleStyle}" Text="认证门户" />
-                            <TextBlock
+                            <HyperlinkButton
+                                x:Name="PortalLink"
                                 Grid.Column="1"
-                                VerticalAlignment="Center"
-                                Style="{StaticResource MetaValueStyle}"
-                                Text="202.117.144.205" />
+                                Style="{StaticResource InlineLinkStyle}"
+                                Content="202.117.144.205"
+                                NavigateUri="http://202.117.144.205/"
+                                AutomationProperties.Name="打开校园网认证门户 202.117.144.205" />
                         </Grid>
 
                         <Border Style="{StaticResource DividerStyle}" />
@@ -1415,7 +1428,7 @@
                                 <HyperlinkButton
                                     Style="{StaticResource InlineLinkStyle}"
                                     Content="Gitee"
-                                    NavigateUri="https://gitee.com/mzh2077/SNNUAutoLogin-GUI" />
+                                    NavigateUri="https://gitee.com/marike_86/SNNUAutoLogin-GUI" />
                             </StackPanel>
                         </Grid>
 

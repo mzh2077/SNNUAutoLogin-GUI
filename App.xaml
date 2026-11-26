@@ -29,6 +29,9 @@
                     <SolidColorBrush x:Key="InlineLinkBrush" Color="{ThemeResource SystemColorHotlightColor}" />
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
+            <Thickness x:Key="TextControlBorderThemeThickness">1</Thickness>
+            <Thickness x:Key="TextControlBorderThemeThicknessFocused">1</Thickness>
+            <Thickness x:Key="ComboBoxBorderThemeThicknessFocused">1</Thickness>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>

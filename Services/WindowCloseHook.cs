@@ -20,6 +20,7 @@ public sealed class WindowCloseHook : IDisposable
 
     /// <summary>返回 true 表示已拦截（窗口保持存活）。</summary>
     public Func<bool>? InterceptClose { get; set; }
+    public bool IsInMoveSize { get; private set; }
 
     public WindowCloseHook(IntPtr hwnd)
     {
@@ -38,6 +39,8 @@ public sealed class WindowCloseHook : IDisposable
 
     private IntPtr Handle(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, UIntPtr id, IntPtr data)
     {
+        if (msg == 0x0231) IsInMoveSize = true;
+        if (msg == 0x0232) IsInMoveSize = false;
         if (msg == WM_CLOSE && !_disposed)
         {
             try
