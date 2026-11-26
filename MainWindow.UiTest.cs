@@ -25,6 +25,7 @@ public sealed partial class MainWindow
         ShowSettingsPage(true, animate: false);
         await Task.Delay(260);
         CheckFormInputBorders();
+        await CheckGuardSummarySettingsAsync(sb);
 
         if (PortalLink.NavigateUri != new Uri("http://202.117.144.205/"))
             throw new InvalidOperationException("认证门户链接应不包含动态端口");
@@ -118,6 +119,39 @@ public sealed partial class MainWindow
             sb.ToString(), Encoding.UTF8);
 
         Application.Current.Exit();
+    }
+
+    private async Task CheckGuardSummarySettingsAsync(StringBuilder report)
+    {
+        int originalThreshold = _rt.Store.Settings.DeviceGuardThreshold;
+        bool originallyEnabled = _rt.Store.Settings.DeviceGuardEnabled;
+        DeviceGuardSwitch.IsOn = true;
+        DeviceSummary.Text = "stale summary";
+        DeviceGuardThresholdBox.Value = 7;
+        if (_rt.Store.Settings.DeviceGuardThreshold != 7 || DeviceSummary.Text == "stale summary")
+            throw new InvalidOperationException("Changing the guard threshold did not refresh the existing device summary");
+        DeviceSummary.Text = "stale summary";
+        DeviceGuardThresholdBox.Text = "9";
+        if (_rt.Store.Settings.DeviceGuardThreshold != 9 || DeviceSummary.Text == "stale summary")
+            throw new InvalidOperationException("Uncommitted threshold text was ignored");
+        await Task.Delay(600);
+        _rt.Store.Load();
+        if (_rt.Store.Settings.DeviceGuardThreshold != 9)
+            throw new InvalidOperationException("Typed guard threshold did not survive reloading saved settings");
+        DeviceGuardThresholdBox.Text = "";
+        if (_rt.Store.Settings.DeviceGuardThreshold != 9)
+            throw new InvalidOperationException("An empty edit reset the previous threshold");
+        if (DescribeDevices(DeviceListState.Ready, 2, true, 9) != "当前 2 台设备在线 · 守卫阈值 9 台"
+            || DescribeDevices(DeviceListState.Ready, 2, false, 9) != "当前 2 台设备在线")
+            throw new InvalidOperationException("Online count and guard threshold are ambiguous");
+        DeviceGuardThresholdBox.Value = 35;
+        if (_rt.Store.Settings.DeviceGuardThreshold != 35)
+            throw new InvalidOperationException("UI threshold range differs from stored settings");
+        DeviceGuardThresholdBox.Value = originalThreshold;
+        DeviceGuardSwitch.IsOn = originallyEnabled;
+        PersistToStore();
+        _saveTimer.Stop();
+        report.AppendLine("PASS guard value, typed text, autosave and summary update without refreshing devices");
     }
 
     private async Task CheckNativeDockingAsync(StringBuilder report)

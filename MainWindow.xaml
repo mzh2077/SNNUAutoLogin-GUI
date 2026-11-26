@@ -1092,7 +1092,7 @@
                                     Grid.Column="2"
                                     Style="{StaticResource RowNumberBoxStyle}"
                                     Minimum="1"
-                                    Maximum="20" />
+                                    Maximum="50" />
                             </Grid>
 
                             <Border Style="{StaticResource DividerStyle}" />

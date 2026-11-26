@@ -331,6 +331,7 @@ public sealed partial class MainWindow : Window
         if (!_uiBuilt) return;
 
         bool changed = _settingsOpen != settings;
+        if (changed && !settings) PersistToStore();
         _settingsOpen = settings;
 
         ApplyPageVisibility(settings);
@@ -1290,9 +1291,11 @@ public sealed partial class MainWindow : Window
         DeviceGuardSwitch.Toggled += (_, _) =>
         {
             UpdateGuardUiEnabledState();
-            ScheduleSave();
+            UpdateGuardSummarySettings();
         };
-        DeviceGuardThresholdBox.ValueChanged += (_, _) => ScheduleSave();
+        DeviceGuardThresholdBox.ValueChanged += (_, _) => UpdateGuardSummarySettings();
+        DeviceGuardThresholdBox.RegisterPropertyChangedCallback(NumberBox.TextProperty,
+            (_, _) => UpdateGuardSummarySettings());
         DeviceGuardProbeTargetBox.TextChanged += (_, _) => ScheduleSave();
         DeviceGuardExternalProbeTargetBox.TextChanged += (_, _) => ScheduleSave();
         DeviceGuardTimeoutBox.ValueChanged += (_, args) =>
@@ -1531,6 +1534,7 @@ public sealed partial class MainWindow : Window
     {
         if (!_uiBuilt) return;
         LoadSettingsToUi();
+        RefreshDeviceSummary();
     }
 
     private void ScrollLogToEnd()
@@ -1693,31 +1697,7 @@ public sealed partial class MainWindow : Window
         DeviceList.ItemsSource = dm.Devices;
         DevicePortText.Text = dm.Port > 0 ? $"端口 {dm.Port}" : "";
 
-        int count = dm.Devices.Count;
-        var s = _rt.Store.Settings;
-        bool guard = s.DeviceGuardEnabled;
-
-        switch (dm.State)
-        {
-            case DeviceListState.Loading:
-                DeviceSummary.Text = count > 0 ? $"当前 {count} 台设备在线" : "正在读取在线设备…";
-                break;
-
-            case DeviceListState.Ready:
-                DeviceSummary.Text = count == 0
-                    ? "当前没有在线设备"
-                    : guard ? $"当前 {count}/{s.DeviceGuardThreshold} 台设备在线" : $"当前 {count} 台设备在线";
-                break;
-
-            case DeviceListState.Failed:
-                // 读不到就照实说，不编数字也不算进总状态
-                DeviceSummary.Text = count > 0 ? $"当前 {count} 台设备在线" : "在线设备暂时读不到";
-                break;
-
-            default:
-                DeviceSummary.Text = "尚未读取在线设备";
-                break;
-        }
+        RefreshDeviceSummary();
 
         bool failed = dm.State == DeviceListState.Failed || !string.IsNullOrEmpty(dm.Error);
         DeviceErrorRow.Visibility = failed ? Visibility.Visible : Visibility.Collapsed;
@@ -2085,6 +2065,7 @@ public sealed partial class MainWindow : Window
 
     private void ScheduleSave()
     {
+        if (!_uiReady) return;
         _saveTimer.Stop();
         _saveTimer.Start();
     }
@@ -2134,8 +2115,7 @@ public sealed partial class MainWindow : Window
 
         s.DeviceGuardEnabled = DeviceGuardSwitch.IsOn;
 
-        double threshold = DeviceGuardThresholdBox.Value;
-        s.DeviceGuardThreshold = double.IsNaN(threshold) ? 2 : Math.Clamp((int)Math.Round(threshold), 1, 50);
+        s.DeviceGuardThreshold = ReadGuardThreshold();
 
         UpdateGuardProbeSettings();
 
@@ -2144,11 +2124,12 @@ public sealed partial class MainWindow : Window
         if (!settingsSaved || !passwordSaved)
             _rt.AddLog("账号或密码保存失败，重启后可能丢失，请检查本地配置目录的写入权限");
 
-        if (AutoStartSwitch.IsOn != s.AutoStart
-            || AutoStartSwitch.IsOn != StartupManager.IsEnabled())
+        if (!_rt.IsUiTest && (AutoStartSwitch.IsOn != s.AutoStart
+            || AutoStartSwitch.IsOn != StartupManager.IsEnabled()))
             _rt.SetAutoStart(AutoStartSwitch.IsOn);
 
         UpdateAutoPill();
+        RefreshDeviceSummary();
         _rt.ApplyLockPolicy();
         _rt.RefreshTray();
     }
