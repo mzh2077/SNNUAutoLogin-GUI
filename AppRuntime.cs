@@ -66,6 +66,21 @@ public sealed class AppRuntime : IAsyncDisposable
     public bool Exiting { get; private set; }
     internal bool ShutdownComplete { get; private set; }
 
+    /// <summary>认证门户当前是否不可达（多半是不在校园网）。界面用它区分「未连接」与「不在校园网」。</summary>
+    public bool PortalDown => Coordinator.PortalDown;
+
+    /// <summary>下一次巡检预计在第几秒后（0 表示正在巡检或已暂停）。</summary>
+    public int SecondsUntilNextCheck
+    {
+        get
+        {
+            if (Coordinator.LastCheckAt is not { } at) return 0;
+            var elapsed = (DateTime.Now - at).TotalSeconds;
+            int left = (int)Math.Ceiling(Coordinator.CurrentDelaySeconds - elapsed);
+            return Math.Clamp(left, 0, 999);
+        }
+    }
+
     /// <summary>状态中文标题（托盘提示与窗口共用）。</summary>
     public string StateLabel { get; private set; } = "待机";
 
@@ -420,6 +435,12 @@ public sealed class AppRuntime : IAsyncDisposable
                 try { Logged?.Invoke(text); } catch { }
             });
         }
+    }
+
+    /// <summary>清空内存里的运行日志（界面上的「清空」按钮）。磁盘上的 trace 不动，方便事后排查。</summary>
+    public void ClearLogs()
+    {
+        lock (_logGate) _logs.Clear();
     }
 
     /// <summary>

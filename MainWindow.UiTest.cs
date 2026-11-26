@@ -29,7 +29,7 @@ public sealed partial class MainWindow
         sb.AppendLine($"theme      = dark={_theme.IsDark} accent=#{_theme.Accent.R:X2}{_theme.Accent.G:X2}{_theme.Accent.B:X2}");
         sb.AppendLine($"accountCrd = {RectOf(AccountCard)}");
         sb.AppendLine($"behavior   = {RectOf(BehaviorCard)}");
-        sb.AppendLine($"ivBox      = {RectOf(IntervalBox)} val={IntervalBox.Value}");
+        sb.AppendLine($"ivSlider   = {RectOf(IntervalSlider)} val={IntervalSlider.Value}");
         sb.AppendLine($"guardCard  = {RectOf(DeviceGuardCard)}");
         sb.AppendLine($"rulesCard  = {RectOf(RulesCard)}");
         sb.AppendLine($"guardState = {RectOf(DeviceGuardStateText)}");

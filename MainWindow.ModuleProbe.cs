@@ -212,7 +212,7 @@ public sealed partial class MainWindow
         checks.Add(("规则列表已绑定", RulesList.ItemsSource is not null, RulesList.Items?.Count.ToString() ?? "0"));
         checks.Add(("守卫阈值框已填", !string.IsNullOrWhiteSpace(DeviceGuardThresholdBox.Text), DeviceGuardThresholdBox.Text));
         checks.Add(("守卫探测目标已填", !string.IsNullOrWhiteSpace(DeviceGuardProbeTargetBox.Text), DeviceGuardProbeTargetBox.Text));
-        checks.Add(("巡检间隔已填", IntervalBox.Value > 0, IntervalBox.Value.ToString()));
+        checks.Add(("巡检间隔已填", IntervalSlider.Value > 0, IntervalSlider.Value.ToString()));
         checks.Add(("出网探测成功", _probeProbeOk, _probeProbeDetail));
 
         int failed = 0;

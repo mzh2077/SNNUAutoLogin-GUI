@@ -85,6 +85,12 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
     public LoginResult? LastResult { get; private set; }
     public DateTime? LastCheckAt { get; private set; }
 
+    /// <summary>
+    /// 最近一轮巡检时认证门户是否不可达。界面据此区分「未连接」与「不在校园网」——
+    /// 这两种在 <see cref="ConnState"/> 里都可能是 Failed/Offline，只有这个标记能分开。
+    /// </summary>
+    public bool PortalDown => _portalDown;
+
     /// <summary>当前巡检节奏（秒），供界面显示。</summary>
     public int CurrentDelaySeconds { get; private set; } = 8;
 

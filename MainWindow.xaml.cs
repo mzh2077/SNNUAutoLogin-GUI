@@ -15,6 +15,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Dispatching;
 using Windows.Storage.Streams;
+using Windows.ApplicationModel.DataTransfer;
 using SNNUAutoLogin.Services;
 using Windows.Graphics;
 using Windows.UI;
@@ -29,11 +30,17 @@ public sealed partial class MainWindow : Window
 {
     private const int MaxLogLines = 40;
 
+    /// <summary>运行日志里最多留几条「事件」（原始日志另有上限）。</summary>
+    private const int MaxEvents = 12;
+
     private readonly AppRuntime _rt;
     private readonly ThemeColors _theme;
     private readonly ObservableCollection<LogEntry> Logs = new();
+    private readonly ObservableCollection<UiLog> Events = new();
+    private readonly List<UiLog> _eventSource = new(MaxEvents + 2);
     private readonly Queue<LogEntry> _pendingLogs = new();
     private DispatcherQueueTimer? _logFlush;
+    private DispatcherQueueTimer? _uiClock;
 
     private AppWindow? _appWindow;
     private WindowCloseHook? _closeHook;
@@ -43,7 +50,6 @@ public sealed partial class MainWindow : Window
     private bool _hiddenToTray;
     private bool _startHidden;
     private bool _settingsOpen;
-    private bool _aboutOpen;
     private bool _guardStatusSeen;
     private string _titleBarRegion = "unset";
     private double _titleBarInset = 146;
@@ -51,6 +57,7 @@ public sealed partial class MainWindow : Window
     private bool _logScrollQueued;
     private bool _legacyDismissed;
     private bool _legacyCleaning;
+    private bool _deviceExpanded;
 
     private readonly DispatcherTimer _saveTimer = new() { Interval = TimeSpan.FromMilliseconds(450) };
 
@@ -112,10 +119,10 @@ public sealed partial class MainWindow : Window
         double scale = GetDpiForWindow(hwnd) / 96.0;
         if (scale <= 0) scale = 1.0;
 
-        int targetW = (int)(1040 * scale);
+        int targetW = (int)(480 * scale);
 
-        // 设置项收进独立页面之后，首页只剩三张卡，840 会空出一大截，压到 780。
-        int targetH = (int)(780 * scale);
+        // 单列布局：首页三块（状态 / 设备 / 日志）刚好一屏，640 不用滚动就能看全。
+        int targetH = (int)(640 * scale);
 
         var area = DisplayArea.GetFromWindowId(id, DisplayAreaFallback.Primary);
         var work = area.WorkArea;
@@ -131,8 +138,9 @@ public sealed partial class MainWindow : Window
         {
             try
             {
-                presenter.PreferredMinimumWidth = (int)(900 * scale);
-                presenter.PreferredMinimumHeight = (int)(620 * scale);            }
+                presenter.PreferredMinimumWidth = (int)(420 * scale);
+                presenter.PreferredMinimumHeight = (int)(540 * scale);
+            }
             catch { }
         }
     }
@@ -263,6 +271,11 @@ public sealed partial class MainWindow : Window
             double w = SettingsNavBtn.ActualWidth, h = SettingsNavBtn.ActualHeight;
             if (w <= 0 || h <= 0)
             {
+                // 设置页没有齿轮：把旧的直通区域清掉，免得标题栏上留一块点不动的死区
+                var barHwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+                var barId = Win32Interop.GetWindowIdFromWindow(barHwnd);
+                InputNonClientPointerSource.GetForWindowId(barId)
+                    .SetRegionRects(NonClientRegionKind.Passthrough, Array.Empty<RectInt32>());
                 _titleBarRegion = $"zero {w:F0}x{h:F0} vis={SettingsNavBtn.Visibility}";
                 return;
             }
@@ -297,26 +310,25 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// 只切可见性，不动动画。重建内容树后恢复停留页面也走这里。
-    /// 齿轮按钮在设置页和关于页隐去——那两页自己有返回箭头，两个入口同时出现反而让人犹豫。
+    /// 齿轮按钮在设置页隐去——那一页自己有返回箭头，两个入口同时出现反而让人犹豫。
     /// </summary>
     private void ApplyPageVisibility(bool settings)
     {
         if (!_uiBuilt) return;
 
-        bool inSettings = settings && !_aboutOpen;
+        HomePage.Visibility = settings ? Visibility.Collapsed : Visibility.Visible;
+        SettingsPage.Visibility = settings ? Visibility.Visible : Visibility.Collapsed;
+        SettingsNavBtn.Visibility = settings ? Visibility.Collapsed : Visibility.Visible;
 
-        HomePage.Visibility = (inSettings || _aboutOpen) ? Visibility.Collapsed : Visibility.Visible;
-        SettingsPage.Visibility = inSettings ? Visibility.Visible : Visibility.Collapsed;
-        AboutPage.Visibility = _aboutOpen ? Visibility.Visible : Visibility.Collapsed;
-        SettingsNavBtn.Visibility = (inSettings || _aboutOpen) ? Visibility.Collapsed : Visibility.Visible;
+        // 齿轮显隐变了，标题栏的直通区域要跟着重报
+        DispatcherQueue.TryEnqueue(UpdateTitleBarInteractiveRegion);
     }
 
-    /// <summary>整页切换。设置页的卡片多，切过去时给它一段和首帧一致的入场。</summary>
+    /// <summary>整页切换。设置页内容长，切过去时给它一段和首帧一致的入场。</summary>
     private void ShowSettingsPage(bool settings, bool animate = true)
     {
         if (!_uiBuilt) return;
 
-        _aboutOpen = false;
         bool changed = _settingsOpen != settings;
         _settingsOpen = settings;
 
@@ -326,12 +338,10 @@ public sealed partial class MainWindow : Window
 
         if (settings)
         {
-            SettingsScroll.ChangeView(null, 0, null, true);
+            SettingsPage.ChangeView(null, 0, null, true);
             Reenter(AccountCard, 0);
-            Reenter(RulesCard, 25);
-            Reenter(IntervalCard, 50);
-            Reenter(DeviceGuardCard, 75);
-            Reenter(BehaviorCard, 100);
+            Reenter(BehaviorCard, 25);
+            Reenter(RulesCard, 50);
         }
         else
         {
@@ -339,22 +349,6 @@ public sealed partial class MainWindow : Window
             Reenter(DeviceCard, 30);
             Reenter(LogCard, 45);
         }
-    }
-
-    /// <summary>关于页是设置页的下一层：从页头的信息按钮进，返回回到设置页。</summary>
-    private void ShowAboutPage(bool about, bool animate = true)
-    {
-        if (!_uiBuilt) return;
-
-        bool changed = _aboutOpen != about;
-        _aboutOpen = about;
-        ApplyPageVisibility(_settingsOpen);
-
-        if (!animate || !changed || !about) return;
-
-        AboutScroll.ChangeView(null, 0, null, true);
-        Reenter(AboutHero, 0);
-        Reenter(AboutLinks, 40);
     }
 
     /// <summary>
@@ -377,28 +371,6 @@ public sealed partial class MainWindow : Window
 
     private void OnSettingsNavClicked(object sender, RoutedEventArgs e) => ShowSettingsPage(true);
     private void OnSettingsBackClicked(object sender, RoutedEventArgs e) => ShowSettingsPage(false);
-    private void OnAboutNavClicked(object sender, RoutedEventArgs e) => ShowAboutPage(true);
-    private void OnAboutBackClicked(object sender, RoutedEventArgs e) => ShowAboutPage(false);
-
-    /// <summary>探测地址、超时这些一年改不上一次，默认收起。</summary>
-    private void OnGuardAdvancedToggled(object sender, RoutedEventArgs e)
-    {
-        if (!_uiBuilt) return;
-
-        bool show = GuardAdvancedPanel.Visibility != Visibility.Visible;
-        if (show)
-        {
-            Fx.Reveal(GuardAdvancedPanel, 6f, Fx.FastMs);
-            GuardAdvancedToggleText.Text = "收起高级设置";
-            GuardAdvancedChevron.Glyph = "\uE70E";
-        }
-        else
-        {
-            Fx.Conceal(GuardAdvancedPanel, Fx.FastMs);
-            GuardAdvancedToggleText.Text = "高级探测设置";
-            GuardAdvancedChevron.Glyph = "\uE70D";
-        }
-    }
 
     /// <summary>窗口最小化：延迟一拍归还工作集，避免打断最小化过渡动画。</summary>
     private async void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
@@ -457,6 +429,7 @@ public sealed partial class MainWindow : Window
         ApplyCommandLineOverrides();
 
         LogList.ItemsSource = Logs;
+        LogEvents.ItemsSource = Events;
         ShowVersion();
         ShowUpdateLink();
 
@@ -478,13 +451,13 @@ public sealed partial class MainWindow : Window
         // 重建窗口时验证码可能已经在了（从托盘召回的情形）
         _ = SyncCaptchaAsync();
 
-        FitToggleWidths();
-        DispatcherQueue.TryEnqueue(FitToggleWidths);
+        // 时长与倒计时每秒走一格；窗口拆掉时随 _uiBuilt 一起停
+        StartUiClock();
 
         // XAML 重建后默认停在首页，把离开前那一页补回来
         ApplyPageVisibility(_settingsOpen);
 
-        // 首帧把焦点停在根上：否则框架会把焦点丢给第一个可聚焦按钮（「立即登录」），
+        // 首帧把焦点停在根上：否则框架会把焦点丢给第一个可聚焦按钮（「立即连接」），
         // 打开窗口就顶着一圈焦点框，像是被人点过一样。
         try { Root.Focus(FocusState.Programmatic); } catch { }
     }
@@ -498,17 +471,19 @@ public sealed partial class MainWindow : Window
         if (!_uiBuilt) return;
 
         PersistToStore();
-        ClearPublicIp();
         _uiBuilt = false;
 
         // 文本控件跟着树一起没了，重建后要重新等后台推一次守卫状态
         _guardStatusSeen = false;
 
         try { LogList.ItemsSource = null; } catch { }
+        try { LogEvents.ItemsSource = null; } catch { }
         Logs.Clear();
+        Events.Clear();
         _pendingLogs.Clear();
         _logFlush?.Stop();
         _logFlush = null;
+        _uiClock?.Stop();
 
         Content = null;
         DropElementReferences();
@@ -545,9 +520,24 @@ public sealed partial class MainWindow : Window
         catch { }
     }
 
-    /// <summary>把 x:Name 生成的控件字段全部置空，断开它们对已卸载树的强引用。</summary>
-    private void DropElementReferences()
+    /// <summary>按名字找模板里的子元素（自检用来量开关轨道、输入框内层）。</summary>
+    private static FrameworkElement? FindDescendant(DependencyObject root, string name)
     {
+        int n = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < n; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is FrameworkElement fe && fe.Name == name) return fe;
+
+            var hit = FindDescendant(child, name);
+            if (hit is not null) return hit;
+        }
+
+        return null;
+    }
+
+    /// <summary>把 x:Name 生成的控件字段全部置空，断开它们对已卸载树的强引用。</summary>
+    private void DropElementReferences()    {
         var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         foreach (var f in GetType().GetFields(flags))
         {
@@ -595,8 +585,6 @@ public sealed partial class MainWindow : Window
 
         try { SetForegroundWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)); } catch { }
 
-        FitToggleWidths();
-        DispatcherQueue.TryEnqueue(FitToggleWidths);
         PlayIntro();
 
         RunStartupHooks();
@@ -672,38 +660,80 @@ public sealed partial class MainWindow : Window
         catch { }
     }
 
+    /// <summary>
+    /// 界面上显示的这一个状态：标题、一句人话、图标、颜色、是否转圈。
+    /// 全程序只有这里能产出状态文案 —— 设备读取失败、日志里的告警都不参与，
+    /// 否则就会出现「顶部已连接、下面说连不上」这种自相矛盾。
+    /// </summary>
+    private readonly record struct StateView(string Title, string Subtitle, string Glyph, Color Color, bool Busy)
+    {
+        public bool Online => Title == "已连接";
+    }
+
+    /// <summary>把巡检状态 + 门户可达性折算成唯一可信的界面状态。</summary>
+    private StateView DescribeState(ConnState state, LoginResult? result)
+    {
+        bool portalDown = _rt.PortalDown;
+
+        switch (state)
+        {
+            case ConnState.Online:
+                string rhythm = _rt.Store.Settings.AutoReconnect
+                    ? "校园网正常，正在自动保持在线"
+                    : "校园网正常";
+                return new StateView("已连接", rhythm, "\uE73E", _theme.Success, false);
+
+            case ConnState.Connecting:
+                return new StateView("正在认证", "正在向认证服务器提交账号信息…", "\uE895", _theme.Accent, true);
+
+            case ConnState.Checking:
+                return new StateView("正在检测", "正在确认当前网络是否已经认证", "\uE72C", _theme.Accent, true);
+
+            case ConnState.CaptchaRequired:
+                return new StateView("正在认证", "需要输入图片验证码才能继续", "\uE8D7", _theme.Caution, false);
+
+            case ConnState.Offline when portalDown:
+                return new StateView("不在校园网", "打不开认证门户，连回校园网后会自动继续", "\uE774", _theme.Neutral, false);
+
+            case ConnState.Offline:
+                return new StateView("未连接", "点下面的按钮登录校园网", "\uE7BA", _theme.Caution, false);
+
+            case ConnState.Failed when portalDown:
+                return new StateView("不在校园网", "打不开认证门户，先确认已经连上校园网", "\uE774", _theme.Neutral, false);
+
+            case ConnState.Failed:
+                string why = result?.Message is { Length: > 0 } m && m != "未认证"
+                    ? m
+                    : "账号或密码可能不对";
+                return new StateView("认证失败", why, "\uE783", _theme.Critical, false);
+
+            default:
+                return new StateView("准备就绪", "正在读取本机状态…", "\uE7E8", _theme.Neutral, false);
+        }
+    }
+
     /// <summary>把当前状态对应的图标/圆底/进度环重新上色（复用画刷，避免每轮巡检都分配）。</summary>
     private void RepaintState(ConnState state)
     {
-        var (glyph, busy, color) = state switch
-        {
-            ConnState.Online => ("\uE73E", false, _theme.Success),
-            ConnState.Connecting => ("\uE895", true, _theme.Accent),
-            ConnState.Offline => ("\uE7BA", false, _theme.Caution),
-            ConnState.Failed => ("\uE783", false, _theme.Critical),
-            ConnState.CaptchaRequired => ("\uE8D7", false, _theme.Caution),
-            ConnState.Checking => ("\uE72C", true, _theme.Neutral),
-            _ => ("\uE7E8", false, _theme.Neutral)
-        };
+        var view = DescribeState(state, _rt.LastResult);
+        var brush = BrushCache.Get(view.Color);
 
-        var brush = BrushCache.Get(color);
-        bool glyphChanged = StateIcon.Glyph != glyph;
+        bool glyphChanged = StateIcon.Glyph != view.Glyph;
 
         StateIcon.Foreground = brush;
-        StateIcon.Glyph = glyph;
+        StateIcon.Glyph = view.Glyph;
         BusyRing.Foreground = brush;
 
         // 忙碌时只留系统进度环，圆底收起来 —— 一个实心淡色圆盘垫在环后面更像"压了个饼"
-        double haloAlpha = state == ConnState.Online ? 0.14 : 0.10;
-        HaloRing.Fill = BrushCache.Get(ThemeColors.WithAlpha(color, haloAlpha));
-        HaloRing.Visibility = busy ? Visibility.Collapsed : Visibility.Visible;
+        HaloRing.Fill = BrushCache.Get(ThemeColors.WithAlpha(view.Color, view.Online ? 0.14 : 0.10));
+        HaloRing.Visibility = view.Busy ? Visibility.Collapsed : Visibility.Visible;
 
-        BusyRing.IsActive = busy;
-        BusyRing.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
-        StateIcon.Visibility = busy ? Visibility.Collapsed : Visibility.Visible;
+        BusyRing.IsActive = view.Busy;
+        BusyRing.Visibility = view.Busy ? Visibility.Visible : Visibility.Collapsed;
+        StateIcon.Visibility = view.Busy ? Visibility.Collapsed : Visibility.Visible;
 
         // 图标切换时弹一下，比硬换字形更容易被眼睛接住
-        if (glyphChanged && !busy) Fx.Pop(StateIcon, 0.9f, 280);
+        if (glyphChanged && !view.Busy) Fx.Pop(StateIcon, 0.9f, 280);
     }
 
     private void OnWindowActivated(object sender, WindowActivatedEventArgs args)
@@ -758,8 +788,9 @@ public sealed partial class MainWindow : Window
         TraySwitch.IsOn = s.MinimizeToTray;
         LockKeepSwitch.IsOn = s.KeepAliveOnLock;
 
-        // 巡检时长：直接填数值，没有下拉索引这一层，也就不会再出现「填了 20 却被写回 8」
-        IntervalBox.Value = Math.Clamp(s.CheckIntervalSeconds, MinIntervalSeconds, MaxIntervalSeconds);
+        // 巡检间隔：Slider 的值就是唯一真值，钳到合法范围再落盘
+        IntervalSlider.Value = Math.Clamp(s.CheckIntervalSeconds, MinIntervalSeconds, MaxIntervalSeconds);
+        UpdateIntervalDesc();
 
         DeviceGuardSwitch.IsOn = s.DeviceGuardEnabled;
         DeviceGuardThresholdBox.Value = s.DeviceGuardThreshold;
@@ -769,9 +800,9 @@ public sealed partial class MainWindow : Window
         UpdateGuardUiEnabledState();
 
         // 后台还没推过状态时，卡片底部的占位文案要跟开关一致：
-        // 开关明明开着，下面却写「守卫未启用」，看着像坏了。
+        // 开关明明开着，下面却写「未启用」，看着像坏了。
         if (!_guardStatusSeen)
-            DeviceGuardStateText.Text = s.DeviceGuardEnabled ? "监测已启用，等待首次检测" : "守卫未启用";
+            DeviceGuardStateText.Text = s.DeviceGuardEnabled ? "监测已启用，等待首次检测" : "监测未启用";
 
         SyncLegacyHostsBar();
         _uiReady = ready;
@@ -779,23 +810,32 @@ public sealed partial class MainWindow : Window
         RefreshRulesUi();
     }
 
-    /// <summary>守卫关闭时把下面三项置灰 —— 但已经填好的值要留着，别让人重填一遍。</summary>
+    private void UpdateIntervalDesc()
+    {
+        IntervalDescText.Text = $"每 {Math.Round(IntervalSlider.Value)} 秒检查一次是否在线";
+    }
+
+    /// <summary>守卫关闭时整段折叠，不留一排灰控件。值本身留着，重新打开不用重填。</summary>
     private void UpdateGuardUiEnabledState()
     {
         bool on = DeviceGuardSwitch.IsOn;
-        DeviceGuardThresholdBox.IsEnabled = on;
-        DeviceGuardProbeTargetBox.IsEnabled = on;
-        DeviceGuardExternalProbeTargetBox.IsEnabled = on;
-        DeviceGuardTimeoutBox.IsEnabled = on;
-        DeviceGuardProbeNowBtn.IsEnabled = on;
+        GuardRows.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void FillLogsFromRuntime()
     {
         Logs.Clear();
-        foreach (var e in _rt.LogSnapshot) Logs.Add(e);
+        Events.Clear();
+
+        foreach (var e in _rt.LogSnapshot)
+        {
+            Logs.Add(e);
+            RecordEvent(e);
+        }
 
         while (Logs.Count > MaxLogLines) Logs.RemoveAt(0);
+
+        UpdateLogBadge();
         ScrollLogToEnd();
     }
 
@@ -812,21 +852,21 @@ public sealed partial class MainWindow : Window
 
             string state = status.State switch
             {
-                DeviceGuardState.Disabled => "守卫未启用",
-                DeviceGuardState.Idle => "待检测",
-                DeviceGuardState.Probing => "正在检测出网连通性…",
-                DeviceGuardState.Disposing => "正在断开本机连接…",
-                DeviceGuardState.Reauthenticating => "正在重新认证…",
-                DeviceGuardState.Cooldown => "冷却中，稍后再检测",
-                DeviceGuardState.Stopped => "已停止自动处置，请检查网络或手动重新连接",
-                _ => "待检测"
+                DeviceGuardState.Disabled => "监测未启用",
+                DeviceGuardState.Idle => "待命",
+                DeviceGuardState.Probing => "正在检查出网",
+                DeviceGuardState.Disposing => "正在断开本机连接",
+                DeviceGuardState.Reauthenticating => "正在重新认证",
+                DeviceGuardState.Cooldown => "稍后再检测",
+                DeviceGuardState.Stopped => "已停止自动处理，请检查网络",
+                _ => "待命"
             };
 
-            DeviceGuardStateText.Text = $"{state} · 在线设备 {status.DeviceCount} 台 · 阈值 {status.Threshold} · 统计端口 {status.StatisticPort}";
+            DeviceGuardStateText.Text = $"{state} · 在线 {status.DeviceCount} 台（上限 {status.Threshold}）";
 
             DeviceGuardLastText.Text = status.LastProbeAt is null
-                ? "尚未检测"
-                : $"上次检测 {status.LastProbeAt:HH:mm:ss} · {(status.LastProbeOk == true ? "通过" : "失败")} · {status.LastMessage}";
+                ? "还没检查过"
+                : $"上次检查 {status.LastProbeAt:HH:mm} · {(status.LastProbeOk == true ? "正常" : "异常")} · {status.LastMessage}";
 
             RefreshRulesUi();
         });
@@ -1201,27 +1241,16 @@ public sealed partial class MainWindow : Window
         _ => op.ToString()
     };
 
-    /// <summary>巡检时长的快捷值按钮。</summary>
-    private void OnIntervalQuickClicked(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement fe) return;
-        if (fe.Tag is not string tag || !int.TryParse(tag, out int seconds)) return;
-
-        IntervalBox.Value = Math.Clamp(seconds, MinIntervalSeconds, MaxIntervalSeconds);
-        ScheduleSave();
-    }
-
+    /// <summary>开关关掉时整行折叠 —— 灰着一排用不了的控件比藏起来更让人困惑。</summary>
     private void UpdateReauthenticateControls()
     {
-        ReauthenticateValueBox.IsEnabled = ReauthenticateSwitch.IsOn;
-        ReauthenticateUnitBox.IsEnabled = ReauthenticateSwitch.IsOn;
+        ReauthRows.Visibility = ReauthenticateSwitch.IsOn ? Visibility.Visible : Visibility.Collapsed;
         ReauthenticateValueBox.Maximum = ReauthenticateUnitBox.SelectedIndex == 1 ? 365 : 8760;
     }
 
     private void WireEvents()
     {
         ConnectBtn.Click += async (_, _) => await OnConnectClicked();
-        RefreshBtn.Click += async (_, _) => await OnRefreshClicked();
 
         AccountBox.TextChanged += (_, _) => ScheduleSave();
         PwdBox.PasswordChanged += (_, _) => ScheduleSave();
@@ -1246,7 +1275,11 @@ public sealed partial class MainWindow : Window
             ScheduleSave();
             _rt.RefreshTray();
         };
-        IntervalBox.ValueChanged += (_, _) => ScheduleSave();
+        IntervalSlider.ValueChanged += (_, _) =>
+        {
+            UpdateIntervalDesc();
+            ScheduleSave();
+        };
 
         // 同时在线设备监测
         DeviceGuardSwitch.Toggled += (_, _) =>
@@ -1279,11 +1312,16 @@ public sealed partial class MainWindow : Window
         // 主按钮按下时轻微回弹（合成线程 Scale 通道，不参与布局）
         Fx.PressFeedback(ConnectBtn);
         Fx.PressFeedback(CaptchaSubmitBtn);
-        Fx.PressFeedback(RefreshBtn);
-        Fx.PressFeedback(DeviceRefreshBtn);
+        Fx.PressFeedback(DeviceToggleBtn);
 
-        // 在线设备
-        DeviceRefreshBtn.Click += async (_, _) => await OnDeviceRefreshClicked();
+        // 在线设备：整行展开 / 收起，重试走卡片里的链接
+        DeviceToggleBtn.Click += (_, _) => ToggleDeviceBody();
+        DeviceRetryBtn.Click += async (_, _) => await OnDeviceRefreshClicked();
+
+        // 日志：复制与清空
+        LogCopyBtn.Click += (_, _) => CopyEventLog();
+        LogClearBtn.Click += async (_, _) => await ClearEventLogAsync();
+        RawLogCopyBtn.Click += (_, _) => CopyRawLog();
 
         LegacyCleanBtn.Click += (_, _) => OnLegacyCleanClicked();
         LegacyDismissBtn.Click += (_, _) =>
@@ -1293,6 +1331,69 @@ public sealed partial class MainWindow : Window
         };
 
         _uiReady = true;
+    }
+
+    // ────────────────────────── 运行日志交互 ──────────────────────────
+
+    /// <summary>复制给开发者看的这一份：时间 + 一句人话 + 重复次数。</summary>
+    private void CopyEventLog()
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var e in Events)
+        {
+            sb.Append(e.Time).Append("  ").Append(e.Text);
+            if (e.Count > 1) sb.Append("（×").Append(e.Count).Append('）');
+            sb.AppendLine();
+        }
+
+        if (sb.Length == 0) sb.AppendLine("（暂无事件）");
+        CopyToClipboard(sb.ToString());
+    }
+
+    private void CopyRawLog()
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var e in Logs) sb.Append(e.Time).Append("  ").AppendLine(e.Text);
+        if (sb.Length == 0) sb.AppendLine("（暂无日志）");
+        CopyToClipboard(sb.ToString());
+    }
+
+    private void CopyToClipboard(string text)
+    {
+        try
+        {
+            var package = new DataPackage();
+            package.SetText(text);
+            Clipboard.SetContent(package);
+            _rt.AddLog("日志已复制到剪贴板");
+        }
+        catch (Exception ex)
+        {
+            _rt.AddLog($"复制失败：{ex.Message}");
+        }
+    }
+
+    private async Task ClearEventLogAsync()
+    {
+        if (Events.Count == 0) return;
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Root.XamlRoot,
+            Title = "清空运行日志？",
+            Content = "只清空这里显示的事件，不影响账号和设置。",
+            PrimaryButtonText = "清空",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        Events.Clear();
+        Logs.Clear();
+        _rt.ClearLogs();
+        UpdateLogBadge();
+        LogEmptyText.Visibility = Visibility.Visible;
     }
 
     // ────────────────────────── 运行时事件 ──────────────────────────
@@ -1335,10 +1436,90 @@ public sealed partial class MainWindow : Window
             var e = _pendingLogs.Dequeue();
             if (skip-- > 0) continue;
             Logs.Add(e);
+            RecordEvent(e);
         }
 
         while (Logs.Count > MaxLogLines) Logs.RemoveAt(0);
         ScrollLogToEnd();
+    }
+
+    // ────────────────────────── 日志提炼 ──────────────────────────
+
+    /// <summary>
+    /// 把一行内部日志翻译成一句人话；返回 null 表示这条只进原始日志，不往界面上放。
+    /// 界面上只留「登录成功 / 掉线重连 / 失败原因 / 验证码 / 网络变化」这几类，
+    /// 「守卫状态」「巡检」这种词对普通学生没有意义。
+    /// </summary>
+    private static string? DescribeEvent(string raw)
+    {
+        if (raw.StartsWith("登录成功", StringComparison.Ordinal))
+            return "已连接校园网";
+
+        if (raw.StartsWith("检测到未认证", StringComparison.Ordinal))
+            return "检测到掉线，正在自动重连";
+
+        if (raw.StartsWith("登录失败：", StringComparison.Ordinal))
+            return "登录失败：" + raw["登录失败：".Length..];
+
+        if (raw.StartsWith("验证码未通过", StringComparison.Ordinal))
+            return "验证码不对，请重新输入";
+
+        if (raw.Contains("需要输入图片验证码", StringComparison.Ordinal)
+            || raw.Contains("要求输入验证码", StringComparison.Ordinal)
+            || raw.Contains("验证码已过期", StringComparison.Ordinal))
+            return "需要输入验证码";
+
+        if (raw.Contains("认证门户不可达", StringComparison.Ordinal))
+            return "当前不在校园网，自动登录已暂停";
+
+        if (raw.StartsWith("定时重新认证到期", StringComparison.Ordinal)
+            || raw.StartsWith("收到重新认证请求", StringComparison.Ordinal))
+            return "按计划重新认证";
+
+        if (raw.StartsWith("本机连接已断开", StringComparison.Ordinal))
+            return "已断开连接，稍后会自动重连";
+
+        if (raw.StartsWith("断开原连接失败", StringComparison.Ordinal))
+            return "断开旧连接失败，这次没有继续";
+
+        if (raw.Contains("网络状态变化", StringComparison.Ordinal)
+            || raw.Contains("网络已切换", StringComparison.Ordinal)
+            || raw.Contains("网络发生变化", StringComparison.Ordinal))
+            return "网络发生变化，正在重新认证";
+
+        if (raw.StartsWith("刷新失败", StringComparison.Ordinal)
+            || raw.StartsWith("刷新超时", StringComparison.Ordinal))
+            return "刷新状态失败，请稍后再试";
+
+        return null;
+    }
+
+    /// <summary>收一条事件；同一句话在 10 分钟内重复出现就归并计数。</summary>
+    private void RecordEvent(LogEntry raw)
+    {
+        if (DescribeEvent(raw.Text) is not { } text) return;
+
+        if (Events.Count > 0 && Events[^1].Text == text
+            && DateTime.Now - Events[^1].At < TimeSpan.FromMinutes(10))
+        {
+            var last = Events[^1];
+            last.Count++;
+            last.Time = raw.Time;
+            UpdateLogBadge();
+            return;
+        }
+
+        Events.Add(new UiLog { At = DateTime.Now, Time = raw.Time, Text = text });
+
+        while (Events.Count > MaxEvents) Events.RemoveAt(0);
+        UpdateLogBadge();
+    }
+
+    private void UpdateLogBadge()
+    {
+        if (!_uiBuilt) return;
+        LogBadge.Text = Events.Count == 0 ? "暂无事件" : $"{Events.Count} 条事件";
+        LogEmptyText.Visibility = Events.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void OnRuntimeSettings()
@@ -1358,194 +1539,138 @@ public sealed partial class MainWindow : Window
             if (!_uiBuilt) return;
             if (LogScroll.ScrollableHeight > 0)
                 LogScroll.ChangeView(null, LogScroll.ScrollableHeight, null, true);
+            if (RawLogScroll.ScrollableHeight > 0)
+                RawLogScroll.ChangeView(null, RawLogScroll.ScrollableHeight, null, true);
         });
     }
 
     // ────────────────────────── 状态渲染 ──────────────────────────
-
-    /// <summary>
-    /// 系统 ToggleSwitch 模板为「开 / 关」文字预留了 154 的 MinWidth，该值由 StaticResource
-    /// 解析，页面级覆盖无效。这里读模板里轨道（OuterBorder）的实测宽度，把控件宽度夹到刚好
-    /// 等于轨道：整条轨道完整可见（MaxWidth 会裁掉右侧），同时贴住行尾对齐。
-    /// </summary>
-    private void FitToggleWidths()
-    {
-        if (!_uiBuilt) return;
-
-        foreach (var sw in new[] { AutoStartSwitch, AutoReconnectSwitch, TraySwitch, LockKeepSwitch })
-        {
-            if (sw is null) continue;
-
-            var track = FindDescendant(sw, "OuterBorder");
-            if (track is { ActualWidth: > 1 })
-                sw.Width = track.ActualWidth;
-        }
-    }
-
-    private static FrameworkElement? FindDescendant(DependencyObject root, string name)
-    {
-        int n = VisualTreeHelper.GetChildrenCount(root);
-        for (int i = 0; i < n; i++)
-        {
-            var child = VisualTreeHelper.GetChild(root, i);
-            if (child is FrameworkElement fe && fe.Name == name) return fe;
-
-            var hit = FindDescendant(child, name);
-            if (hit is not null) return hit;
-        }
-
-        return null;
-    }
-
-    private static readonly System.Net.Http.HttpClient PublicIpClient = new(
-        new System.Net.Http.SocketsHttpHandler { UseProxy = false })
-    {
-        Timeout = TimeSpan.FromSeconds(4)
-    };
-
-    private System.Threading.CancellationTokenSource? _publicIpRequest;
-    private (string? Account, string? Ip, string? LoginTime)? _publicIpSession;
-    private long _publicIpCheckedAt;
-
-    private void ClearPublicIp()
-    {
-        _publicIpRequest?.Cancel();
-        _publicIpRequest = null;
-        _publicIpSession = null;
-        if (PublicIpText is { } text) text.Text = "—";
-    }
-
-    private async Task UpdatePublicIpAsync(LoginResult? result, bool force = false)
-    {
-        var session = (result?.Account, result?.Ip, result?.LoginTime);
-        if (_publicIpSession == session && (_publicIpRequest is not null
-            || (!force && Environment.TickCount64 - _publicIpCheckedAt < 300_000))) return;
-
-        ClearPublicIp();
-        _publicIpSession = session;
-        PublicIpText.Text = "查询中…";
-        using var request = new System.Threading.CancellationTokenSource();
-        _publicIpRequest = request;
-        string value = "暂不可用";
-        try
-        {
-            string body = await PublicIpClient.GetStringAsync("https://ipinfo.io/ip", request.Token);
-            if (System.Net.IPAddress.TryParse(body.Trim(), out var address))
-                value = address.ToString();
-        }
-        catch (System.Net.Http.HttpRequestException) { }
-        catch (OperationCanceledException) { }
-        finally
-        {
-            if (ReferenceEquals(_publicIpRequest, request))
-            {
-                _publicIpRequest = null;
-                _publicIpCheckedAt = Environment.TickCount64;
-                if (_uiBuilt) PublicIpText.Text = value;
-            }
-        }
-    }
 
     private void ApplyState(ConnState state, LoginResult? result, bool animate)
     {
         if (!_uiBuilt) return;
 
         _lastState = state;
-        if (state != ConnState.Online) ClearPublicIp();
+        var view = DescribeState(state, result);
 
-        string title;
-        string subtitle;
-
-        switch (state)
-        {
-            case ConnState.Online:
-                title = "已连接";
-                string rhythm = $"每 {_rt.Coordinator.CurrentDelaySeconds} 秒巡检";
-                subtitle = result?.LoginTime is { Length: > 0 } t
-                    ? $"认证时间 {t} · {rhythm}"
-                    : $"当前出口已通过认证 · {rhythm}";
-                AccText.Text = result?.Account ?? (string.IsNullOrWhiteSpace(AccountBox.Text) ? "—" : AccountBox.Text.Trim());
-                IpText.Text = result?.Ip ?? "—";
-                _ = UpdatePublicIpAsync(result);
-                break;
-
-            case ConnState.Connecting:
-                title = "正在登录";
-                subtitle = "正在向认证服务器提交账号信息…";
-                break;
-
-            case ConnState.Offline:
-                title = "未登录";
-                subtitle = result?.Message is { Length: > 0 } m && m != "未认证"
-                    ? m
-                    : "校园网尚未认证，点按下方按钮登录";
-                AccText.Text = string.IsNullOrWhiteSpace(AccountBox.Text) ? "—" : AccountBox.Text.Trim();
-                IpText.Text = "—";
-                break;
-
-            case ConnState.Failed:
-                title = "登录失败";
-                subtitle = result?.Message is { Length: > 0 } fm && fm != "未认证" ? fm : "请检查账号密码或网络环境";
-                break;
-
-            case ConnState.CaptchaRequired:
-                title = "需要验证码";
-                subtitle = result?.Message is { Length: > 0 } cm ? cm : "请在下方输入图片验证码";
-                break;
-
-            case ConnState.Checking:
-                title = "正在检测";
-                subtitle = "正在检测出口认证状态…";
-                break;
-
-            default:
-                title = "待机";
-                subtitle = "等待操作";
-                break;
-        }
+        // 状态一变，上一次刷新留下的提示就过期了
+        StatusNotice.Visibility = Visibility.Collapsed;
 
         RepaintState(state);
 
-        // 文字变化走交叉淡入：状态在「正在登录 → 已连接」之间跳变时不会硬切一下
-        Fx.SwapText(StateTitle, title, animate);
-        Fx.SwapText(StateSubtitle, subtitle, animate, 4f, 200);
+        // 文字变化走交叉淡入：状态在「正在认证 → 已连接」之间跳变时不会硬切一下
+        Fx.SwapText(StateTitle, view.Title, animate);
+        Fx.SwapText(StateSubtitle, view.Subtitle, animate, 4f, 200);
 
-        if (state == ConnState.Connecting)
-        {
-            ConnectLabel.Text = "登录中…";
-            ConnectIcon.Glyph = "\uE895";
-        }
-        else if (state == ConnState.Online)
-        {
-            ConnectLabel.Text = "重新登录";
-            ConnectIcon.Glyph = "\uE72C";
-        }
-        else
-        {
-            ConnectLabel.Text = "立即登录";
-            ConnectIcon.Glyph = "\uE7E8";
-        }
+        string account = result?.Account ?? _rt.Store.Settings.Account;
+        AccText.Text = ShortAccount(account);
+        IpText.Text = state == ConnState.Online ? result?.Ip ?? "—" : "—";
+        OutletText.Text = OperatorName(_rt.Coordinator.ActiveOperator);
 
-        TitleState.Text = title;
-        TitleDot.Fill = BrushCache.Get(state switch
-        {
-            ConnState.Online => _theme.Success,
-            ConnState.Failed => _theme.Critical,
-            ConnState.Offline => _theme.Caution,
-            ConnState.CaptchaRequired => _theme.Caution,
-            ConnState.Connecting => _theme.Accent,
-            _ => _theme.Neutral
-        });
-
+        UpdateClockTexts();
         UpdateAutoPill();
+
+        ConnectLabel.Text = state switch
+        {
+            ConnState.Online => "重新登录",
+            ConnState.Connecting => "正在认证…",
+            _ => "立即连接"
+        };
+
+        ConnectIcon.Glyph = state switch
+        {
+            ConnState.Online => "\uE72C",
+            ConnState.Connecting => "\uE895",
+            _ => "\uE7E8"
+        };
+
+        // 认证进行中再点主按钮只会重复提交，先禁掉；其余状态都可点
+        ConnectBtn.IsEnabled = !view.Busy && !_rt.Exiting;
+        DisconnectItem.IsEnabled = state == ConnState.Online;
+        SwitchOutletItem.IsEnabled = !view.Busy;
+
+        // 一直在线的话日志会一条都没有，看起来像坏了。连上时补一条「当前已连接」。
+        if (state == ConnState.Online && Events.Count == 0)
+        {
+            Events.Add(new UiLog
+            {
+                At = DateTime.Now,
+                Time = DateTime.Now.ToString("HH:mm:ss"),
+                Text = "当前已连接校园网"
+            });
+            UpdateLogBadge();
+        }
+    }
+
+    /// <summary>账号去掉 @mobile 这类出口后缀，信息格里放不下也没必要看。</summary>
+    private static string ShortAccount(string? account)
+    {
+        if (string.IsNullOrWhiteSpace(account)) return "—";
+        int at = account.IndexOf('@');
+        return at > 0 ? account[..at] : account;
+    }
+
+    /// <summary>每秒刷新一次的两格：已连接时长、下次巡检倒计时。</summary>
+    private void UpdateClockTexts()
+    {
+        if (!_uiBuilt) return;
+
+        // 没连接的时候不该显示上一次的时长，那会让人以为现在还连着
+        DurationText.Text = _lastState == ConnState.Online
+            ? FormatDuration(_rt.LastResult?.LoginTime)
+            : "—";
+
+        int left = _rt.SecondsUntilNextCheck;
+        CountdownText.Text = _lastState switch
+        {
+            ConnState.Connecting => "认证中",
+            ConnState.CaptchaRequired => "已暂停",
+            _ when _rt.Coordinator.LastCheckAt is null => "—",
+            _ => left <= 0 ? "马上" : $"{left} 秒后"
+        };
+    }
+
+    private static string FormatDuration(string? loginTime)
+    {
+        if (string.IsNullOrWhiteSpace(loginTime)) return "—";
+        if (!DateTime.TryParse(loginTime, out var at)) return "—";
+
+        var span = DateTime.Now - at;
+        if (span < TimeSpan.Zero) return "刚刚";
+        if (span.TotalMinutes < 1) return "刚刚";
+        if (span.TotalHours < 1) return $"{(int)span.TotalMinutes} 分钟";
+        if (span.TotalDays < 1) return $"{(int)span.TotalHours} 小时 {(int)span.Minutes} 分";
+        return $"{(int)span.TotalDays} 天 {(int)span.Hours} 小时";
+    }
+
+    /// <summary>UI 秒表：只在窗口存在时跑，拆树时停掉。</summary>
+    private void StartUiClock()
+    {
+        _uiClock ??= DispatcherQueue.CreateTimer();
+        _uiClock.Interval = TimeSpan.FromSeconds(1);
+        _uiClock.IsRepeating = true;
+        _uiClock.Tick -= OnUiClockTick;
+        _uiClock.Tick += OnUiClockTick;
+        _uiClock.Start();
+    }
+
+    private void OnUiClockTick(DispatcherQueueTimer sender, object args)
+    {
+        if (!_uiBuilt)
+        {
+            sender.Stop();
+            return;
+        }
+
+        UpdateClockTexts();
     }
 
     private void UpdateAutoPill()
     {
         if (!_uiBuilt) return;
 
-        bool auto = _rt.Store.Settings.AutoStart && StartupManager.IsEnabled();
-        AutoLabel.Text = auto ? "自动登录 · 已启用" : "自动登录 · 未启用";
+        bool auto = _rt.Store.Settings.AutoReconnect;
+        AutoLabel.Text = auto ? "已开启" : "已关闭";
         AutoDot.Fill = BrushCache.Get(auto ? _theme.Success : _theme.Neutral);
     }
 
@@ -1561,41 +1686,53 @@ public sealed partial class MainWindow : Window
         var dm = _rt.Devices;
 
         DeviceList.ItemsSource = dm.Devices;
-        DevicePortText.Text = $"端口 {dm.Port}";
+        DevicePortText.Text = dm.Port > 0 ? $"端口 {dm.Port}" : "";
 
-        bool loading = dm.State == DeviceListState.Loading;
-        DeviceRefreshBtn.IsEnabled = !loading;
+        int count = dm.Devices.Count;
+        var s = _rt.Store.Settings;
+        bool guard = s.DeviceGuardEnabled;
 
         switch (dm.State)
         {
             case DeviceListState.Loading:
-                DeviceSummary.Text = "正在读取在线设备…";
+                DeviceSummary.Text = count > 0 ? $"当前 {count} 台设备在线" : "正在读取在线设备…";
                 break;
 
             case DeviceListState.Ready:
-                DeviceSummary.Text = dm.Devices.Count == 0
-                    ? "暂无在线设备"
-                    : $"共 {dm.Devices.Count} 台在线设备";
+                DeviceSummary.Text = count == 0
+                    ? "当前没有在线设备"
+                    : guard ? $"当前 {count}/{s.DeviceGuardThreshold} 台设备在线" : $"当前 {count} 台设备在线";
                 break;
 
             case DeviceListState.Failed:
-                DeviceSummary.Text = "在线设备读取失败";
+                // 读不到就照实说，不编数字也不算进总状态
+                DeviceSummary.Text = count > 0 ? $"当前 {count} 台设备在线" : "在线设备暂时读不到";
                 break;
 
             default:
-                DeviceSummary.Text = "尚未加载";
+                DeviceSummary.Text = "尚未读取在线设备";
                 break;
         }
 
-        if (!string.IsNullOrEmpty(dm.Error))
+        bool failed = dm.State == DeviceListState.Failed || !string.IsNullOrEmpty(dm.Error);
+        DeviceErrorRow.Visibility = failed ? Visibility.Visible : Visibility.Collapsed;
+        if (failed)
         {
-            DeviceErrorText.Text = dm.Error;
+            DeviceErrorText.Text = "连不上认证门户，设备列表稍后会自动重试。";
             DeviceErrorText.Visibility = Visibility.Visible;
         }
-        else
-        {
-            DeviceErrorText.Visibility = Visibility.Collapsed;
-        }
+    }
+
+    private void ToggleDeviceBody()
+    {
+        if (!_uiBuilt) return;
+
+        _deviceExpanded = !_deviceExpanded;
+        DeviceBody.Visibility = _deviceExpanded ? Visibility.Visible : Visibility.Collapsed;
+        DeviceChevron.Glyph = _deviceExpanded ? "\uE70E" : "\uE70D";
+
+        if (_deviceExpanded && _rt.Devices.State == DeviceListState.Failed)
+            _ = RefreshDevicesAsync();
     }
 
     private async Task OnDeviceRefreshClicked()
@@ -1613,7 +1750,6 @@ public sealed partial class MainWindow : Window
     {
         if (!_uiBuilt) return;
 
-        DeviceRefreshBtn.IsEnabled = false;
         DeviceSummary.Text = "正在读取在线设备…";
 
         try
@@ -1623,7 +1759,7 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
-            if (_uiBuilt) DeviceRefreshBtn.IsEnabled = true;
+            if (_uiBuilt) OnDeviceListChanged();
         }
     }
 
@@ -1635,7 +1771,7 @@ public sealed partial class MainWindow : Window
 
         if (!device.CanForceOffline)
         {
-            _rt.AddLog($"{device.DisplayName} 是本机当前连接，请用卡片底部的「断开连接」");
+            _rt.AddLog("这是本机的连接，请用「更多 → 断开本机连接」");
             return;
         }
 
@@ -1647,34 +1783,28 @@ public sealed partial class MainWindow : Window
         _rt.AddLog(ok ? $"{device.DisplayName} 已下线" : $"{device.DisplayName} 下线失败");
     }
 
-    /// <summary>
-    /// 断开本机当前这条连接 —— 卡片底部的页面级按钮，
-    /// 对应门户 userstatus.jsp 底部那个「断开连接」。
-    /// </summary>
-    private async void OnDeviceDisconnectSelfClicked(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    /// <summary>断开本机当前这条连接：收在「更多」里，且要二次确认。</summary>
+    private async void OnDisconnectMenuClicked(object sender, RoutedEventArgs e)
     {
-        if (!_uiBuilt) return;
+        if (!_uiBuilt || _rt.State != ConnState.Online) return;
 
-        DeviceDisconnectBtn.IsEnabled = false;
-        DeviceDisconnectLabel.Text = "断开中…";
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Root.XamlRoot,
+            Title = "断开本机连接？",
+            Content = "断开后校园网会马上掉线。开了「掉线自动重连」的话，稍后会自动连回来。",
+            PrimaryButtonText = "断开",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
 
         _rt.AddLog("正在断开本机连接…");
 
-        try
-        {
-            var ok = await _rt.Devices.DisconnectSelfAsync();
-            _rt.AddLog(ok
-                ? "本机连接已断开，巡检将按设置自动重新认证"
-                : "断开失败");
-        }
-        finally
-        {
-            if (_uiBuilt)
-            {
-                DeviceDisconnectBtn.IsEnabled = true;
-                DeviceDisconnectLabel.Text = "断开连接";
-            }
-        }
+        var ok = await _rt.Devices.DisconnectSelfAsync();
+        _rt.AddLog(ok ? "本机连接已断开，稍后会自动重连" : "断开失败，请稍后再试");
+        if (ok) _rt.Coordinator.RequestImmediateCheck();
     }
 
     // ────────────────────────── 旧版 hosts 残留 ──────────────────────────
@@ -1772,11 +1902,11 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        // 验证码长在设置页的「默认账号」卡里。用户这时候多半停在首页，必须把人带过去，
+        // 验证码面板长在首页的状态卡里。用户这时候如果在设置页，得先把人带回首页，
         // 否则面板在看不见的地方亮起来，登录就卡在那儿了。
-        if (!_settingsOpen || _aboutOpen)
+        if (_settingsOpen)
         {
-            ShowSettingsPage(true);
+            ShowSettingsPage(false);
             DispatcherQueue.TryEnqueue(() =>
             {
                 try { CaptchaPanel.StartBringIntoView(); } catch { }
@@ -1905,39 +2035,33 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void OnRefreshMenuClicked(object sender, RoutedEventArgs e) => await OnRefreshClicked();
+
     private async Task OnRefreshClicked()
     {
-        RefreshBtn.IsEnabled = false;
-        StatusRefreshIcon.Visibility = Visibility.Collapsed;
-        StatusRefreshProgress.Visibility = Visibility.Visible;
-        StatusRefreshProgress.IsActive = true;
-        StatusRefreshMessage.Visibility = Visibility.Collapsed;
+        if (!_uiBuilt) return;
+
+        RefreshItem.IsEnabled = false;
+        StatusNotice.Visibility = Visibility.Collapsed;
 
         try
         {
             var message = await _rt.Coordinator.RefreshStatusAsync();
-            if (_rt.Exiting) return;
-            if (message is null)
-            {
-                if (_rt.State == ConnState.Online)
-                    _ = UpdatePublicIpAsync(_rt.LastResult, force: true);
-                return;
-            }
-            StatusRefreshMessage.Text = message;
-            StatusRefreshMessage.Visibility = Visibility.Visible;
+            if (_rt.Exiting || !_uiBuilt) return;
+            if (message is null) return;
+
+            StatusNotice.Text = message;
+            StatusNotice.Visibility = Visibility.Visible;
         }
         catch (Exception ex)
         {
-            if (_rt.Exiting) return;
-            StatusRefreshMessage.Text = $"刷新失败：{ex.Message}";
-            StatusRefreshMessage.Visibility = Visibility.Visible;
+            if (_rt.Exiting || !_uiBuilt) return;
+            StatusNotice.Text = $"刷新失败：{ex.Message}";
+            StatusNotice.Visibility = Visibility.Visible;
         }
         finally
         {
-            StatusRefreshProgress.IsActive = false;
-            StatusRefreshProgress.Visibility = Visibility.Collapsed;
-            StatusRefreshIcon.Visibility = Visibility.Visible;
-            RefreshBtn.IsEnabled = true;
+            if (_uiBuilt) RefreshItem.IsEnabled = true;
         }
     }
 
@@ -1994,8 +2118,8 @@ public sealed partial class MainWindow : Window
         s.MinimizeToTray = TraySwitch.IsOn;
         s.KeepAliveOnLock = LockKeepSwitch.IsOn;
 
-        // 巡检时长：NumberBox 的值就是唯一真值，钳到合法范围再落盘
-        double raw = IntervalBox.Value;
+        // 巡检间隔：Slider 的值就是唯一真值，钳到合法范围再落盘
+        double raw = IntervalSlider.Value;
         s.CheckIntervalSeconds = double.IsNaN(raw)
             ? s.CheckIntervalSeconds
             : Math.Clamp((int)Math.Round(raw), MinIntervalSeconds, MaxIntervalSeconds);
@@ -2026,7 +2150,7 @@ public sealed partial class MainWindow : Window
         PersistToStore();
 
         _saveTimer.Stop();
-        ClearPublicIp();
+        _uiClock?.Stop();
         _uiBuilt = false;
 
         _theme.Changed -= OnThemeChanged;
@@ -2064,4 +2188,48 @@ internal static class BrushCache
         return b;
     }
 }
+
+/// <summary>
+/// 运行日志里的一条「事件」：已经翻译成人话，重复出现只加计数。
+/// 原始日志仍然完整地躺在设置页的「原始调试日志」里。
+/// </summary>
+public sealed class UiLog : System.ComponentModel.INotifyPropertyChanged
+{
+    private string _time = "";
+    private int _count = 1;
+
+    public DateTime At { get; init; }
+    public string Text { get; init; } = "";
+
+    public string Time
+    {
+        get => _time;
+        set
+        {
+            if (_time == value) return;
+            _time = value;
+            Raise(nameof(Time));
+        }
+    }
+
+    public int Count
+    {
+        get => _count;
+        set
+        {
+            if (_count == value) return;
+            _count = value;
+            Raise(nameof(Count));
+            Raise(nameof(CountText));
+        }
+    }
+
+    public string CountText => _count > 1 ? $"重复 {_count} 次" : "";
+
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+
+    private void Raise(string name) =>
+        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+}
+
 

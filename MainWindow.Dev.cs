@@ -84,7 +84,7 @@ public sealed partial class MainWindow
         foreach (var control in new Microsoft.UI.Xaml.Controls.Control[]
         {
             AccountBox, PwdBox, CaptchaBox, DeviceGuardProbeTargetBox, DeviceGuardExternalProbeTargetBox,
-            DeviceGuardThresholdBox, DeviceGuardTimeoutBox, IntervalBox
+            DeviceGuardThresholdBox, DeviceGuardTimeoutBox, IntervalSlider
         })
         {
             if (control.BorderBrush is not SolidColorBrush || !control.BorderThickness.Equals(new Thickness(1)))
@@ -115,21 +115,58 @@ public sealed partial class MainWindow
         if (argv.AsSpan().Contains("--page") && argv.AsSpan().Contains("settings"))
         {
             ShowSettingsPage(true, animate: false);
-            if (argv.AsSpan().Contains("--advanced")) OnGuardAdvancedToggled(null!, null!);
+            if (argv.AsSpan().Contains("--advanced")) GuardAdvancedExpander.IsExpanded = true;
             await Task.Delay(500);
 
             // --scroll-bottom：滚到页尾，用来看下半屏有没有错位
             if (argv.AsSpan().Contains("--scroll-bottom"))
             {
-                SettingsScroll.ChangeView(null, SettingsScroll.ScrollableHeight, null, true);
+                SettingsPage.ChangeView(null, SettingsPage.ScrollableHeight, null, true);
+                await Task.Delay(400);
+            }
+
+            // SNNU_SCROLL_TO=<逻辑像素>：滚到指定位置，一次看中间那一段
+            if (int.TryParse(Environment.GetEnvironmentVariable("SNNU_SCROLL_TO"), out int offset))
+            {
+                SettingsPage.ChangeView(null, offset, null, true);
                 await Task.Delay(400);
             }
         }
         else if (argv.AsSpan().Contains("--page") && argv.AsSpan().Contains("about"))
         {
+            // 关于已经并进设置页底部，这个分支留着只是为了老的截图脚本不报错
             ShowSettingsPage(true, animate: false);
-            ShowAboutPage(true, animate: false);
-            await Task.Delay(500);
+            await Task.Delay(300);
+            SettingsPage.ChangeView(null, SettingsPage.ScrollableHeight, null, true);
+            await Task.Delay(400);
+        }
+
+        // --demo-events：灌几条假事件并展开日志，用来看事件列表的排版与合并计数
+        if (argv.AsSpan().Contains("--demo-events"))
+        {
+            string now = DateTime.Now.ToString("HH:mm:ss");
+            foreach (var text in new[]
+            {
+                "登录成功 · 42662134 · 10.138.47.56",
+                "登录成功 · 42662134 · 10.138.47.56",
+                "检测到未认证，正在自动登录…",
+                "认证门户不可达（可能不在校园网），已放慢巡检",
+                "登录失败：密码错误",
+                "网络状态变化，立即重新检测"
+            })
+            {
+                RecordEvent(new LogEntry { Time = now, Text = text });
+            }
+
+            LogCard.IsExpanded = true;
+            await Task.Delay(200);
+        }
+
+        // --expand-devices：展开在线设备列表
+        if (argv.AsSpan().Contains("--expand-devices"))
+        {
+            if (!_deviceExpanded) ToggleDeviceBody();
+            await Task.Delay(300);
         }
 
         // --shot-full：先把窗口拉高，让右栏所有卡片进入可视区，便于一次看全版式
@@ -138,10 +175,11 @@ public sealed partial class MainWindow
             try
             {
                 int height = int.TryParse(Environment.GetEnvironmentVariable("SNNU_SHOT_HEIGHT"), out var h)
-                    ? Math.Clamp(h, 700, 2200)
+                    ? Math.Clamp(h, 700, 2600)
                     : 1080;
 
-                _appWindow.Resize(new Windows.Graphics.SizeInt32(1040, height));
+                // 宽度保持当前值（480 逻辑像素），只把高度拉高，让整页进一屏
+                _appWindow.Resize(new Windows.Graphics.SizeInt32(_appWindow.Size.Width, height));
                 await Task.Delay(1000);
             }
             catch { }
@@ -481,7 +519,7 @@ public sealed partial class MainWindow
                 $"behaviorCrd= {BehaviorCard.ActualWidth} x {BehaviorCard.ActualHeight}\n" +
                 $"logCard    = {LogCard.ActualWidth} x {LogCard.ActualHeight}\n" +
                 $"rtb        = {rtb.PixelWidth} x {rtb.PixelHeight}\n" +
-                $"interval   = {RectOf(IntervalBox)} val={IntervalBox.Value}\n" +
+                $"interval   = {RectOf(IntervalSlider)} val={IntervalSlider.Value}\n" +
                 $"toggle     = {RectOf(AutoStartSwitch)} minW={AutoStartSwitch.MinWidth} pad={AutoStartSwitch.Padding}\n" +
                 $"settingsOp = {_rt.Store.Settings.Operator} ({(int)_rt.Store.Settings.Operator})\n" +
                 $"theme      = dark={_theme.IsDark} accent=#{_theme.Accent.R:X2}{_theme.Accent.G:X2}{_theme.Accent.B:X2}\n" +
