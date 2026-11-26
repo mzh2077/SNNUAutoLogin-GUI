@@ -459,6 +459,7 @@
 
                                 <TextBox
                                     x:Name="CaptchaBox"
+                                    Style="{StaticResource FormInputStyle}"
                                     Grid.Column="1"
                                     MinHeight="32"
                                     VerticalAlignment="Center"
@@ -1138,6 +1139,7 @@
                                         <TextBlock Style="{StaticResource MetaLabelStyle}" Text="校内探测地址" />
                                         <TextBox
                                             x:Name="DeviceGuardProbeTargetBox"
+                                            Style="{StaticResource FormInputStyle}"
                                             MinHeight="32"
                                             PlaceholderText="留空使用默认" />
                                     </StackPanel>
@@ -1145,6 +1147,7 @@
                                         <TextBlock Style="{StaticResource MetaLabelStyle}" Text="外网探测地址" />
                                         <TextBox
                                             x:Name="DeviceGuardExternalProbeTargetBox"
+                                            Style="{StaticResource FormInputStyle}"
                                             MinHeight="32"
                                             PlaceholderText="用来判断是否真的断网" />
                                     </StackPanel>

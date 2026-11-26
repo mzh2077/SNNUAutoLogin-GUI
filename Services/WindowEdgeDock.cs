@@ -13,6 +13,8 @@ internal sealed class WindowEdgeDock : IDisposable
     private DockRect _restore;
     private DockRect _work;
     private IntPtr _monitor;
+    private Placement _placement;
+    private bool _placementValid;
     private bool _hidden;
     private bool _wasTopmost;
     private bool _disposed;
@@ -39,8 +41,18 @@ internal sealed class WindowEdgeDock : IDisposable
     {
         var pointer = new Point { X = x, Y = y };
         if (_disposed || !IsWindowVisible(_hwnd)) return;
-        if (IsIconic(_hwnd) || IsZoomed(_hwnd))
+        if (IsIconic(_hwnd)) return;
+        if (IsZoomed(_hwnd))
         {
+            if (_hidden && _placementValid)
+            {
+                var current = new Placement { Length = Marshal.SizeOf<Placement>() };
+                if (GetWindowPlacement(_hwnd, ref current))
+                {
+                    current.Normal = _placement.Normal;
+                    SetWindowPlacement(_hwnd, ref current);
+                }
+            }
             ReleaseStrip();
             return;
         }
@@ -79,6 +91,8 @@ internal sealed class WindowEdgeDock : IDisposable
         _work = work;
         _monitor = monitor;
         _wasTopmost = (GetWindowLongPtrW(_hwnd, -20).ToInt64() & 8) != 0;
+        _placement = new Placement { Length = Marshal.SizeOf<Placement>() };
+        _placementValid = GetWindowPlacement(_hwnd, ref _placement);
         var hidden = EdgeDockGeometry.Hide(visible, screen, edge, Math.Max(3, (int)Math.Round(4 * scale)));
         _hidden = MoveVisible(hidden, new IntPtr(-1));
         _outsideSince = 0;
@@ -101,6 +115,12 @@ internal sealed class WindowEdgeDock : IDisposable
         _outsideSince = 0;
         _revealedUntil = Environment.TickCount64 + 1000;
         if (!_hidden) return;
+        if (IsIconic(_hwnd) && _placementValid)
+        {
+            var placement = _placement;
+            placement.Show = 9;
+            SetWindowPlacement(_hwnd, ref placement);
+        }
         if (GetWindowRect(_hwnd, out var raw))
         {
             var visible = VisibleBounds(raw);
@@ -149,6 +169,14 @@ internal sealed class WindowEdgeDock : IDisposable
         public DockRect ToRect() => new(Left, Top, Right - Left, Bottom - Top);
     }
     [StructLayout(LayoutKind.Sequential)] private struct MonitorInfo { public int Size; public Rect Screen, Work; public uint Flags; }
+    [StructLayout(LayoutKind.Sequential)] private struct Placement
+    {
+        public int Length, Flags, Show;
+        public Point Min, Max;
+        public Rect Normal;
+    }
+    [DllImport("user32.dll")] private static extern bool GetWindowPlacement(IntPtr hwnd, ref Placement placement);
+    [DllImport("user32.dll")] private static extern bool SetWindowPlacement(IntPtr hwnd, ref Placement placement);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out Point point);
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);

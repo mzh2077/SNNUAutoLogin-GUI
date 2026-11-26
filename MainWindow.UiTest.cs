@@ -24,6 +24,7 @@ public sealed partial class MainWindow
         // 设置项都在设置页上，先切过去量尺寸；首页的量测放到后面切回来再做。
         ShowSettingsPage(true, animate: false);
         await Task.Delay(260);
+        CheckFormInputBorders();
 
         if (PortalLink.NavigateUri != new Uri("http://202.117.144.205/"))
             throw new InvalidOperationException("认证门户链接应不包含动态端口");
@@ -144,6 +145,32 @@ public sealed partial class MainWindow
                 dock.Poll(outsideX, outsideY);
                 if (!dock.IsHidden) { report.AppendLine($"dock#{side}: taskbar or adjacent monitor excluded"); continue; }
                 hides++;
+                if (hides == 1 && _appWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
+                {
+                    presenter.Minimize();
+                    await Task.Delay(200);
+                    dock.Poll(outsideX, outsideY);
+                    if (!dock.IsHidden) throw new InvalidOperationException("Minimize lost the docked restore position");
+                    presenter.Restore();
+                    await Task.Delay(200);
+                    dock.Reveal();
+                    if (Math.Abs(_appWindow.Position.X - x) > 16)
+                        throw new InvalidOperationException("Minimized dock did not restore on screen");
+                    report.AppendLine("PASS minimized dock restores on screen");
+                    using var maximizedDock = new SNNUAutoLogin.Services.WindowEdgeDock(hwnd, DispatcherQueue, () => false, startTimer: false);
+                    maximizedDock.Poll(outsideX, outsideY);
+                    await Task.Delay(900);
+                    maximizedDock.Poll(outsideX, outsideY);
+                    if (!maximizedDock.IsHidden) throw new InvalidOperationException("Dock did not hide before maximize test");
+                    presenter.Maximize();
+                    await Task.Delay(200);
+                    maximizedDock.Poll(outsideX, outsideY);
+                    presenter.Restore();
+                    await Task.Delay(200);
+                    if (Math.Abs(_appWindow.Position.X - x) > 16)
+                        throw new InvalidOperationException("Maximized dock lost its normal restore position");
+                    report.AppendLine("PASS maximized dock preserves normal restore position");
+                }
                 int revealX = side == 0 ? work.X + 1 : side == 1 ? work.X + work.Width - 1 : work.X + work.Width / 2;
                 int revealY = side == 2 ? work.Y + 1 : y + 30;
                 dock.Poll(revealX, revealY);

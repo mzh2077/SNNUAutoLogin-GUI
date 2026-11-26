@@ -84,7 +84,7 @@ public sealed partial class MainWindow
         foreach (var control in new Microsoft.UI.Xaml.Controls.Control[]
         {
             AccountBox, PwdBox, CaptchaBox, DeviceGuardProbeTargetBox, DeviceGuardExternalProbeTargetBox,
-            DeviceGuardThresholdBox, DeviceGuardTimeoutBox, IntervalSlider
+            DeviceGuardThresholdBox, DeviceGuardTimeoutBox
         })
         {
             if (control.BorderBrush is not SolidColorBrush || !control.BorderThickness.Equals(new Thickness(1)))
