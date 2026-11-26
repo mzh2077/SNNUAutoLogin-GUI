@@ -158,8 +158,11 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 把标题栏右侧让给系统的三枚按钮。RightInset 是物理像素，除以 DPI 才算逻辑宽度。
-    /// 取不到就退回三枚 46px 按钮的 138，至少不会把齿轮盖住。
+    /// 把标题栏右侧让给系统的三枚按钮。
+    ///
+    /// RightInset 是物理像素，除以 DPI 就是客户区里那一栏的宽度——caption 按钮
+    /// 本来就贴着客户区右沿排，不用再补窗口边框（补了齿轮会压到最小化身上）。
+    /// 齿轮自己的宽度也按 caption 按钮的真实宽度算，跟它们一样宽才对得上。
     /// </summary>
     private void UpdateTitleBarInset()
     {
@@ -173,7 +176,7 @@ public sealed partial class MainWindow : Window
 
             int insetPx = _appWindow.TitleBar.RightInset;
             double inset = insetPx > 0 ? insetPx / scale : 138.0;
-            if (inset < 90) inset = 138.0;
+            if (inset <= 0 || inset > 400) inset = 138.0;
 
             if (Math.Abs(inset - _titleBarInset) < 0.5) return;
 

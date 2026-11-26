@@ -176,7 +176,9 @@
         </Grid.Resources>
 
         <Grid.RowDefinitions>
-            <RowDefinition Height="48" />
+            <!--  32 是 Win11 标题栏的标准高度：系统的三枚按钮就在这 32 里居中，
+                  我们用 48 的话齿轮会比它们低一截，怎么调都差半个按钮  -->
+            <RowDefinition Height="32" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -244,7 +246,9 @@
                 </StackPanel>
             </StackPanel>
 
-            <!--  设置入口：与系统标题按钮同尺寸，紧挨最小化左侧  -->
+            <!--  设置入口：与系统标题按钮同尺寸，紧挨最小化左侧。
+                  图标字号跟着系统的 10pt 走，14 会比旁边的 — □ × 大一圈。
+                  系统的 caption 字形本身在按钮里偏上约 3，不补这一下齿轮看着发沉  -->
             <Button
                 x:Name="SettingsNavBtn"
                 Grid.Column="1"
@@ -252,7 +256,7 @@
                 IsTabStop="False"
                 Click="OnSettingsNavClicked"
                 ToolTipService.ToolTip="设置">
-                <FontIcon FontSize="14" Glyph="&#xE713;" />
+                <FontIcon Margin="0,-3,0,0" FontSize="12" Glyph="&#xE713;" />
             </Button>
         </Grid>
 
