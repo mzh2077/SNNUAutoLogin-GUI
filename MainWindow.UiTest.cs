@@ -25,6 +25,7 @@ public sealed partial class MainWindow
         ShowSettingsPage(true, animate: false);
         await Task.Delay(260);
         CheckFormInputBorders();
+        await CheckRulesVisibilityAsync(sb);
         await CheckGuardSummarySettingsAsync(sb);
 
         if (PortalLink.NavigateUri != new Uri("http://202.117.144.205/"))
@@ -119,6 +120,60 @@ public sealed partial class MainWindow
             sb.ToString(), Encoding.UTF8);
 
         Application.Current.Exit();
+    }
+
+    private async Task CheckRulesVisibilityAsync(StringBuilder report)
+    {
+        var original = _rt.Store.Settings.ConnectionRules.ToList();
+        try
+        {
+            _rt.Store.Settings.ConnectionRules = new();
+            RefreshRulesUi();
+            CheckPanels(0);
+            _rt.Store.Settings.ConnectionRules.Add(new ConnectionRule
+            {
+                Id = Guid.NewGuid().ToString("N"), Account = "test-wired",
+                MatchType = ConnectionMatchType.Wired, Operator = Operator.Campus
+            });
+            _rt.Store.Settings.ConnectionRules.Add(new ConnectionRule
+            {
+                Id = Guid.NewGuid().ToString("N"), Account = "test-wireless",
+                MatchType = ConnectionMatchType.WirelessAny, Enabled = false
+            });
+            if (!_rt.Store.Save()) throw new InvalidOperationException("Unable to save rule fixture");
+            _rt.Store.Settings.ConnectionRules = new();
+            _rt.Store.Load();
+            LoadSettingsToUi();
+            CheckPanels(2);
+            await Task.Delay(100);
+            await SaveElementAsync(RulesCard, "snnu_existing_rules.png");
+            var duplicate = new ConnectionRule { Id = Guid.NewGuid().ToString("N"), Account = "duplicate", MatchType = ConnectionMatchType.Wired };
+            if (ConnectionRuleSet.Validate(duplicate, _rt.Store.Settings.ConnectionRules) is null)
+                throw new InvalidOperationException("Existing rule was not read for duplicate validation");
+            _rt.Store.Settings.ConnectionRules.RemoveAt(0);
+            RefreshRulesUi();
+            CheckPanels(1);
+            _rt.Store.Settings.ConnectionRules.Clear();
+            RefreshRulesUi();
+            CheckPanels(0);
+            report.AppendLine("PASS stored rules visible on reload, including disabled rules; empty state restored after last deletion");
+        }
+        finally
+        {
+            _rt.Store.Settings.ConnectionRules = original;
+            _rt.Store.Save();
+            RefreshRulesUi();
+        }
+
+        void CheckPanels(int count)
+        {
+            bool populated = count > 0;
+            if (RulesList.ItemsSource is not System.Collections.Generic.List<RuleItem> items || items.Count != count
+                || RulesEmptyPanel.Visibility != (populated ? Visibility.Collapsed : Visibility.Visible)
+                || RulesListPanel.Visibility != (populated ? Visibility.Visible : Visibility.Collapsed)
+                || RulesFallbackHint.Visibility != (populated ? Visibility.Visible : Visibility.Collapsed))
+                throw new InvalidOperationException("Rule list visibility differs from stored rules");
+        }
     }
 
     private async Task CheckGuardSummarySettingsAsync(StringBuilder report)
