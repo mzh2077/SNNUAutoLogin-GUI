@@ -211,9 +211,6 @@ public sealed partial class MainWindow : Window
 
         if (Math.Abs(TitleBarRow.Height.Value - h) > 0.5)
             TitleBarRow.Height = new GridLength(h);
-
-        if (Math.Abs(SettingsNavBtn.Height - h) > 0.5)
-            SettingsNavBtn.Height = h;
     }
 
     /// <summary>
@@ -244,9 +241,6 @@ public sealed partial class MainWindow : Window
                 $"raw={insetPx} scale={scale:F2} logical={inset:F1} " +
                 $"tbH={_appWindow.TitleBar.Height} opt={_appWindow.TitleBar.PreferredHeightOption}";
             AppTitleBar.Margin = new Thickness(0, 0, inset, 0);
-
-            // caption 按钮宽度随 DPI 变（175% 下每枚只有 39 逻辑像素），齿轮跟着它一起缩放才不显突兀
-            SettingsNavBtn.Width = Math.Max(36.0, inset / 3.0);
         }
         catch (Exception ex)
         {
@@ -255,55 +249,24 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// SetTitleBar 之后整条标题栏都算拖动区，齿轮按钮会被吃掉点击。
-    /// 把按钮那块显式声明成 Passthrough（属于客户端），拖动与点击各归各位。
-    /// 坐标要物理像素，且窗口每次改尺寸都得重算。
+    /// 标题栏上已经没有自定义按钮了（设置入口收到左侧导航里），
+    /// 这里只需保证直通区域是空的，整条标题栏都归系统拖动。
     /// </summary>
     private void UpdateTitleBarInteractiveRegion()
     {
-        if (_appWindow is null || SettingsNavBtn is null)
-        {
-            _titleBarRegion = $"skip appWindow={_appWindow is not null} btn={SettingsNavBtn is not null}";
-            return;
-        }
+        if (_appWindow is null) return;
 
         try
         {
-            double w = SettingsNavBtn.ActualWidth, h = SettingsNavBtn.ActualHeight;
-            if (w <= 0 || h <= 0)
-            {
-                // 设置页没有齿轮：把旧的直通区域清掉，免得标题栏上留一块点不动的死区
-                var barHwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-                var barId = Win32Interop.GetWindowIdFromWindow(barHwnd);
-                InputNonClientPointerSource.GetForWindowId(barId)
-                    .SetRegionRects(NonClientRegionKind.Passthrough, Array.Empty<RectInt32>());
-                _titleBarRegion = $"zero {w:F0}x{h:F0} vis={SettingsNavBtn.Visibility}";
-                return;
-            }
-
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-            double scale = GetDpiForWindow(hwnd) / 96.0;
-            if (scale <= 0) scale = 1.0;
-
-            var origin = SettingsNavBtn.TransformToVisual(Root)
-                .TransformPoint(new Windows.Foundation.Point(0, 0));
-
-            // 四周各外扩 2px：按钮边缘那一像素的判定别留给运气
-            var rect = new RectInt32(
-                (int)Math.Round(origin.X * scale) - 2,
-                (int)Math.Round(origin.Y * scale) - 2,
-                (int)Math.Round(w * scale) + 4,
-                (int)Math.Round(h * scale) + 4);
-
             var id = Win32Interop.GetWindowIdFromWindow(hwnd);
             InputNonClientPointerSource.GetForWindowId(id)
-                .SetRegionRects(NonClientRegionKind.Passthrough, new[] { rect });
-
-            _titleBarRegion = $"{rect.X},{rect.Y} {rect.Width}x{rect.Height}";
+                .SetRegionRects(NonClientRegionKind.Passthrough, Array.Empty<RectInt32>());
+            _titleBarRegion = "none";
         }
         catch (Exception ex)
         {
-            _titleBarRegion = "err:" + ex.GetType().Name + ":" + ex.Message;
+            _titleBarRegion = "err:" + ex.GetType().Name;
         }
     }
 
@@ -420,6 +383,7 @@ public sealed partial class MainWindow : Window
                 Reenter(LogCard, 45);
                 break;
         }
+
     }
 
     /// <summary>自检代码仍在用这个入口：true 去设置页，false 回主页。</summary>
@@ -443,8 +407,6 @@ public sealed partial class MainWindow : Window
         UpdateTitleBarInset();
         UpdateTitleBarInteractiveRegion();
     }
-
-    private void OnSettingsNavClicked(object sender, RoutedEventArgs e) => Navigate(NavPage.Settings);
 
     /// <summary>窗口最小化：延迟一拍归还工作集，避免打断最小化过渡动画。</summary>
     private async void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)

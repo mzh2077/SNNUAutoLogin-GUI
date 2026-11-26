@@ -16,6 +16,18 @@ public sealed partial class MainWindow
 {
     private bool _hooksRan;
 
+    /// <summary>导航诊断：把每一步追加到 %TEMP%\snnu_nav.txt（出问题时看断在哪）。</summary>
+    internal static void NavTrace(string s)
+    {
+        try
+        {
+            System.IO.File.AppendAllText(
+                System.IO.Path.Combine(System.IO.Path.GetTempPath(), "snnu_nav.txt"),
+                $"{DateTime.Now:HH:mm:ss.fff} {s}\n");
+        }
+        catch { }
+    }
+
     internal void RunStartupHooks()
     {
         if (_hooksRan) return;
@@ -27,6 +39,9 @@ public sealed partial class MainWindow
         if (argv.AsSpan().Contains("--captcha-demo")) Guard(RunCaptchaDemoAsync);
 
         if (argv.AsSpan().Contains("--module-probe")) Guard(RunModuleProbeAsync);
+
+        // 自检：用 AutomationPeer.Invoke 走一遍「点导航项」的路径，定位点击闪退
+        if (argv.AsSpan().Contains("--click-nav")) Guard(RunClickNavAsync);
 
         if (argv.AsSpan().Contains("--snapshot")) Guard(RunSnapshotAsync);
         else if (argv.AsSpan().Contains("--ui-test")) Guard(RunUiSelfTestAsync);
@@ -62,6 +77,53 @@ public sealed partial class MainWindow
                 catch { }
             }
         }
+    }
+
+    /// <summary>用 AutomationPeer 的 Invoke 走一遍导航项「点击」，把每一步写进 snnu_nav.txt。</summary>
+    private async Task RunClickNavAsync()
+    {
+        await Task.Delay(2200);
+        NavTrace("== click-nav begin");
+
+        var items = new (string Tag, Microsoft.UI.Xaml.Controls.NavigationViewItem Item)[]
+        {
+            ("settings", NavSettings),
+            ("advanced", NavAdvanced),
+            ("about", NavAbout),
+            ("home", NavHome)
+        };
+
+        foreach (var (tag, item) in items)
+        {
+            NavTrace($"invoke {tag}");
+            try
+            {
+                var peer = Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer
+                    .CreatePeerForElement(item);
+                NavTrace($"  peer={peer?.GetType().Name ?? "null"}");
+                var pattern = peer?.GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke);
+                NavTrace($"  pattern={pattern?.GetType().Name ?? "null"}");
+                if (pattern is Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider inv)
+                {
+                    inv.Invoke();
+                    NavTrace($"  invoked ok, page={_page}");
+                }
+                else if (peer is Microsoft.UI.Xaml.Automation.Provider.ISelectionItemProvider sel)
+                {
+                    sel.Select();
+                    NavTrace($"  selected ok, page={_page}");
+                }
+            }
+            catch (Exception ex)
+            {
+                NavTrace($"  EX {ex.GetType().Name}: {ex.Message}");
+            }
+            await Task.Delay(700);
+        }
+
+        NavTrace("== click-nav end");
+        await CaptureAsync();
+        _rt.Exit();
     }
 
     /// <summary>驻留托盘（内容树已释放）时点"退出"，进程必须真的结束、且不残留托盘图标。</summary>
@@ -130,11 +192,13 @@ public sealed partial class MainWindow
         }
 
         // --page settings / advanced / about：截指定页；--advanced 顺手展开探测设置
+        // SNNU_ANIM=1：走带动画的导航（复现 Release 裁剪版点导航闪退用）
         if (argv.AsSpan().Contains("--page"))
         {
-            if (argv.AsSpan().Contains("advanced")) Navigate(NavPage.Advanced, animate: false);
-            else if (argv.AsSpan().Contains("about")) Navigate(NavPage.About, animate: false);
-            else if (argv.AsSpan().Contains("settings")) Navigate(NavPage.Settings, animate: false);
+            bool anim = Environment.GetEnvironmentVariable("SNNU_ANIM") == "1";
+            if (argv.AsSpan().Contains("advanced")) Navigate(NavPage.Advanced, animate: anim);
+            else if (argv.AsSpan().Contains("about")) Navigate(NavPage.About, animate: anim);
+            else if (argv.AsSpan().Contains("settings")) Navigate(NavPage.Settings, animate: anim);
 
             if (argv.AsSpan().Contains("--advanced")) GuardAdvancedExpander.IsExpanded = true;
 
@@ -536,7 +600,6 @@ public sealed partial class MainWindow
                 $"appwindow  = {AppWindow.Size.Width} x {AppWindow.Size.Height}\n" +
                 $"root       = {Root.ActualWidth} x {Root.ActualHeight}\n" +
                 $"statusCard = {StatusCard.ActualWidth} x {StatusCard.ActualHeight}\n" +
-                $"gearBtn    = {RectOf(SettingsNavBtn)}\n" +
                 $"tbInset    = {_titleBarInset:F1} ({_titleBarInsetText})\n" +
                 $"tbRegion   = {_titleBarRegion}\n" +
                 $"ringHost   = {RingHost.ActualWidth} x {RingHost.ActualHeight}\n" +

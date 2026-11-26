@@ -84,9 +84,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#SrcDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
-Name: "{autoprograms}\卸载 {#AppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Check: CanCreateStartMenuIcon
+Name: "{autoprograms}\卸载 {#AppName}"; Filename: "{uninstallexe}"; Check: CanCreateUninstallIcon
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon; Check: CanCreateDesktopIcon
 
 [Registry]
 ; 卸载时顺带清掉开机自启项（ValueType=none 表示安装阶段不写入，只登记删除动作）
@@ -249,6 +249,39 @@ begin
     DeleteFile(AddBackslash(Dirs[I]) + '{#AppName}.lnk');
     DeleteFile(AddBackslash(Dirs[I]) + '卸载 {#AppName}.lnk');
   end;
+end;
+
+{ 快捷方式能否改写：安全软件 / shell 有时会把 .lnk 独占住，
+  这时 Inno 更新它走 IPersistFile::Save 会报 0x80070005「拒绝访问」并中断整个安装。
+  探测方式是独占打开一次；打不开就跳过创建，旧快捷方式仍指向同一个 exe，功能不受影响。 }
+function ShortcutWritable(Path: String): Boolean;
+var
+  S: TFileStream;
+begin
+  Result := True;
+  if not FileExists(Path) then Exit;
+  try
+    S := TFileStream.Create(Path, fmOpenReadWrite or fmShareDenyNone);
+    S.Free;
+  except
+    Result := False;
+    Log('SNNU: 快捷方式被占用，跳过重建 ' + Path);
+  end;
+end;
+
+function CanCreateStartMenuIcon: Boolean;
+begin
+  Result := ShortcutWritable(ExpandConstant('{autoprograms}\{#AppName}.lnk'));
+end;
+
+function CanCreateUninstallIcon: Boolean;
+begin
+  Result := ShortcutWritable(ExpandConstant('{autoprograms}\卸载 {#AppName}.lnk'));
+end;
+
+function CanCreateDesktopIcon: Boolean;
+begin
+  Result := ShortcutWritable(ExpandConstant('{autodesktop}\{#AppName}.lnk'));
 end;
 
 { 覆盖升级时把开机自启改指到安装目录：

@@ -186,13 +186,8 @@
             Padding="16,0,0,0"
             Background="Transparent"
             SizeChanged="OnTitleBarSized">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
 
             <StackPanel
-                Grid.Column="0"
                 VerticalAlignment="Center"
                 Orientation="Horizontal"
                 Spacing="8">
@@ -207,16 +202,6 @@
                     Foreground="{ThemeResource TextFillColorPrimaryBrush}"
                     Text="SNNU 校园网助手" />
             </StackPanel>
-
-            <Button
-                x:Name="SettingsNavBtn"
-                Grid.Column="1"
-                Style="{StaticResource TitleBarButtonStyle}"
-                IsTabStop="False"
-                Click="OnSettingsNavClicked"
-                ToolTipService.ToolTip="设置">
-                <FontIcon FontSize="11" Glyph="&#xE713;" />
-            </Button>
         </Grid>
 
         <!--  ══════════ 导航骨架  ══════════  -->

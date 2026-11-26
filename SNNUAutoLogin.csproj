@@ -121,8 +121,9 @@
       <UnusedAssembly Include="$(TrimRoot)System.Threading.Tasks.Dataflow.dll" />
       <UnusedAssembly Include="$(TrimRoot)System.Numerics.Tensors.dll" />
       <UnusedAssembly Include="$(TrimRoot)System.ComponentModel.TypeConverter.dll" />
-      <!-- WinUI 的 Phone 控件集与 AI/ML 投影，本项目完全不碰 -->
-      <UnusedAssembly Include="$(TrimRoot)Microsoft.UI.Xaml.Phone.dll" />
+      <!-- WinUI 的 Phone 控件集：**不能删**。NavigationViewItem 被选中（鼠标点或 UIA Select）时，
+           XAML 会做一次类型解析，缺了它会抛 COMException 0x8007007E「找不到指定的模块」，
+           表现为点左侧导航直接闪退。实测单删这一项即可复现。 -->
       <UnusedAssembly Include="$(TrimRoot)Microsoft.Windows.AI.*.dll" />
       <UnusedAssembly Include="$(TrimRoot)Microsoft.Windows.Vision*.dll" />
       <UnusedAssembly Include="$(TrimRoot)Microsoft.Windows.SemanticSearch*.dll" />
