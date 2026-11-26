@@ -104,41 +104,58 @@ public sealed partial class MainWindow
             p.Minimize();
     }
 
+    private Microsoft.UI.Xaml.Controls.ScrollViewer CurrentPageScroll() => _page switch
+    {
+        NavPage.Settings => SettingsPage,
+        NavPage.Advanced => AdvancedPage,
+        NavPage.About => AboutPage,
+        _ => HomePage
+    };
+
     private async Task RunSnapshotAsync()
     {
         await Task.Delay(2400);
 
         var argv = Environment.GetCommandLineArgs();
 
-        // --page settings：截设置页。--advanced 顺手把收起来的高级探测项展开。
-        // --page about：截关于页。
-        if (argv.AsSpan().Contains("--page") && argv.AsSpan().Contains("settings"))
+        // SNNU_WIN_W=<逻辑像素>：按指定宽度截图，用来看 420 / 520 / 800 三档版式
+        if (_appWindow is not null
+            && int.TryParse(Environment.GetEnvironmentVariable("SNNU_WIN_W"), out int winW)
+            && winW is >= 400 and <= 1400)
         {
-            ShowSettingsPage(true, animate: false);
+            double scaleW = GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96.0;
+            if (scaleW <= 0) scaleW = 1.0;
+            _appWindow.Resize(new Windows.Graphics.SizeInt32((int)(winW * scaleW), _appWindow.Size.Height));
+            await Task.Delay(700);
+        }
+
+        // --page settings / advanced / about：截指定页；--advanced 顺手展开探测设置
+        if (argv.AsSpan().Contains("--page"))
+        {
+            if (argv.AsSpan().Contains("advanced")) Navigate(NavPage.Advanced, animate: false);
+            else if (argv.AsSpan().Contains("about")) Navigate(NavPage.About, animate: false);
+            else if (argv.AsSpan().Contains("settings")) Navigate(NavPage.Settings, animate: false);
+
             if (argv.AsSpan().Contains("--advanced")) GuardAdvancedExpander.IsExpanded = true;
+
             await Task.Delay(500);
+
+            var scroll = CurrentPageScroll();
 
             // --scroll-bottom：滚到页尾，用来看下半屏有没有错位
             if (argv.AsSpan().Contains("--scroll-bottom"))
             {
-                SettingsPage.ChangeView(null, SettingsPage.ScrollableHeight, null, true);
-                await Task.Delay(400);
+                scroll.UpdateLayout();
+                scroll.ChangeView(null, scroll.ScrollableHeight, null, true);
+                await Task.Delay(500);
             }
 
             // SNNU_SCROLL_TO=<逻辑像素>：滚到指定位置，一次看中间那一段
             if (int.TryParse(Environment.GetEnvironmentVariable("SNNU_SCROLL_TO"), out int offset))
             {
-                SettingsPage.ChangeView(null, offset, null, true);
+                scroll.ChangeView(null, offset, null, true);
                 await Task.Delay(400);
             }
-        }
-        else if (argv.AsSpan().Contains("--page") && argv.AsSpan().Contains("about"))
-        {
-            // 关于已经并进设置页底部，这个分支留着只是为了老的截图脚本不报错
-            ShowSettingsPage(true, animate: false);
-            await Task.Delay(300);
-            SettingsPage.ChangeView(null, SettingsPage.ScrollableHeight, null, true);
-            await Task.Delay(400);
         }
 
         // --demo-events：灌几条假事件并展开日志，用来看事件列表的排版与合并计数
@@ -160,6 +177,15 @@ public sealed partial class MainWindow
 
             LogCard.IsExpanded = true;
             await Task.Delay(200);
+
+            // 事件加完内容变高，之前滚到的底部已失效，重新贴底
+            if (argv.AsSpan().Contains("--scroll-bottom"))
+            {
+                var sc = CurrentPageScroll();
+                sc.UpdateLayout();
+                sc.ChangeView(null, sc.ScrollableHeight, null, true);
+                await Task.Delay(400);
+            }
         }
 
         // --expand-devices：展开在线设备列表

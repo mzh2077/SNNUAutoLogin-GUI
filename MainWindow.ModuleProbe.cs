@@ -206,7 +206,7 @@ public sealed partial class MainWindow
         checks.Add(("账号框已填", AccountBox.Text.Length > 0, AccountBox.Text));
         checks.Add(("密码框已填", PwdBox.Password.Length > 0, "len=" + PwdBox.Password.Length));
         checks.Add(("日志有内容", Logs.Count > 0, "count=" + Logs.Count));
-        checks.Add(("设备端口已填", !string.IsNullOrWhiteSpace(DevicePortText.Text), DevicePortText.Text));
+        checks.Add(("设备端口已填", !string.IsNullOrWhiteSpace(ProbePortText.Text), ProbePortText.Text));
         checks.Add(("当前接入已判定", !string.IsNullOrWhiteSpace(RulesCurrentLinkText.Text), RulesCurrentLinkText.Text));
         checks.Add(("生效档案已算出", !string.IsNullOrWhiteSpace(RulesActiveText.Text), RulesActiveText.Text));
         checks.Add(("规则列表已绑定", RulesList.ItemsSource is not null, RulesList.Items?.Count.ToString() ?? "0"));

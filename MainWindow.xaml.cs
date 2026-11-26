@@ -50,6 +50,7 @@ public sealed partial class MainWindow : Window
     private bool _hiddenToTray;
     private bool _startHidden;
     private bool _settingsOpen;
+    private bool _syncing;
     private bool _guardStatusSeen;
     private string _titleBarRegion = "unset";
     private double _titleBarInset = 146;
@@ -119,10 +120,10 @@ public sealed partial class MainWindow : Window
         double scale = GetDpiForWindow(hwnd) / 96.0;
         if (scale <= 0) scale = 1.0;
 
-        int targetW = (int)(480 * scale);
+        int targetW = (int)(520 * scale);
 
-        // 单列布局：首页三块（状态 / 设备 / 日志）刚好一屏，640 不用滚动就能看全。
-        int targetH = (int)(640 * scale);
+        // 左侧 48 紧凑栏 + 内容最宽 640：520 宽时内容占满，拉宽到 700 以上才开始留白。
+        int targetH = (int)(680 * scale);
 
         var area = DisplayArea.GetFromWindowId(id, DisplayAreaFallback.Primary);
         var work = area.WorkArea;
@@ -139,7 +140,7 @@ public sealed partial class MainWindow : Window
             try
             {
                 presenter.PreferredMinimumWidth = (int)(420 * scale);
-                presenter.PreferredMinimumHeight = (int)(540 * scale);
+                presenter.PreferredMinimumHeight = (int)(560 * scale);
             }
             catch { }
         }
@@ -306,50 +307,124 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    // ────────────────────────── 页面导航（首页 ↔ 设置） ──────────────────────────
+    // ────────────────────────── 页面导航（NavigationView） ──────────────────────────
 
-    /// <summary>
-    /// 只切可见性，不动动画。重建内容树后恢复停留页面也走这里。
-    /// 齿轮按钮在设置页隐去——那一页自己有返回箭头，两个入口同时出现反而让人犹豫。
-    /// </summary>
-    private void ApplyPageVisibility(bool settings)
+    private enum NavPage
+    {
+        Home,
+        Settings,
+        Advanced,
+        About
+    }
+
+    private NavPage _page = NavPage.Home;
+    private bool _navSyncing;
+
+    /// <summary>只切可见性，不动动画。重建内容树后恢复停留页面也走这里。</summary>
+    private void ApplyPageVisibility(NavPage page)
     {
         if (!_uiBuilt) return;
 
-        HomePage.Visibility = settings ? Visibility.Collapsed : Visibility.Visible;
-        SettingsPage.Visibility = settings ? Visibility.Visible : Visibility.Collapsed;
-        SettingsNavBtn.Visibility = settings ? Visibility.Collapsed : Visibility.Visible;
+        HomePage.Visibility = page == NavPage.Home ? Visibility.Visible : Visibility.Collapsed;
+        SettingsPage.Visibility = page == NavPage.Settings ? Visibility.Visible : Visibility.Collapsed;
+        AdvancedPage.Visibility = page == NavPage.Advanced ? Visibility.Visible : Visibility.Collapsed;
+        AboutPage.Visibility = page == NavPage.About ? Visibility.Visible : Visibility.Collapsed;
+
+        _page = page;
+        _settingsOpen = page != NavPage.Home;
+
+        SyncNavSelection(page);
+
+        // 隐藏页里的开关还没量过尺寸，切过来之后补量几拍（模板铺开有先后）
+        ScheduleFitToggles();
 
         // 齿轮显隐变了，标题栏的直通区域要跟着重报
         DispatcherQueue.TryEnqueue(UpdateTitleBarInteractiveRegion);
     }
 
-    /// <summary>整页切换。设置页内容长，切过去时给它一段和首帧一致的入场。</summary>
-    private void ShowSettingsPage(bool settings, bool animate = true)
+    private void ScheduleFitToggles()
+    {
+        FitToggleWidths();
+        DispatcherQueue.TryEnqueue(FitToggleWidths);
+        DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, FitToggleWidths);
+    }
+
+    /// <summary>代码里跳页时把左栏选中项拉回来，别让导航和内容对不上。</summary>
+    private void SyncNavSelection(NavPage page)
+    {
+        var item = page switch
+        {
+            NavPage.Settings => NavSettings,
+            NavPage.Advanced => NavAdvanced,
+            NavPage.About => NavAbout,
+            _ => NavHome
+        };
+
+        if (ReferenceEquals(Nav.SelectedItem, item)) return;
+
+        _navSyncing = true;
+        try { Nav.SelectedItem = item; } catch { }
+        _navSyncing = false;
+    }
+
+    private void OnNavSelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    {
+        if (!_uiBuilt || _navSyncing) return;
+
+        var tag = (args.SelectedItemContainer as NavigationViewItem)?.Tag as string;
+        var page = tag switch
+        {
+            "settings" => NavPage.Settings,
+            "advanced" => NavPage.Advanced,
+            "about" => NavPage.About,
+            _ => NavPage.Home
+        };
+
+        Navigate(page);
+    }
+
+    /// <summary>整页切换。内容多的页给它一段和首帧一致的入场。</summary>
+    private void Navigate(NavPage page, bool animate = true)
     {
         if (!_uiBuilt) return;
 
-        bool changed = _settingsOpen != settings;
-        _settingsOpen = settings;
-
-        ApplyPageVisibility(settings);
+        bool changed = _page != page;
+        ApplyPageVisibility(page);
 
         if (!animate || !changed) return;
 
-        if (settings)
+        switch (page)
         {
-            SettingsPage.ChangeView(null, 0, null, true);
-            Reenter(AccountCard, 0);
-            Reenter(BehaviorCard, 25);
-            Reenter(RulesCard, 50);
-        }
-        else
-        {
-            Reenter(StatusCard, 0);
-            Reenter(DeviceCard, 30);
-            Reenter(LogCard, 45);
+            case NavPage.Settings:
+                SettingsPage.ChangeView(null, 0, null, true);
+                Reenter(AccountCard, 0);
+                Reenter(BehaviorCard, 30);
+                break;
+
+            case NavPage.Advanced:
+                AdvancedPage.ChangeView(null, 0, null, true);
+                Reenter(IntervalCard, 0);
+                Reenter(DeviceGuardCard, 30);
+                Reenter(RulesCard, 45);
+                break;
+
+            case NavPage.About:
+                AboutPage.ChangeView(null, 0, null, true);
+                Reenter(AboutCard, 0);
+                break;
+
+            default:
+                HomePage.ChangeView(null, 0, null, true);
+                Reenter(StatusCard, 0);
+                Reenter(DeviceCard, 30);
+                Reenter(LogCard, 45);
+                break;
         }
     }
+
+    /// <summary>自检代码仍在用这个入口：true 去设置页，false 回主页。</summary>
+    private void ShowSettingsPage(bool settings, bool animate = true) =>
+        Navigate(settings ? NavPage.Settings : NavPage.Home, animate);
 
     /// <summary>
     /// FallIn 只补位移不补透明度（FadeTo 的起点取当前值，已经是 1 就没淡入），
@@ -369,8 +444,7 @@ public sealed partial class MainWindow : Window
         UpdateTitleBarInteractiveRegion();
     }
 
-    private void OnSettingsNavClicked(object sender, RoutedEventArgs e) => ShowSettingsPage(true);
-    private void OnSettingsBackClicked(object sender, RoutedEventArgs e) => ShowSettingsPage(false);
+    private void OnSettingsNavClicked(object sender, RoutedEventArgs e) => Navigate(NavPage.Settings);
 
     /// <summary>窗口最小化：延迟一拍归还工作集，避免打断最小化过渡动画。</summary>
     private async void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
@@ -455,7 +529,11 @@ public sealed partial class MainWindow : Window
         StartUiClock();
 
         // XAML 重建后默认停在首页，把离开前那一页补回来
-        ApplyPageVisibility(_settingsOpen);
+        ApplyPageVisibility(_page);
+
+        // 开关的轨道宽度要等模板铺开才量得到，先量一次，再补一拍
+        FitToggleWidths();
+        DispatcherQueue.TryEnqueue(FitToggleWidths);
 
         // 首帧把焦点停在根上：否则框架会把焦点丢给第一个可聚焦按钮（「立即连接」），
         // 打开窗口就顶着一圈焦点框，像是被人点过一样。
@@ -556,20 +634,31 @@ public sealed partial class MainWindow : Window
     {
         if (!_uiBuilt) return;
 
-        // 从托盘召回时可能停在设置页，XAML 重建后默认是首页，这里补回来
-        ApplyPageVisibility(_settingsOpen);
+        // 从托盘召回时可能停在别的页，XAML 重建后默认是首页，这里补回来
+        ApplyPageVisibility(_page);
 
-        if (_settingsOpen)
+        switch (_page)
         {
-            Reenter(AccountCard, 0);
-            Reenter(BehaviorCard, 30);
-            Reenter(RulesCard, 45);
-        }
-        else
-        {
-            Reenter(StatusCard, 0);
-            Reenter(DeviceCard, 30);
-            Reenter(LogCard, 45);
+            case NavPage.Settings:
+                Reenter(AccountCard, 0);
+                Reenter(BehaviorCard, 30);
+                break;
+
+            case NavPage.Advanced:
+                Reenter(IntervalCard, 0);
+                Reenter(DeviceGuardCard, 30);
+                Reenter(RulesCard, 45);
+                break;
+
+            case NavPage.About:
+                Reenter(AboutCard, 0);
+                break;
+
+            default:
+                Reenter(StatusCard, 0);
+                Reenter(DeviceCard, 30);
+                Reenter(LogCard, 45);
+                break;
         }
     }
 
@@ -777,14 +866,19 @@ public sealed partial class MainWindow : Window
 
         AccountBox.Text = s.Account;
         PwdBox.Password = _rt.Store.LoadPassword();
-        DefaultOperatorBox.SelectedIndex = Array.IndexOf(new[] { Operator.Campus, Operator.Mobile, Operator.Unicom, Operator.Telecom }, s.Operator);
+        int operatorIndex = Array.IndexOf(new[] { Operator.Campus, Operator.Mobile, Operator.Unicom, Operator.Telecom }, s.Operator);
+        if (operatorIndex < 0) operatorIndex = 1;
+        DefaultOperatorBox.SelectedIndex = operatorIndex;
+        QuickOperatorBox.SelectedIndex = operatorIndex;
         int hours = Math.Clamp(s.ReauthenticateIntervalHours, 0, 8760);
         ReauthenticateSwitch.IsOn = hours > 0;
         ReauthenticateUnitBox.SelectedIndex = hours > 0 && hours % 24 == 0 ? 1 : 0;
         ReauthenticateValueBox.Value = hours == 0 ? 24 : ReauthenticateUnitBox.SelectedIndex == 1 ? hours / 24 : hours;
         UpdateReauthenticateControls();
         AutoStartSwitch.IsOn = s.AutoStart && StartupManager.IsEnabled();
+        QuickAutoStartSwitch.IsOn = AutoStartSwitch.IsOn;
         AutoReconnectSwitch.IsOn = s.AutoReconnect;
+        QuickReconnectSwitch.IsOn = s.AutoReconnect;
         TraySwitch.IsOn = s.MinimizeToTray;
         LockKeepSwitch.IsOn = s.KeepAliveOnLock;
 
@@ -807,12 +901,65 @@ public sealed partial class MainWindow : Window
         SyncLegacyHostsBar();
         _uiReady = ready;
 
+        UpdateGuideCard();
+        SyncToggleLabels();
+
         RefreshRulesUi();
     }
 
     private void UpdateIntervalDesc()
     {
-        IntervalDescText.Text = $"每 {Math.Round(IntervalSlider.Value)} 秒检查一次是否在线";
+        int seconds = (int)Math.Round(IntervalSlider.Value);
+        IntervalValueText.Text = $"{seconds} 秒";
+    }
+
+    /// <summary>开关的「开 / 关」文字放在轨道左边，跟 Windows 11 设置应用一致。</summary>
+    private void SyncToggleLabels()
+    {
+        if (!_uiBuilt) return;
+
+        AutoStartState.Text = AutoStartSwitch.IsOn ? "开" : "关";
+        QuickAutoStartState.Text = QuickAutoStartSwitch.IsOn ? "开" : "关";
+        AutoReconnectState.Text = AutoReconnectSwitch.IsOn ? "开" : "关";
+        QuickReconnectState.Text = QuickReconnectSwitch.IsOn ? "开" : "关";
+        LockKeepState.Text = LockKeepSwitch.IsOn ? "开" : "关";
+        TrayState.Text = TraySwitch.IsOn ? "开" : "关";
+        ReauthState.Text = ReauthenticateSwitch.IsOn ? "开" : "关";
+        GuardState.Text = DeviceGuardSwitch.IsOn ? "开" : "关";
+    }
+
+    /// <summary>
+    /// 系统 ToggleSwitch 模板为「开 / 关」文字预留了 154 的 MinWidth，该值由模板内部决定，
+    /// 页面级覆盖无效。控件宽度不改的话，轨道会贴在控件左边，右边缘空出一大截。
+    /// 这里读模板里轨道（OuterBorder）的实测宽度，把控件夹到刚好等于轨道。
+    /// </summary>
+    private void FitToggleWidths()
+    {
+        if (!_uiBuilt) return;
+
+        foreach (var toggle in new[]
+                 {
+                     AutoStartSwitch, QuickAutoStartSwitch,
+                     AutoReconnectSwitch, QuickReconnectSwitch,
+                     LockKeepSwitch, TraySwitch,
+                     ReauthenticateSwitch, DeviceGuardSwitch
+                 })
+        {
+            if (toggle is null) continue;
+
+            var track = FindDescendant(toggle, "OuterBorder");
+            if (track is { ActualWidth: > 1 })
+                toggle.Width = track.ActualWidth;
+        }
+    }
+
+    /// <summary>还没填学号时，主页顶部先给一张登录引导卡；填过就收起来。</summary>
+    private void UpdateGuideCard()
+    {
+        if (!_uiBuilt) return;
+
+        bool needSetup = string.IsNullOrWhiteSpace(AccountBox.Text);
+        GuideCard.Visibility = needSetup ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>守卫关闭时整段折叠，不留一排灰控件。值本身留着，重新打开不用重填。</summary>
@@ -918,7 +1065,7 @@ public sealed partial class MainWindow : Window
         };
 
         var source = profile.Rule is { } rule ? DescribeRule(rule) : "默认账号";
-        var activeRule = $"生效规则：{source} · 账号 {profile.Account} · 出口 {OperatorName(profile.Operator)} · 端口 {profile.Port}";
+        var activeRule = $"当前使用：{source} · {OperatorName(profile.Operator)}";
         if (access.Kind == NetworkAccessKind.Wireless && !access.SsidReliable && ConnectionRuleSet.NeedsSsid(rules))
         {
             var reason = access.SsidAccessDenied
@@ -926,6 +1073,9 @@ public sealed partial class MainWindow : Window
                 : "未能读取 SSID";
             activeRule += $"（{reason}）";
         }
+
+        // 端口这类技术细节挪到探测设置里，规则卡上只说人话
+        if (ProbePortText is { } port) port.Text = $"统计端口 {profile.Port}";
 
         var ruleId = profile.Rule?.Id;
         if (onlyIfChanged && _displayedRuleId == ruleId
@@ -1252,26 +1402,58 @@ public sealed partial class MainWindow : Window
     {
         ConnectBtn.Click += async (_, _) => await OnConnectClicked();
 
-        AccountBox.TextChanged += (_, _) => ScheduleSave();
+        AccountBox.TextChanged += (_, _) =>
+        {
+            ScheduleSave();
+            if (_uiReady) UpdateGuideCard();
+        };
         PwdBox.PasswordChanged += (_, _) => ScheduleSave();
         DefaultOperatorBox.SelectionChanged += (_, _) => ScheduleSave();
-        ReauthenticateSwitch.Toggled += (_, _) => { UpdateReauthenticateControls(); ScheduleSave(); };
+        ReauthenticateSwitch.Toggled += (_, _) =>
+        {
+            UpdateReauthenticateControls();
+            SyncToggleLabels();
+            ScheduleSave();
+        };
         ReauthenticateValueBox.ValueChanged += (_, _) => ScheduleSave();
         ReauthenticateUnitBox.SelectionChanged += (_, _) => { UpdateReauthenticateControls(); ScheduleSave(); };
 
         AutoStartSwitch.Toggled += (_, _) =>
         {
             if (!_uiReady) return;
+            MirrorToggle(AutoStartSwitch, QuickAutoStartSwitch);
+            SyncToggleLabels();
             PersistToStore();
         };
-        AutoReconnectSwitch.Toggled += (_, _) => ScheduleSave();
+        QuickAutoStartSwitch.Toggled += (_, _) =>
+        {
+            if (!_uiReady) return;
+            MirrorToggle(QuickAutoStartSwitch, AutoStartSwitch);
+            SyncToggleLabels();
+            PersistToStore();
+        };
+        AutoReconnectSwitch.Toggled += (_, _) =>
+        {
+            MirrorToggle(AutoReconnectSwitch, QuickReconnectSwitch);
+            SyncToggleLabels();
+            ScheduleSave();
+        };
+        QuickReconnectSwitch.Toggled += (_, _) =>
+        {
+            if (!_uiReady) return;
+            MirrorToggle(QuickReconnectSwitch, AutoReconnectSwitch);
+            SyncToggleLabels();
+            ScheduleSave();
+        };
         LockKeepSwitch.Toggled += (_, _) =>
         {
+            SyncToggleLabels();
             ScheduleSave();
             _rt.ApplyLockPolicy();   // 开关一动就生效，不用等下次锁屏
         };
         TraySwitch.Toggled += (_, _) =>
         {
+            SyncToggleLabels();
             ScheduleSave();
             _rt.RefreshTray();
         };
@@ -1285,6 +1467,7 @@ public sealed partial class MainWindow : Window
         DeviceGuardSwitch.Toggled += (_, _) =>
         {
             UpdateGuardUiEnabledState();
+            SyncToggleLabels();
             ScheduleSave();
         };
         DeviceGuardThresholdBox.ValueChanged += (_, _) => ScheduleSave();
@@ -1330,8 +1513,107 @@ public sealed partial class MainWindow : Window
             Fx.Conceal(LegacyHostsBar);
         };
 
+        // ── 主页上的快捷设置（和设置页是同一份配置，双向镜像） ──
+        QuickEditAccountBtn.Click += (_, _) =>
+        {
+            Navigate(NavPage.Settings);
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                try { AccountBox.Focus(FocusState.Programmatic); } catch { }
+            });
+        };
+
+        QuickOperatorBox.SelectionChanged += async (_, _) =>
+        {
+            if (!_uiReady) return;
+            if (_syncing) return;
+
+            int index = QuickOperatorBox.SelectedIndex;
+            if (index < 0) return;
+
+            _syncing = true;
+            DefaultOperatorBox.SelectedIndex = index;
+            _syncing = false;
+
+            ScheduleSave();
+
+            // 已经连着的时候换出口，旧认证其实挂在原来的出口上，问一句要不要立刻重连
+            if (_rt.State != ConnState.Online) return;
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = Root.XamlRoot,
+                Title = "换到「" + OperatorName(OperatorAt(index)) + "」？",
+                Content = "现在这条连接还挂在原来的出口上。要立刻重新登录吗？不重连的话，下一次掉线后才会用新出口。",
+                PrimaryButtonText = "立刻重连",
+                CloseButtonText = "以后再说",
+                DefaultButton = ContentDialogButton.Primary
+            };
+
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+                await OnConnectClicked();
+        };
+
+        // ── 首次使用：登录引导 ──
+        GuideSaveBtn.Click += async (_, _) =>
+        {
+            string account = GuideAccountBox.Text.Trim();
+            if (account.Length == 0)
+            {
+                ShowGuideError("先填一下学号。");
+                return;
+            }
+
+            if (GuidePwdBox.Password.Length == 0)
+            {
+                ShowGuideError("再填一下密码。");
+                return;
+            }
+
+            _uiReady = false;
+            AccountBox.Text = account;
+            PwdBox.Password = GuidePwdBox.Password;
+            int index = GuideOperatorBox.SelectedIndex;
+            if (index >= 0)
+            {
+                DefaultOperatorBox.SelectedIndex = index;
+                QuickOperatorBox.SelectedIndex = index;
+            }
+
+            _uiReady = true;
+            GuideErrorText.Visibility = Visibility.Collapsed;
+            PersistToStore();
+            UpdateGuideCard();
+
+            await OnConnectClicked();
+        };
+
         _uiReady = true;
     }
+
+    /// <summary>主页那两个开关只是设置页开关的镜像，改动要互相带上，避免两处不一致。</summary>
+    private void MirrorToggle(ToggleSwitch source, ToggleSwitch target)
+    {
+        if (_syncing) return;
+
+        _syncing = true;
+        try { target.IsOn = source.IsOn; } catch { }
+        _syncing = false;
+    }
+
+    private void ShowGuideError(string message)
+    {
+        GuideErrorText.Text = message;
+        GuideErrorText.Visibility = Visibility.Visible;
+    }
+
+    private static Operator OperatorAt(int index) => index switch
+    {
+        0 => Operator.Campus,
+        2 => Operator.Unicom,
+        3 => Operator.Telecom,
+        _ => Operator.Mobile
+    };
 
     // ────────────────────────── 运行日志交互 ──────────────────────────
 
@@ -1518,7 +1800,7 @@ public sealed partial class MainWindow : Window
     private void UpdateLogBadge()
     {
         if (!_uiBuilt) return;
-        LogBadge.Text = Events.Count == 0 ? "暂无事件" : $"{Events.Count} 条事件";
+        LogBadge.Text = Events.Count == 0 ? "暂无" : $"{Events.Count} 条";
         LogEmptyText.Visibility = Events.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -1565,7 +1847,6 @@ public sealed partial class MainWindow : Window
         string account = result?.Account ?? _rt.Store.Settings.Account;
         AccText.Text = ShortAccount(account);
         IpText.Text = state == ConnState.Online ? result?.Ip ?? "—" : "—";
-        OutletText.Text = OperatorName(_rt.Coordinator.ActiveOperator);
 
         UpdateClockTexts();
         UpdateAutoPill();
@@ -1665,13 +1946,12 @@ public sealed partial class MainWindow : Window
         UpdateClockTexts();
     }
 
+    /// <summary>自动重连状态现在只体现在那两个开关上，这里顺手把开关文字刷一遍。</summary>
     private void UpdateAutoPill()
     {
         if (!_uiBuilt) return;
 
-        bool auto = _rt.Store.Settings.AutoReconnect;
-        AutoLabel.Text = auto ? "已开启" : "已关闭";
-        AutoDot.Fill = BrushCache.Get(auto ? _theme.Success : _theme.Neutral);
+        SyncToggleLabels();
     }
 
     // ────────────────────────── 交互 ──────────────────────────
@@ -1686,7 +1966,6 @@ public sealed partial class MainWindow : Window
         var dm = _rt.Devices;
 
         DeviceList.ItemsSource = dm.Devices;
-        DevicePortText.Text = dm.Port > 0 ? $"端口 {dm.Port}" : "";
 
         int count = dm.Devices.Count;
         var s = _rt.Store.Settings;
@@ -1701,7 +1980,7 @@ public sealed partial class MainWindow : Window
             case DeviceListState.Ready:
                 DeviceSummary.Text = count == 0
                     ? "当前没有在线设备"
-                    : guard ? $"当前 {count}/{s.DeviceGuardThreshold} 台设备在线" : $"当前 {count} 台设备在线";
+                    : guard ? $"当前 {count} 台设备在线（上限 {s.DeviceGuardThreshold}）" : $"当前 {count} 台设备在线";
                 break;
 
             case DeviceListState.Failed:
@@ -1902,11 +2181,11 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        // 验证码面板长在首页的状态卡里。用户这时候如果在设置页，得先把人带回首页，
+        // 验证码面板长在主页的状态卡里。用户这时候如果在别的页，得先把人带回主页，
         // 否则面板在看不见的地方亮起来，登录就卡在那儿了。
-        if (_settingsOpen)
+        if (_page != NavPage.Home)
         {
-            ShowSettingsPage(false);
+            Navigate(NavPage.Home);
             DispatcherQueue.TryEnqueue(() =>
             {
                 try { CaptchaPanel.StartBringIntoView(); } catch { }

@@ -29,13 +29,24 @@ public sealed partial class MainWindow
         sb.AppendLine($"theme      = dark={_theme.IsDark} accent=#{_theme.Accent.R:X2}{_theme.Accent.G:X2}{_theme.Accent.B:X2}");
         sb.AppendLine($"accountCrd = {RectOf(AccountCard)}");
         sb.AppendLine($"behavior   = {RectOf(BehaviorCard)}");
+        sb.AppendLine($"accBox     = {RectOf(AccountBox)}");
+        sb.AppendLine($"pwdBox     = {RectOf(PwdBox)}");
+
+        // 高级页：滑杆、设备监测、连接规则（拆页后必须切过去才量得到）
+        Navigate(NavPage.Advanced, animate: false);
+        await Task.Delay(260);
+        sb.AppendLine("--- advanced ---");
         sb.AppendLine($"ivSlider   = {RectOf(IntervalSlider)} val={IntervalSlider.Value}");
         sb.AppendLine($"guardCard  = {RectOf(DeviceGuardCard)}");
         sb.AppendLine($"rulesCard  = {RectOf(RulesCard)}");
         sb.AppendLine($"guardState = {RectOf(DeviceGuardStateText)}");
         sb.AppendLine($"rulesLink  = {RectOf(RulesCurrentLinkText)}");
-        sb.AppendLine($"accBox     = {RectOf(AccountBox)}");
-        sb.AppendLine($"pwdBox     = {RectOf(PwdBox)}");
+
+        Navigate(NavPage.Settings, animate: false);
+        await Task.Delay(260);
+        sb.AppendLine("--- settings ---");
+        sb.AppendLine($"accountCrd = {RectOf(AccountCard)}");
+        sb.AppendLine($"behavior   = {RectOf(BehaviorCard)}");
 
         // 设置项命中测试：开关与行标题不能互相遮挡
         sb.AppendLine($"hit.autoSw = {HitTest(AutoStartSwitch)}");
