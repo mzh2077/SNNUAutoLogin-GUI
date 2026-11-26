@@ -950,7 +950,10 @@ public sealed partial class MainWindow : Window
         }
 
         RulesList.ItemsSource = items;
-        RulesEmptyText.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        bool hasRules = items.Count > 0;
+        RulesEmptyPanel.Visibility = hasRules ? Visibility.Collapsed : Visibility.Visible;
+        RulesListPanel.Visibility = hasRules ? Visibility.Visible : Visibility.Collapsed;
+        RulesFallbackHint.Visibility = hasRules ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>添加一条规则。</summary>
