@@ -21,13 +21,14 @@ public sealed partial class MainWindow
 
         await Task.Delay(1500);
 
+        // 设置项都在设置页上，先切过去量尺寸；首页的量测放到后面切回来再做。
+        ShowSettingsPage(true, animate: false);
+        await Task.Delay(260);
+
         sb.AppendLine($"uiReady    = {_uiReady}");
         sb.AppendLine($"theme      = dark={_theme.IsDark} accent=#{_theme.Accent.R:X2}{_theme.Accent.G:X2}{_theme.Accent.B:X2}");
-        sb.AppendLine($"statusCard = {RectOf(StatusCard)}");
         sb.AppendLine($"accountCrd = {RectOf(AccountCard)}");
         sb.AppendLine($"behavior   = {RectOf(BehaviorCard)}");
-        sb.AppendLine($"logCard    = {RectOf(LogCard)}");
-        sb.AppendLine($"ringHost   = {RectOf(RingHost)}");
         sb.AppendLine($"ivBox      = {RectOf(IntervalBox)} val={IntervalBox.Value}");
         sb.AppendLine($"guardCard  = {RectOf(DeviceGuardCard)}");
         sb.AppendLine($"rulesCard  = {RectOf(RulesCard)}");
@@ -38,12 +39,22 @@ public sealed partial class MainWindow
 
         // 设置项命中测试：开关与行标题不能互相遮挡
         sb.AppendLine($"hit.autoSw = {HitTest(AutoStartSwitch)}");
-        sb.AppendLine($"hit.connBtn= {HitTest(ConnectBtn)}");
 
         sb.AppendLine($"sw.auto    = {RectOf(AutoStartSwitch)} min={AutoStartSwitch.MinWidth} max={AutoStartSwitch.MaxWidth} pad={AutoStartSwitch.Padding}");
         sb.AppendLine($"sw.parts   = {DescribeSwitch(AutoStartSwitch)}");
         sb.AppendLine($"sw.conn    = {RectOf(AutoReconnectSwitch)}");
         sb.AppendLine($"accBox.right= {RightOf(AccountBox):F1}  sw.right= {RightOf(AutoStartSwitch):F1}");
+
+        // 首页：状态卡与日志卡
+        ShowSettingsPage(false, animate: false);
+        await Task.Delay(260);
+
+        sb.AppendLine("--- home ---");
+        sb.AppendLine($"statusCard = {RectOf(StatusCard)}");
+        sb.AppendLine($"logCard    = {RectOf(LogCard)}");
+        sb.AppendLine($"deviceCard = {RectOf(DeviceCard)}");
+        sb.AppendLine($"ringHost   = {RectOf(RingHost)}");
+        sb.AppendLine($"hit.connBtn= {HitTest(ConnectBtn)}");
 
         // 三种关键状态出图
         ApplyState(ConnState.Online, null, animate: false);
@@ -58,6 +69,9 @@ public sealed partial class MainWindow
         await Task.Delay(400);
         await SaveElementAsync(StatusCard, "snnu_state_failed.png");
 
+        // 这两张卡在设置页上，切回去才渲染得出来
+        ShowSettingsPage(true, animate: false);
+        await Task.Delay(260);
         await SaveElementAsync(AccountCard, "snnu_account.png");
         await SaveElementAsync(BehaviorCard, "snnu_behavior.png");
 

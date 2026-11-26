@@ -108,6 +108,23 @@ public sealed partial class MainWindow
     {
         await Task.Delay(2400);
 
+        var argv = Environment.GetCommandLineArgs();
+
+        // --page settings：截设置页。--advanced 顺手把收起来的高级探测项展开。
+        if (argv.AsSpan().Contains("--page") && argv.AsSpan().Contains("settings"))
+        {
+            ShowSettingsPage(true, animate: false);
+            if (argv.AsSpan().Contains("--advanced")) OnGuardAdvancedToggled(null!, null!);
+            await Task.Delay(500);
+
+            // --scroll-bottom：滚到页尾，用来看下半屏有没有错位
+            if (argv.AsSpan().Contains("--scroll-bottom"))
+            {
+                SettingsScroll.ChangeView(null, SettingsScroll.ScrollableHeight, null, true);
+                await Task.Delay(400);
+            }
+        }
+
         // --shot-full：先把窗口拉高，让右栏所有卡片进入可视区，便于一次看全版式
         if (Environment.GetCommandLineArgs().AsSpan().Contains("--shot-full") && _appWindow is not null)
         {

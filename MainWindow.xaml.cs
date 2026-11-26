@@ -41,6 +41,8 @@ public sealed partial class MainWindow : Window
     private bool _uiBuilt;
     private bool _hiddenToTray;
     private bool _startHidden;
+    private bool _settingsOpen;
+    private bool _guardStatusSeen;
     private bool _logScrollQueued;
     private bool _legacyDismissed;
     private bool _legacyCleaning;
@@ -106,7 +108,9 @@ public sealed partial class MainWindow : Window
         if (scale <= 0) scale = 1.0;
 
         int targetW = (int)(1040 * scale);
-        int targetH = (int)(840 * scale);
+
+        // 设置项收进独立页面之后，首页只剩三张卡，840 会空出一大截，压到 780。
+        int targetH = (int)(780 * scale);
 
         var area = DisplayArea.GetFromWindowId(id, DisplayAreaFallback.Primary);
         var work = area.WorkArea;
@@ -138,6 +142,83 @@ public sealed partial class MainWindow : Window
             SetTitleBar(AppTitleBar);
         }
         catch { }
+    }
+
+    // ────────────────────────── 页面导航（首页 ↔ 设置） ──────────────────────────
+
+    /// <summary>
+    /// 只切可见性，不动动画。重建内容树后恢复停留页面也走这里。
+    /// 齿轮按钮在设置页隐去——那页自己有返回箭头，两个入口同时出现反而让人犹豫。
+    /// </summary>
+    private void ApplyPageVisibility(bool settings)
+    {
+        if (!_uiBuilt) return;
+
+        HomePage.Visibility = settings ? Visibility.Collapsed : Visibility.Visible;
+        SettingsPage.Visibility = settings ? Visibility.Visible : Visibility.Collapsed;
+        SettingsNavBtn.Visibility = settings ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>整页切换。设置页的卡片多，切过去时给它一段和首帧一致的入场。</summary>
+    private void ShowSettingsPage(bool settings, bool animate = true)
+    {
+        if (!_uiBuilt) return;
+
+        bool changed = _settingsOpen != settings;
+        _settingsOpen = settings;
+
+        ApplyPageVisibility(settings);
+
+        if (!animate || !changed) return;
+
+        if (settings)
+        {
+            SettingsScroll.ChangeView(null, 0, null, true);
+            Reenter(AccountCard, 0);
+            Reenter(BehaviorCard, 30);
+            Reenter(RulesCard, 45);
+        }
+        else
+        {
+            Reenter(StatusCard, 0);
+            Reenter(DeviceCard, 30);
+            Reenter(LogCard, 45);
+        }
+    }
+
+    /// <summary>
+    /// FallIn 只补位移不补透明度（FadeTo 的起点取当前值，已经是 1 就没淡入），
+    /// 所以换页时先把透明度清零。
+    /// </summary>
+    private static void Reenter(FrameworkElement el, int delayMs)
+    {
+        if (el is null) return;
+        el.Opacity = 0;
+        Fx.FallIn(el, delayMs, 12, Fx.SlowMs);
+    }
+
+    private void OnSettingsNavClicked(object sender, RoutedEventArgs e) => ShowSettingsPage(true);
+
+    private void OnSettingsBackClicked(object sender, RoutedEventArgs e) => ShowSettingsPage(false);
+
+    /// <summary>探测地址、超时这些一年改不上一次，默认收起。</summary>
+    private void OnGuardAdvancedToggled(object sender, RoutedEventArgs e)
+    {
+        if (!_uiBuilt) return;
+
+        bool show = GuardAdvancedPanel.Visibility != Visibility.Visible;
+        if (show)
+        {
+            Fx.Reveal(GuardAdvancedPanel, 6f, Fx.FastMs);
+            GuardAdvancedToggleText.Text = "收起高级设置";
+            GuardAdvancedChevron.Glyph = "\uE70E";
+        }
+        else
+        {
+            Fx.Conceal(GuardAdvancedPanel, Fx.FastMs);
+            GuardAdvancedToggleText.Text = "高级探测设置";
+            GuardAdvancedChevron.Glyph = "\uE70D";
+        }
     }
 
     /// <summary>窗口最小化：延迟一拍归还工作集，避免打断最小化过渡动画。</summary>
@@ -217,6 +298,13 @@ public sealed partial class MainWindow : Window
 
         FitToggleWidths();
         DispatcherQueue.TryEnqueue(FitToggleWidths);
+
+        // XAML 重建后默认停在首页，把离开前那一页补回来
+        ApplyPageVisibility(_settingsOpen);
+
+        // 首帧把焦点停在根上：否则框架会把焦点丢给第一个可聚焦按钮（「立即登录」），
+        // 打开窗口就顶着一圈焦点框，像是被人点过一样。
+        try { Root.Focus(FocusState.Programmatic); } catch { }
     }
 
     /// <summary>
@@ -230,6 +318,9 @@ public sealed partial class MainWindow : Window
         PersistToStore();
         ClearPublicIp();
         _uiBuilt = false;
+
+        // 文本控件跟着树一起没了，重建后要重新等后台推一次守卫状态
+        _guardStatusSeen = false;
 
         try { LogList.ItemsSource = null; } catch { }
         Logs.Clear();
@@ -287,19 +378,27 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// 首帧入场：和系统设置页一样，300ms、12px、每张卡错开 30ms。
-    /// 卡片多了不排队等，4 张以内刚好在 400ms 内全部到位。
+    /// 只给当前那一页的卡片做——隐藏页里的元素做动画既看不见又白费一次合成。
     /// </summary>
     private void PlayIntro()
     {
         if (!_uiBuilt) return;
 
-        Fx.FallIn(StatusCard, 0, 12, Fx.SlowMs);
-        Fx.FallIn(LogCard, 30, 12, Fx.SlowMs);
-        Fx.FallIn(DeviceGuardCard, 30, 12, Fx.SlowMs);
-        Fx.FallIn(RulesCard, 45, 12, Fx.SlowMs);
-        Fx.FallIn(AccountCard, 60, 12, Fx.SlowMs);
-        Fx.FallIn(BehaviorCard, 75, 12, Fx.SlowMs);
-        Fx.FallIn(AboutCard, 90, 12, Fx.SlowMs);
+        // 从托盘召回时可能停在设置页，XAML 重建后默认是首页，这里补回来
+        ApplyPageVisibility(_settingsOpen);
+
+        if (_settingsOpen)
+        {
+            Reenter(AccountCard, 0);
+            Reenter(BehaviorCard, 30);
+            Reenter(RulesCard, 45);
+        }
+        else
+        {
+            Reenter(StatusCard, 0);
+            Reenter(DeviceCard, 30);
+            Reenter(LogCard, 45);
+        }
     }
 
     /// <summary>从托盘召回：内容树在就只显示，不在就重建后再显示。</summary>
@@ -484,6 +583,11 @@ public sealed partial class MainWindow : Window
         DeviceGuardTimeoutBox.Value = s.DeviceGuardProbeTimeoutSeconds;
         UpdateGuardUiEnabledState();
 
+        // 后台还没推过状态时，卡片底部的占位文案要跟开关一致：
+        // 开关明明开着，下面却写「守卫未启用」，看着像坏了。
+        if (!_guardStatusSeen)
+            DeviceGuardStateText.Text = s.DeviceGuardEnabled ? "监测已启用，等待首次检测" : "守卫未启用";
+
         SyncLegacyHostsBar();
         _uiReady = ready;
 
@@ -518,6 +622,8 @@ public sealed partial class MainWindow : Window
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!_uiBuilt) return;
+
+            _guardStatusSeen = true;
 
             string state = status.State switch
             {
@@ -1479,6 +1585,17 @@ public sealed partial class MainWindow : Window
             Fx.Conceal(CaptchaPanel, Fx.FastMs);
             CaptchaPic.Source = null;
             return;
+        }
+
+        // 验证码长在设置页的「默认账号」卡里。用户这时候多半停在首页，必须把人带过去，
+        // 否则面板在看不见的地方亮起来，登录就卡在那儿了。
+        if (!_settingsOpen)
+        {
+            ShowSettingsPage(true);
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                try { CaptchaPanel.StartBringIntoView(); } catch { }
+            });
         }
 
         Fx.Reveal(CaptchaPanel);
