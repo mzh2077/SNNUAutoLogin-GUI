@@ -58,6 +58,7 @@
             </Style>
 
             <Style x:Key="RowTitleStyle" TargetType="TextBlock">
+                <Setter Property="VerticalAlignment" Value="Center" />
                 <Setter Property="FontSize" Value="13" />
                 <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
                 <Setter Property="TextWrapping" Value="NoWrap" />
@@ -95,10 +96,17 @@
             </Style>
 
             <Style x:Key="RowInputStyle" TargetType="Control">
+                <Setter Property="BorderBrush" Value="{ThemeResource ControlStrokeColorDefaultBrush}" />
                 <Setter Property="HorizontalAlignment" Value="Right" />
                 <Setter Property="VerticalAlignment" Value="Center" />
                 <Setter Property="MinHeight" Value="32" />
                 <Setter Property="CornerRadius" Value="4" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="BorderThickness" Value="1" />
+            </Style>
+
+            <Style x:Key="FormInputStyle" TargetType="Control" BasedOn="{StaticResource RowInputStyle}">
+                <Setter Property="HorizontalAlignment" Value="Stretch" />
             </Style>
 
             <Style x:Key="RowTextBoxStyle" BasedOn="{StaticResource RowInputStyle}" TargetType="TextBox">
@@ -135,6 +143,8 @@
                 <Setter Property="Padding" Value="0" />
                 <Setter Property="FontSize" Value="12" />
                 <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="MinWidth" Value="0" />
+                <Setter Property="MinHeight" Value="32" />
             </Style>
 
             <Style x:Key="NavIconButtonStyle" TargetType="Button">
@@ -282,6 +292,8 @@
                         </Button>
                     </Grid>
                 </Border>
+
+                <InfoBar x:Name="OperationNotice" IsOpen="False" IsClosable="True" />
 
                 <!--  ────────── 状态卡：图标 + 一句人话 + 信息格 + 主操作  ──────────  -->
                 <Border x:Name="StatusCard" Style="{StaticResource CardStyle}">
@@ -448,6 +460,7 @@
 
                                 <TextBox
                                     x:Name="CaptchaBox"
+                                    Style="{StaticResource FormInputStyle}"
                                     Grid.Column="1"
                                     MinHeight="32"
                                     VerticalAlignment="Center"
@@ -960,12 +973,14 @@
                                     Spacing="6">
                                     <NumberBox
                                         x:Name="ReauthenticateValueBox"
+                                        Style="{StaticResource RowNumberBoxStyle}"
                                         Width="72"
                                         MinHeight="32"
                                         MinWidth="0"
                                         SpinButtonPlacementMode="Compact" />
                                     <ComboBox
                                         x:Name="ReauthenticateUnitBox"
+                                        Style="{StaticResource RowComboBoxStyle}"
                                         Width="68"
                                         MinHeight="32"
                                         SelectedIndex="0">
@@ -1127,6 +1142,7 @@
                                         <TextBlock Style="{StaticResource MetaLabelStyle}" Text="校内探测地址" />
                                         <TextBox
                                             x:Name="DeviceGuardProbeTargetBox"
+                                            Style="{StaticResource FormInputStyle}"
                                             MinHeight="32"
                                             PlaceholderText="留空使用默认" />
                                     </StackPanel>
@@ -1134,6 +1150,7 @@
                                         <TextBlock Style="{StaticResource MetaLabelStyle}" Text="外网探测地址" />
                                         <TextBox
                                             x:Name="DeviceGuardExternalProbeTargetBox"
+                                            Style="{StaticResource FormInputStyle}"
                                             MinHeight="32"
                                             PlaceholderText="用来判断是否真的断网" />
                                     </StackPanel>
@@ -1141,6 +1158,7 @@
                                         <TextBlock Style="{StaticResource MetaLabelStyle}" Text="超时（秒）" />
                                         <NumberBox
                                             x:Name="DeviceGuardTimeoutBox"
+                                            Style="{StaticResource RowNumberBoxStyle}"
                                             Width="96"
                                             HorizontalAlignment="Left"
                                             MinHeight="32"
@@ -1387,11 +1405,13 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Style="{StaticResource RowTitleStyle}" Text="认证门户" />
-                            <TextBlock
+                            <HyperlinkButton
+                                x:Name="PortalLink"
                                 Grid.Column="1"
-                                VerticalAlignment="Center"
-                                Style="{StaticResource MetaValueStyle}"
-                                Text="202.117.144.205" />
+                                Style="{StaticResource InlineLinkStyle}"
+                                Content="202.117.144.205"
+                                NavigateUri="http://202.117.144.205/"
+                                AutomationProperties.Name="打开校园网认证门户 202.117.144.205" />
                         </Grid>
 
                         <Border Style="{StaticResource DividerStyle}" />
@@ -1415,7 +1435,7 @@
                                 <HyperlinkButton
                                     Style="{StaticResource InlineLinkStyle}"
                                     Content="Gitee"
-                                    NavigateUri="https://gitee.com/mzh2077/SNNUAutoLogin-GUI" />
+                                    NavigateUri="https://gitee.com/marike_86/SNNUAutoLogin-GUI" />
                             </StackPanel>
                         </Grid>
 

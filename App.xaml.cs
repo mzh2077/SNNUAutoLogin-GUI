@@ -89,6 +89,14 @@ public partial class App : Application
             return;
         }
 
+        // Visual checks use empty temporary settings and never start authentication or register startup.
+        if (Has("--ui-test") || Has("--snapshot"))
+        {
+            _runtime = new AppRuntime(DispatcherQueue.GetForCurrentThread(), uiTest: true);
+            _runtime.ShowWindow();
+            return;
+        }
+
         // 单实例：两个进程同时认证会互相把对方踢下线
         _singleInstance = new Mutex(true, @"Local\SNNUAutoLogin.SingleInstance", out bool createdNew);
         if (!createdNew)

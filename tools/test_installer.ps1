@@ -21,7 +21,12 @@ $installedVersion = (Get-Item -LiteralPath $exe).VersionInfo.FileVersion
 if ($installedVersion -ne $ExpectedFileVersion) { throw "Installed version mismatch: $installedVersion != $ExpectedFileVersion" }
 # No campus credentials are configured on the disposable CI runner.
 $app = Start-Process -FilePath $exe -ArgumentList '--test-exit' -WorkingDirectory $env:TEMP -PassThru -WindowStyle Hidden
-if (!$app.WaitForExit(30000)) { throw 'Installed application exit self-test timed out' }
+if (!$app.WaitForExit(30000)) {
+    $app.Kill()
+    $hookError = Join-Path $env:TEMP 'snnu_hook_error.txt'
+    if (Test-Path -LiteralPath $hookError) { Get-Content -LiteralPath $hookError | Write-Host }
+    throw 'Installed application exit self-test timed out'
+}
 if ($app.ExitCode -ne 0) { throw "Installed application failed ($($app.ExitCode))" }
 $exitReport = Join-Path $env:TEMP 'snnu_exit.txt'
 if (!(Test-Path -LiteralPath $exitReport)) { throw 'Installed application self-test did not run' }

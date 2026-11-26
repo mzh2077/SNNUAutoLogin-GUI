@@ -84,11 +84,13 @@ public sealed partial class MainWindow
         foreach (var control in new Microsoft.UI.Xaml.Controls.Control[]
         {
             AccountBox, PwdBox, CaptchaBox, DeviceGuardProbeTargetBox, DeviceGuardExternalProbeTargetBox,
-            DeviceGuardThresholdBox, DeviceGuardTimeoutBox, IntervalSlider
+            DeviceGuardThresholdBox, DeviceGuardTimeoutBox, DefaultOperatorBox,
+            ReauthenticateValueBox, ReauthenticateUnitBox
         })
         {
+            control.ApplyTemplate();
             if (control.BorderBrush is not SolidColorBrush || !control.BorderThickness.Equals(new Thickness(1)))
-                throw new InvalidOperationException($"输入框边框样式错误：{control.Name}");
+                throw new InvalidOperationException($"输入框边框样式错误：{control.Name} ({control.BorderBrush?.GetType().Name}, {control.BorderThickness})");
         }
 
         DeviceGuardThresholdBox.ApplyTemplate();
