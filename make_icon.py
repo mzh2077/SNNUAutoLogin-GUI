@@ -1,67 +1,100 @@
 """生成应用图标：圆形纯色底 + 经典三弧无线符号。
 
 只用标准库，CI 不需要额外依赖。
-设计参数与 artifacts/icon-concepts/round-1.png 一致。
+几何基准与 artifacts/icon-concepts/round-1.png 一致，但做了两处针对 Windows 的修正：
+
+1. 圆形外径从 960 提到 1010（画布 1024）。任务栏里方形图标是满格铺开的，
+   圆形的视觉面积只有方形的 78%，不多给一点外径就会明显小一圈。
+2. 小尺寸单独一套几何。16/24 px 下三弧的线宽不足 1 个像素，缩小后会糊成白斑，
+   所以 24 px 用两弧、16 px 用单弧，线宽按像素反算，保证笔画实心。
 """
 import math
 import os
 import struct
 import zlib
 
-S = 1024                       # 超采样画布
-CX = CY = 512.0                # 圆心（也是画布中心）
-R_CIRCLE = 480.0               # 圆形半径，直径 960
+S = 1024                       # 基准画布
+CX = CY = 512.0                # 圆心
+R_CIRCLE = 510.0               # 圆半径，直径 1020（只留 2px 抗锯齿余量，几乎顶满图标槽）
 BRAND = (0x16, 0x77, 0xFF)     # 品牌蓝
 
-ARC_CY = 674.25                # 三条弧与圆点共用的圆心（偏下，给上方留白）
+# 大尺寸几何：三条等粗弧 + 圆点，半径与线宽按 1024 画布给出
 ARC_HALF = 45.0                # 弧张开半角
-ARCS = [(340.0, 49.0), (229.0, 49.0), (118.0, 49.0)]   # (半径, 线宽)
-DOT_R = 40.0                   # 底部圆点半径
+FULL_ARCS = [(360.0, 58.0), (238.0, 58.0), (116.0, 58.0)]
+FULL_DOT = 46.0
 
-DEG0 = 270.0 - ARC_HALF
-DEG1 = 270.0 + ARC_HALF
-_RAD0 = math.radians(DEG0)
-_RAD1 = math.radians(DEG1)
-_ENDS = [
-    ((CX + r * math.cos(_RAD0), ARC_CY + r * math.sin(_RAD0)),
-     (CX + r * math.cos(_RAD1), ARC_CY + r * math.sin(_RAD1)))
-    for r, _w in ARCS
-]
+# 小尺寸几何：16 px 实在塞不下三条弧，用一条粗弧带点
+MID_ARCS = FULL_ARCS                            # 24 px 仍用三弧（约 1.2 px 线宽，还算清楚）
+MID_DOT = FULL_DOT
+SMALL_ARCS = [(338.0, 104.0)]                   # 16 px
+SMALL_DOT = 108.0
 
 
-def render(size):
-    W = H = size
+def geometry_for(size):
+    """按输出尺寸挑几何。只有 16 px 才退成单弧，再上面都保持三弧的形状。"""
+    if size >= 20:
+        return FULL_ARCS, FULL_DOT
+    return SMALL_ARCS, SMALL_DOT
+
+
+def centered_cy(arcs, dot_r):
+    """让「弧顶到点底」这一段整体在画布里垂直居中。"""
+    outer = max(r for r, _w in arcs) + max(w for _r, w in arcs) / 2.0
+    return CY + (outer - dot_r) / 2.0
+
+
+def render(size, supersample=1):
+    """直接按 size 渲染（内部可超采样）。弧线用「到圆弧段的距离」算覆盖度，端点天然圆头。"""
+    arcs, dot_r = geometry_for(size)
+    arc_cy = centered_cy(arcs, dot_r)
+
+    k = size / float(S)                 # 1024 坐标 → 目标尺寸
+    ss = max(1, supersample)
+    W = H = size * ss
     br, bg, bb = BRAND
     buf = bytearray(W * H * 4)
 
+    r_circle = R_CIRCLE * k * ss
+    cx = cy = (size / 2.0) * ss
+    acy = arc_cy * k * ss
+    dot = dot_r * k * ss
+    scaled_arcs = [(r * k * ss, w * k * ss) for r, w in arcs]
+
+    deg0 = 270.0 - ARC_HALF
+    deg1 = 270.0 + ARC_HALF
+    rad0 = math.radians(deg0)
+    rad1 = math.radians(deg1)
+    ends = [
+        ((cx + r * math.cos(rad0), acy + r * math.sin(rad0)),
+         (cx + r * math.cos(rad1), acy + r * math.sin(rad1)))
+        for r, _w in scaled_arcs
+    ]
+
     for y in range(H):
         fy = y + 0.5
+        dy = fy - acy
         for x in range(W):
             fx = x + 0.5
 
-            dc = math.hypot(fx - CX, fy - CY)
-            if dc > R_CIRCLE + 1.0:
+            dc = math.hypot(fx - cx, fy - cy)
+            if dc > r_circle + 1.0:
                 continue
-            mask = min(max(R_CIRCLE + 0.5 - dc, 0.0), 1.0)
+            mask = min(max(r_circle + 0.5 - dc, 0.0), 1.0)
             if mask <= 0:
                 continue
 
-            # 前景覆盖度：弧线用“到圆弧段的距离”，端点自然成为圆头
-            dx = fx - CX
-            dy = fy - ARC_CY
-            dist = math.hypot(dx, dy)
-
-            cover = DOT_R + 0.5 - dist
+            dist = math.hypot(fx - cx, dy)
+            cover = dot + 0.5 - dist
             if cover < 0.0:
                 cover = 0.0
 
-            ang = (math.degrees(math.atan2(dy, dx)) + 360.0) % 360.0
-            in_range = DEG0 <= ang <= DEG1
-            for i, (radius, width) in enumerate(ARCS):
+            ang = (math.degrees(math.atan2(dy, fx - cx)) + 360.0) % 360.0
+            in_range = deg0 <= ang <= deg1
+            for i, (radius, width) in enumerate(scaled_arcs):
                 if in_range:
                     d = abs(dist - radius)
                 else:
-                    (e0x, e0y), (e1x, e1y) = _ENDS[i]
+                    (e0x, e0y), (e1x, e1y) = ends[i]
                     d = min(math.hypot(fx - e0x, fy - e0y),
                             math.hypot(fx - e1x, fy - e1y))
                 v = width * 0.5 + 0.5 - d
@@ -85,7 +118,10 @@ def render(size):
             buf[i4 + 1] = cg
             buf[i4 + 2] = cb
             buf[i4 + 3] = int(mask * 255)
-    return buf, W, H
+
+    if ss == 1:
+        return buf, W, H
+    return downsample(buf, W, H, size, size)
 
 
 def downsample(buf, W, H, nw, nh):
@@ -144,11 +180,12 @@ print('base done')
 sizes = [256, 128, 64, 48, 32, 24, 16]
 images = []
 for s in sizes:
-    if s == S:
-        images.append((base, S, S))
-    else:
+    # 大尺寸从 1024 降采样（质量最好），小尺寸按自己的几何超采样单独渲染
+    if s >= 48:
         images.append(downsample(base, BW, BH, s, s))
-    print('scaled', s)
+    else:
+        images.append(render(s, supersample=4))
+    print('rendered', s)
 
 pngs = [(png_bytes(b, w, h), w, h) for b, w, h in images]
 
