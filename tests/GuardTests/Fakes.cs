@@ -25,16 +25,22 @@ namespace SNNUAutoLogin.Services
         public NetworkAccessKind Kind { get; set; } = NetworkAccessKind.Wired;
         public string Ssid { get; set; } = "";
         public bool SsidReliable { get; set; } = true;
+        public bool SsidAccessDenied { get; set; }
+        public int SsidReads { get; private set; }
         public int InvalidateCalls { get; private set; }
 
         public NetworkAccessInfo GetCurrent() => new()
         {
             Kind = Kind,
-            Ssid = Ssid,
-            SsidReliable = SsidReliable,
             InterfaceDescription = "Fake",
             At = DateTime.Now
         };
+
+        public NetworkAccessInfo GetCurrentWithSsid()
+        {
+            SsidReads++;
+            return GetCurrent() with { Ssid = Ssid, SsidReliable = SsidReliable, SsidAccessDenied = SsidAccessDenied };
+        }
 
         public void Invalidate() => InvalidateCalls++;
     }

@@ -80,7 +80,7 @@ public static class Diagnostics
     /// 出网探测自检：按当前设置做一次独立探测，确认「这台机器现在到底能不能出网」。
     ///
     /// 这条路径不碰门户、不改认证状态，只发一次 ICMP 或 HTTP 请求。
-    /// 用来验证「设备数守卫」的探测目标填对没有。
+    /// 用来验证「同时在线设备监测」的探测目标填对没有。
     /// </summary>
     public static string RunProbe()
     {
@@ -123,7 +123,7 @@ public static class Diagnostics
     /// <summary>
     /// 在线设备列表自检：只读地取一次在线设备表，打印设备数与明细。
     ///
-    /// 「设备数守卫」判定的就是这张表的行数，所以这个入口是守卫触发条件的
+    /// 「同时在线设备监测」判定的就是这张表的行数，所以这个入口是守卫触发条件的
     /// 事实依据 —— 用户可以直接看到「守卫认为有 N 台」的 N 从哪来。
     /// 全程只读，不改任何认证状态。
     /// </summary>
@@ -219,6 +219,8 @@ public static class Diagnostics
                     + (info.Kind == NetworkAccessKind.Wireless ? "（无线）" : info.Kind == NetworkAccessKind.Wired ? "（有线）" : "（未判定）"));
         sb.AppendLine($"[接入方式] SSID      : {(string.IsNullOrEmpty(info.Ssid) ? "(未取到)" : info.Ssid)}");
         sb.AppendLine($"[接入方式] SSID 可信 : {(info.SsidReliable ? "是" : "否（将降级为「无线任意」，不匹配指定 SSID 的规则）")}");
+        if (info.SsidAccessDenied)
+            sb.AppendLine("[接入方式] SSID 失败原因：Windows 拒绝读取，请检查位置访问权限");
         sb.AppendLine($"[接入方式] 网卡      : {info.InterfaceDescription}");
         sb.AppendLine();
 
@@ -242,10 +244,9 @@ public static class Diagnostics
         sb.AppendLine();
 
         var resolver = new ConnectionProfileResolver(store, access);
-        var matched = resolver.Match(info.Kind, info.Ssid, info.SsidReliable, rules ?? new List<ConnectionRule>());
-        var profile = resolver.Resolve();
+        var profile = resolver.Resolve(info);
 
-        sb.AppendLine($"[匹配] 命中规则      : {(matched is null ? "（无，落到全局默认）" : DescribeRule(matched))}");
+        sb.AppendLine($"[匹配] 命中规则      : {(profile.Rule is { } matched ? DescribeRule(matched) : "（无，落到全局默认）")}");
         sb.AppendLine($"[生效] 账号          : {profile.Account}");
         sb.AppendLine($"[生效] 出口端口      : {profile.Port}");
         sb.AppendLine($"[生效] 密码来源      : {(profile.Rule is null ? "全局密码" : (string.IsNullOrEmpty(store.LoadRulePassword(profile.Rule.CredentialKey)) ? "规则未设密码 → 回退全局密码" : "该规则独立密码"))}");
@@ -299,3 +300,4 @@ public static class Diagnostics
         Console.WriteLine(text);
     }
 }
+

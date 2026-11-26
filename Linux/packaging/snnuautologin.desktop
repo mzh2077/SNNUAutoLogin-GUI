@@ -1,8 +1,9 @@
 [Desktop Entry]
 Type=Application
 Name=SNNU Campus Network
-Name[zh_CN]=陕师大校园网自动登录
+Name[zh_CN]=SNNU 校园网助手
 Exec=snnuautologin-desktop
 Icon=snnuautologin
 Terminal=false
 Categories=Network;
+

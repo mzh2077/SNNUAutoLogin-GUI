@@ -23,8 +23,8 @@
     <Version>1.7.0</Version>
     <FileVersion>1.7.0.0</FileVersion>
     <AssemblyVersion>1.7.0.0</AssemblyVersion>
-    <Product>陕师大校园网自动登录</Product>
-    <AssemblyTitle>陕师大校园网自动登录</AssemblyTitle>
+    <Product>SNNU 校园网助手</Product>
+    <AssemblyTitle>SNNU 校园网助手</AssemblyTitle>
     <Company>SNNU</Company>
     <Description>陕西师范大学校园网自动认证工具</Description>
     <Copyright>Copyright © 2026 SNNU</Copyright>
@@ -156,3 +156,4 @@
   </ItemGroup>
 
 </Project>
+

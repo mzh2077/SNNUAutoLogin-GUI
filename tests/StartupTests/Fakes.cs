@@ -19,8 +19,9 @@ namespace SNNUAutoLogin.Services
         public string Account { get; set; } = "test";
         public Operator Operator { get; set; }
         public int CheckIntervalSeconds { get; set; } = 8;
+        public int ReauthenticateIntervalHours { get; set; }
 
-        // 设备数守卫与连接规则相关的新字段
+        // 同时在线设备监测与连接规则相关的新字段
         public bool DeviceGuardEnabled { get; set; }
         public int DeviceGuardThreshold { get; set; } = 2;
         public string DeviceGuardProbeTarget { get; set; } = "223.5.5.5";
@@ -154,3 +155,4 @@ namespace SNNUAutoLogin.Services
         public void Dispose() { }
     }
 }
+

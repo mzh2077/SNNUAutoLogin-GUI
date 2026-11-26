@@ -27,6 +27,9 @@ public sealed record NetworkAccessInfo
     /// <summary>SSID 是否可靠取到。false 时只按「无线（任意）」参与规则匹配。</summary>
     public bool SsidReliable { get; init; }
 
+    /// <summary>系统拒绝了本次 SSID 查询。</summary>
+    public bool SsidAccessDenied { get; init; }
+
     /// <summary>命中的网卡描述，用于日志与界面自述。</summary>
     public string InterfaceDescription { get; init; } = "";
 

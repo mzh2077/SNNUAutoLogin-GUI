@@ -167,7 +167,7 @@ $launcher = Join-Path $repo 'tools\launcher\Launcher.cs'
 if (Test-Path -LiteralPath $launcher) {
     $launcherExe = Join-Path $destination "$assembly-Portable-$version.exe"
     & (Join-Path $repo 'tools\launcher\build_launcher.ps1') `
-        -Archive $zip -OutputExe $launcherExe -TargetExe $exeName -AppName '陕师大校园网自动登录' | Out-Host
+        -Archive $zip -OutputExe $launcherExe -TargetExe $exeName -AppName 'SNNU 校园网助手' | Out-Host
     if ($LASTEXITCODE -ne 0) { throw 'launcher build failed' }
     Write-Host "  Portable EXE: $launcherExe" -ForegroundColor Green
 } else {
@@ -209,3 +209,4 @@ Get-ChildItem -LiteralPath $destination -File |
     ForEach-Object { "  {0,10:N1} MB  {1}" -f ($_.Length / 1MB), $_.Name }
 
 Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+

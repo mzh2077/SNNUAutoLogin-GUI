@@ -301,7 +301,7 @@ public sealed partial class MainWindow
             int n = VisualTreeHelper.GetChildrenCount(node);
             for (int i = 0; i < n; i++)
             {
-                UIElement child;
+                UIElement? child;
                 try { child = VisualTreeHelper.GetChild(node, i) as UIElement; }
                 catch { continue; }
                 if (child is null) continue;
@@ -349,7 +349,7 @@ public sealed partial class MainWindow
             int n = VisualTreeHelper.GetChildrenCount(node);
             for (int i = 0; i < n; i++)
             {
-                UIElement child;
+                UIElement? child;
                 try { child = VisualTreeHelper.GetChild(node, i) as UIElement; }
                 catch { continue; }
                 if (child is null) continue;
@@ -399,7 +399,7 @@ public sealed partial class MainWindow
             int n = VisualTreeHelper.GetChildrenCount(node);
             for (int i = 0; i < n; i++)
             {
-                UIElement child;
+                UIElement? child;
                 try { child = VisualTreeHelper.GetChild(node, i) as UIElement; }
                 catch { continue; }
                 if (child is null) continue;

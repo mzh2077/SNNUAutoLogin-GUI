@@ -32,6 +32,7 @@ public sealed class NetworkAccessService : INetworkAccessService
     /// 真正的换网会触发 NetworkAddressChanged，那条路径会调 <see cref="Invalidate"/> 清掉缓存。
     /// </summary>
     private static readonly TimeSpan SsidCacheTtl = TimeSpan.FromSeconds(15);
+    private const uint ErrorAccessDenied = 5;
 
     /// <summary>择优时用来问路由的目��地址：门户所在的内网地址。</summary>
     private const string RouteProbeHost = "202.117.144.205";
@@ -120,9 +121,9 @@ public sealed class NetworkAccessService : INetworkAccessService
         // 完全不去碰 wlanapi —— 那是最容易被安全软件记成「读取位置信息」的一步。
         if (kind != NetworkAccessKind.Wireless || !withSsid) return info;
 
-        var (ssid, reliable) = ReadSsid(chosen.Id);
+        var (ssid, reliable, accessDenied) = ReadSsid(chosen.Id);
         _ssidAt = DateTime.Now;
-        return info with { Ssid = ssid, SsidReliable = reliable };
+        return info with { Ssid = ssid, SsidReliable = reliable, SsidAccessDenied = accessDenied };
     }
 
     /// <summary>
@@ -281,27 +282,27 @@ public sealed class NetworkAccessService : INetworkAccessService
     /// WLAN API 的连接属性是变长结构（SSID 长度不固定），
     /// 所以全程按字节缓冲区手工解析 —— 用固定 StructLayout 去套会让后面的字段全部错位。
     /// </summary>
-    internal static (string Ssid, bool Reliable) ReadSsid(string? interfaceId)
+    internal static (string Ssid, bool Reliable, bool AccessDenied) ReadSsid(string? interfaceId)
     {
-        if (string.IsNullOrWhiteSpace(interfaceId)) return ("", false);
+        if (string.IsNullOrWhiteSpace(interfaceId)) return ("", false, false);
 
-        if (!Guid.TryParse(interfaceId.Trim('{', '}'), out var want)) return ("", false);
+        if (!Guid.TryParse(interfaceId.Trim('{', '}'), out var want)) return ("", false, false);
 
         IntPtr client = IntPtr.Zero;
+        IntPtr list = IntPtr.Zero;
         try
         {
             uint negotiated;
             uint rc = WlanOpenHandle(2, IntPtr.Zero, out negotiated, out client);
-            if (rc != 0) return ("", false);
+            if (rc != 0) return ("", false, rc == ErrorAccessDenied);
 
-            IntPtr list = IntPtr.Zero;
             uint count;
             rc = WlanEnumInterfaces(client, IntPtr.Zero, out list, out count);
-            if (rc != 0 || list == IntPtr.Zero) return ("", false);
+            if (rc != 0 || list == IntPtr.Zero) return ("", false, rc == ErrorAccessDenied);
 
             // 接口条数只能从链表头读：出参里的个数在这台机器上会读回 0
             int items = Marshal.ReadInt32(list, 0);
-            if (items <= 0) return ("", false);
+            if (items <= 0) return ("", false, false);
 
             const int headerSize = 8;      // dwNumberOfItems + dwIndex
             const int itemSize = 532;      // GUID(16) + WCHAR[256](512) + isState(4)
@@ -319,14 +320,18 @@ public sealed class NetworkAccessService : INetworkAccessService
                 return ReadSsidFromHandle(client, guid);
             }
 
-            return ("", false);
+            return ("", false, false);
         }
         catch
         {
-            return ("", false);
+            return ("", false, false);
         }
         finally
         {
+            if (list != IntPtr.Zero)
+            {
+                try { WlanFreeMemory(list); } catch { }
+            }
             if (client != IntPtr.Zero)
             {
                 try { WlanCloseHandle(client, IntPtr.Zero); } catch { }
@@ -335,7 +340,7 @@ public sealed class NetworkAccessService : INetworkAccessService
     }
 
     /// <summary>向 WLAN 服务查询某接口的当前连接属性并解析 SSID。</summary>
-    private static (string Ssid, bool Reliable) ReadSsidFromHandle(IntPtr client, Guid guid)
+    private static (string Ssid, bool Reliable, bool AccessDenied) ReadSsidFromHandle(IntPtr client, Guid guid)
     {
         IntPtr data = IntPtr.Zero;
         try
@@ -348,16 +353,17 @@ public sealed class NetworkAccessService : INetworkAccessService
             // 所以不需要「先问长度再取数据」跑两遍 —— 两遍会把第一次分配的内存漏掉。
             uint rc = WlanQueryInterface(client, ref guid, CurrentConnectionOpcode,
                 IntPtr.Zero, out size, out data, out opcode);
-            if (rc != 0 || size == 0 || data == IntPtr.Zero) return ("", false);
+            if (rc != 0 || size == 0 || data == IntPtr.Zero) return ("", false, rc == ErrorAccessDenied);
 
             var bytes = new byte[size];
             Marshal.Copy(data, bytes, 0, (int)size);
 
-            return ParseSsid(bytes);
+            var (ssid, reliable) = ParseSsid(bytes);
+            return (ssid, reliable, false);
         }
         catch
         {
-            return ("", false);
+            return ("", false, false);
         }
         finally
         {
