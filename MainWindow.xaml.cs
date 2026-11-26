@@ -43,8 +43,11 @@ public sealed partial class MainWindow : Window
     private bool _hiddenToTray;
     private bool _startHidden;
     private bool _settingsOpen;
+    private bool _aboutOpen;
     private bool _guardStatusSeen;
     private string _titleBarRegion = "unset";
+    private double _titleBarInset = 146;
+    private string _titleBarInsetText = "unset";
     private bool _logScrollQueued;
     private bool _legacyDismissed;
     private bool _legacyCleaning;
@@ -145,7 +148,46 @@ public sealed partial class MainWindow : Window
         }
         catch { }
 
-        DispatcherQueue.TryEnqueue(UpdateTitleBarInteractiveRegion);
+        // 右侧留白必须问系统要：caption 按钮宽度随 DPI 变化，写死 146 在 150%/200% 下会错位
+        UpdateTitleBarInset();
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            UpdateTitleBarInset();
+            UpdateTitleBarInteractiveRegion();
+        });
+    }
+
+    /// <summary>
+    /// 把标题栏右侧让给系统的三枚按钮。RightInset 是物理像素，除以 DPI 才算逻辑宽度。
+    /// 取不到就退回三枚 46px 按钮的 138，至少不会把齿轮盖住。
+    /// </summary>
+    private void UpdateTitleBarInset()
+    {
+        if (_appWindow is null || AppTitleBar is null) return;
+
+        try
+        {
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            double scale = GetDpiForWindow(hwnd) / 96.0;
+            if (scale <= 0) scale = 1.0;
+
+            int insetPx = _appWindow.TitleBar.RightInset;
+            double inset = insetPx > 0 ? insetPx / scale : 138.0;
+            if (inset < 90) inset = 138.0;
+
+            if (Math.Abs(inset - _titleBarInset) < 0.5) return;
+
+            _titleBarInset = inset;
+            _titleBarInsetText = $"raw={insetPx} scale={scale:F2} logical={inset:F1}";
+            AppTitleBar.Margin = new Thickness(0, 0, inset, 0);
+
+            // caption 按钮宽度随 DPI 变（175% 下每枚只有 39 逻辑像素），齿轮跟着它一起缩放才不显突兀
+            SettingsNavBtn.Width = Math.Max(36.0, inset / 3.0);
+        }
+        catch (Exception ex)
+        {
+            _titleBarRegion = "inset-err:" + ex.GetType().Name;
+        }
     }
 
     /// <summary>
@@ -200,15 +242,18 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// 只切可见性，不动动画。重建内容树后恢复停留页面也走这里。
-    /// 齿轮按钮在设置页隐去——那页自己有返回箭头，两个入口同时出现反而让人犹豫。
+    /// 齿轮按钮在设置页和关于页隐去——那两页自己有返回箭头，两个入口同时出现反而让人犹豫。
     /// </summary>
     private void ApplyPageVisibility(bool settings)
     {
         if (!_uiBuilt) return;
 
-        HomePage.Visibility = settings ? Visibility.Collapsed : Visibility.Visible;
-        SettingsPage.Visibility = settings ? Visibility.Visible : Visibility.Collapsed;
-        SettingsNavBtn.Visibility = settings ? Visibility.Collapsed : Visibility.Visible;
+        bool inSettings = settings && !_aboutOpen;
+
+        HomePage.Visibility = (inSettings || _aboutOpen) ? Visibility.Collapsed : Visibility.Visible;
+        SettingsPage.Visibility = inSettings ? Visibility.Visible : Visibility.Collapsed;
+        AboutPage.Visibility = _aboutOpen ? Visibility.Visible : Visibility.Collapsed;
+        SettingsNavBtn.Visibility = (inSettings || _aboutOpen) ? Visibility.Collapsed : Visibility.Visible;
     }
 
     /// <summary>整页切换。设置页的卡片多，切过去时给它一段和首帧一致的入场。</summary>
@@ -216,6 +261,7 @@ public sealed partial class MainWindow : Window
     {
         if (!_uiBuilt) return;
 
+        _aboutOpen = false;
         bool changed = _settingsOpen != settings;
         _settingsOpen = settings;
 
@@ -238,6 +284,22 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>关于页是设置页的下一层：从页头的信息按钮进，返回回到设置页。</summary>
+    private void ShowAboutPage(bool about, bool animate = true)
+    {
+        if (!_uiBuilt) return;
+
+        bool changed = _aboutOpen != about;
+        _aboutOpen = about;
+        ApplyPageVisibility(_settingsOpen);
+
+        if (!animate || !changed || !about) return;
+
+        AboutScroll.ChangeView(null, 0, null, true);
+        Reenter(AboutHero, 0);
+        Reenter(AboutLinks, 40);
+    }
+
     /// <summary>
     /// FallIn 只补位移不补透明度（FadeTo 的起点取当前值，已经是 1 就没淡入），
     /// 所以换页时先把透明度清零。
@@ -249,11 +311,17 @@ public sealed partial class MainWindow : Window
         Fx.FallIn(el, delayMs, 12, Fx.SlowMs);
     }
 
-    /// <summary>标题栏首次布局完成（以及每次改尺寸）时，按钮才量得到实际宽高。</summary>
-    private void OnTitleBarSized(object sender, SizeChangedEventArgs e) => UpdateTitleBarInteractiveRegion();
+    /// <summary>标题栏首次布局完成（以及每次改尺寸、换显示器改 DPI）时，按钮才量得到实际宽高。</summary>
+    private void OnTitleBarSized(object sender, SizeChangedEventArgs e)
+    {
+        UpdateTitleBarInset();
+        UpdateTitleBarInteractiveRegion();
+    }
 
     private void OnSettingsNavClicked(object sender, RoutedEventArgs e) => ShowSettingsPage(true);
     private void OnSettingsBackClicked(object sender, RoutedEventArgs e) => ShowSettingsPage(false);
+    private void OnAboutNavClicked(object sender, RoutedEventArgs e) => ShowAboutPage(true);
+    private void OnAboutBackClicked(object sender, RoutedEventArgs e) => ShowAboutPage(false);
 
     /// <summary>探测地址、超时这些一年改不上一次，默认收起。</summary>
     private void OnGuardAdvancedToggled(object sender, RoutedEventArgs e)
@@ -415,7 +483,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var v = typeof(MainWindow).Assembly.GetName().Version;
-            VersionText.Text = v is null ? "—" : $"{v.Major}.{v.Minor}.{v.Build}";
+            AboutVersionText.Text = v is null ? "版本 —" : $"版本 {v.Major}.{v.Minor}.{v.Build}";
         }
         catch { }
     }
@@ -1649,7 +1717,7 @@ public sealed partial class MainWindow : Window
 
         // 验证码长在设置页的「默认账号」卡里。用户这时候多半停在首页，必须把人带过去，
         // 否则面板在看不见的地方亮起来，登录就卡在那儿了。
-        if (!_settingsOpen)
+        if (!_settingsOpen || _aboutOpen)
         {
             ShowSettingsPage(true);
             DispatcherQueue.TryEnqueue(() =>

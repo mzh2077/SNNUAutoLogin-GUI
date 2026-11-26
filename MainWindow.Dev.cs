@@ -111,6 +111,7 @@ public sealed partial class MainWindow
         var argv = Environment.GetCommandLineArgs();
 
         // --page settings：截设置页。--advanced 顺手把收起来的高级探测项展开。
+        // --page about：截关于页。
         if (argv.AsSpan().Contains("--page") && argv.AsSpan().Contains("settings"))
         {
             ShowSettingsPage(true, animate: false);
@@ -123,6 +124,12 @@ public sealed partial class MainWindow
                 SettingsScroll.ChangeView(null, SettingsScroll.ScrollableHeight, null, true);
                 await Task.Delay(400);
             }
+        }
+        else if (argv.AsSpan().Contains("--page") && argv.AsSpan().Contains("about"))
+        {
+            ShowSettingsPage(true, animate: false);
+            ShowAboutPage(true, animate: false);
+            await Task.Delay(500);
         }
 
         // --shot-full：先把窗口拉高，让右栏所有卡片进入可视区，便于一次看全版式
@@ -466,6 +473,7 @@ public sealed partial class MainWindow
                 $"root       = {Root.ActualWidth} x {Root.ActualHeight}\n" +
                 $"statusCard = {StatusCard.ActualWidth} x {StatusCard.ActualHeight}\n" +
                 $"gearBtn    = {RectOf(SettingsNavBtn)}\n" +
+                $"tbInset    = {_titleBarInset:F1} ({_titleBarInsetText})\n" +
                 $"tbRegion   = {_titleBarRegion}\n" +
                 $"ringHost   = {RingHost.ActualWidth} x {RingHost.ActualHeight}\n" +
                 $"connectBtn = {ConnectBtn.ActualWidth} x {ConnectBtn.ActualHeight}\n" +

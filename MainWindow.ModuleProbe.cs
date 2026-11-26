@@ -201,7 +201,7 @@ public sealed partial class MainWindow
         var checks = new List<(string name, bool ok, string detail)>();
 
         checks.Add(("界面已就绪", _uiReady, "uiReady=" + _uiReady));
-        checks.Add(("版本号已显示", !string.IsNullOrWhiteSpace(VersionText.Text), VersionText.Text));
+        checks.Add(("版本号已显示", !string.IsNullOrWhiteSpace(AboutVersionText.Text), AboutVersionText.Text));
         checks.Add(("状态标题非空", !string.IsNullOrWhiteSpace(StateTitle.Text), StateTitle.Text));
         checks.Add(("账号框已填", AccountBox.Text.Length > 0, AccountBox.Text));
         checks.Add(("密码框已填", PwdBox.Password.Length > 0, "len=" + PwdBox.Password.Length));
