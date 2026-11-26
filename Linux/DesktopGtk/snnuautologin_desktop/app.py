@@ -90,7 +90,7 @@ class Application(Adw.Application):
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
     parser = argparse.ArgumentParser(
-        prog="snnuautologin-desktop", description="陕师大校园网自动登录（GTK 桌面端）"
+        prog="snnuautologin-desktop", description="SNNU 校园网助手（GTK 桌面端）"
     )
     parser.add_argument("--page", choices=PAGES, default="connection", help="启动时打开哪个页面")
     parser.add_argument("--screenshot", metavar="PATH", help="把窗口渲染成 PNG 后退出，用于核对界面")

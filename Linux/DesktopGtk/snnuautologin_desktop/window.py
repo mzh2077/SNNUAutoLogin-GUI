@@ -100,7 +100,7 @@ class MainWindow(Adw.ApplicationWindow):
         **kwargs: Any,
     ) -> None:
         super().__init__(
-            title="陕师大校园网自动登录",
+            title="SNNU 校园网助手",
             default_width=width,
             default_height=height,
             **kwargs,
@@ -1090,7 +1090,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _show_about(self) -> None:
         fields = dict(
-            application_name="陕师大校园网自动登录",
+            application_name="SNNU 校园网助手",
             application_icon="snnuautologin",
             version=__version__,
             developer_name="SNNUAutoLogin contributors",

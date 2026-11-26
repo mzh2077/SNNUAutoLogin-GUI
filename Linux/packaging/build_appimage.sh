@@ -75,11 +75,11 @@ cat > "$appdir/$desktop_id.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=SNNU Campus Network
-Name[zh_CN]=陕师大校园网自动登录
+Name[zh_CN]=SNNU 校园网助手
 GenericName=Campus network login
 GenericName[zh_CN]=校园网登录
 Comment=Login to the SNNU campus network automatically
-Comment[zh_CN]=陕师大校园网自动登录客户端
+Comment[zh_CN]=SNNU 校园网助手客户端
 Exec=snnuautologin-desktop
 Icon=$desktop_id
 Terminal=false
