@@ -1,7 +1,17 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 
 namespace SNNUAutoLogin.Services;
+
+/// <summary>托盘图标要表达的三种状态，与资产目录 Assets/tray 下的文件一一对应。</summary>
+public enum TrayIconKind
+{
+    Connected,
+    Disconnected,
+    Error
+}
 
 public sealed class TrayMenuState
 {
@@ -9,6 +19,9 @@ public sealed class TrayMenuState
     public bool AutoReconnect { get; set; }
     public bool MinimizeToTray { get; set; } = true;
     public string Tip { get; set; } = "SNNU 校园网助手";
+
+    /// <summary>图标形态。默认按「未连接」显示，状态变化时由 AppRuntime 显式赋值。</summary>
+    public TrayIconKind IconKind { get; set; } = TrayIconKind.Disconnected;
 }
 
 /// <summary>
@@ -33,6 +46,8 @@ public sealed class TrayIcon : IDisposable
     private const int WM_LBUTTONDBLCLK = 0x0203;
     private const int WM_RBUTTONUP = 0x0205;
     private const int WM_CONTEXTMENU = 0x007B;
+    private const int WM_SETTINGCHANGE = 0x001A;
+    private const int WM_DWMCOLORIZATIONCOLORCHANGED = 0x0320;
 
     private const uint NIF_MESSAGE = 0x01;
     private const uint NIF_ICON = 0x02;
@@ -80,6 +95,12 @@ public sealed class TrayIcon : IDisposable
     private bool _added;
     private bool _disposed;
 
+    // 图标按 状态 × 任务栏主题 组合，句柄加载后缓存，避免每次状态变化都读写磁盘。
+    private TrayIconKind _iconKind = TrayIconKind.Disconnected;
+    private bool _lightTaskbar = true;
+    private string _assetDir = AppContext.BaseDirectory;
+    private readonly Dictionary<string, IntPtr> _iconCache = new();
+
     public bool IsVisible => _added && !_disposed;
 
     public event Action? ShowRequested;
@@ -116,7 +137,12 @@ public sealed class TrayIcon : IDisposable
     public bool Show(TrayMenuState state, string exePath)
     {
         _state = state;
-        if (_icon == IntPtr.Zero) _icon = LoadAppIcon(exePath);
+        _iconKind = state.IconKind;
+        _lightTaskbar = IsLightTaskbar();
+        _assetDir = string.IsNullOrEmpty(exePath)
+            ? AppContext.BaseDirectory
+            : Path.GetDirectoryName(exePath) ?? AppContext.BaseDirectory;
+        _icon = PickIcon();
 
         var data = BuildData();
         data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
@@ -156,6 +182,22 @@ public sealed class TrayIcon : IDisposable
     public void UpdateState(TrayMenuState state)
     {
         _state = state;
+        bool light = IsLightTaskbar();
+        bool iconChanged = state.IconKind != _iconKind || light != _lightTaskbar;
+        _iconKind = state.IconKind;
+        _lightTaskbar = light;
+
+        if (!_added) return;
+
+        if (iconChanged)
+        {
+            _icon = PickIcon();
+            var iconData = BuildData();
+            iconData.uFlags = NIF_ICON;
+            iconData.hIcon = _icon;
+            Shell_NotifyIconW(NIM_MODIFY, ref iconData);
+        }
+
         UpdateTip(state.Tip);
     }
 
@@ -171,6 +213,18 @@ public sealed class TrayIcon : IDisposable
 
     private IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
+        // 任务栏深浅主题切换时换一套墨色/白色图标，让图标在两种任务栏上都看得清。
+        if ((msg == WM_SETTINGCHANGE || msg == WM_DWMCOLORIZATIONCOLORCHANGED)
+            && _added && IsLightTaskbar() != _lightTaskbar)
+        {
+            _lightTaskbar = !_lightTaskbar;
+            _icon = PickIcon();
+            var d = BuildData();
+            d.uFlags = NIF_ICON;
+            d.hIcon = _icon;
+            Shell_NotifyIconW(NIM_MODIFY, ref d);
+        }
+
         if (msg == _taskbarCreatedMsg && _taskbarCreatedMsg != 0)
         {
             // 资源管理器重启后图标会被清掉，重新挂一次
@@ -260,6 +314,56 @@ public sealed class TrayIcon : IDisposable
     private static string Clip(string s, int max) =>
         s.Length <= max ? s : s[..max];
 
+    /// <summary>读系统「任务栏/开始菜单」深浅主题：true=浅色任务栏，用深色墨图标。</summary>
+    private static bool IsLightTaskbar()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            object? v = key?.GetValue("SystemUsesLightTheme");
+            return v is int i ? i != 0 : true;
+        }
+        catch { return true; }
+    }
+
+    /// <summary>
+    /// 按「状态 × 主题」取图标句柄。ico 文件缺失时回退到从 exe 抽主图标。
+    /// 命名对应：dark=深色墨（浅色任务栏），light=白色（深色任务栏）。
+    /// </summary>
+    private IntPtr PickIcon()
+    {
+        string kind = _iconKind switch
+        {
+            TrayIconKind.Connected => "connected",
+            TrayIconKind.Error => "error",
+            _ => "disconnected"
+        };
+        string theme = _lightTaskbar ? "dark" : "light";
+        string key = kind + "_" + theme;
+
+        if (_iconCache.TryGetValue(key, out var cached)) return cached;
+
+        IntPtr icon = IntPtr.Zero;
+        try
+        {
+            string path = Path.Combine(_assetDir, "Assets", "tray", $"tray_{key}.ico");
+            // 用 ExtractIconEx 而不是 LoadImageW：本机 LoadImageW 从文件加载 ico 一律
+            // 返回 err=1813（连系统标准 ICO 也失败），ExtractIconEx 则稳定可用。
+            if (File.Exists(path) && ExtractIconExW(path, 0, out var large, out var small, 1) > 0)
+            {
+                icon = small != IntPtr.Zero ? small : large;
+                if (icon == small && large != IntPtr.Zero) DestroyIcon(large);
+                else if (icon == large && small != IntPtr.Zero) DestroyIcon(small);
+            }
+        }
+        catch { }
+
+        if (icon == IntPtr.Zero) icon = LoadAppIcon(Path.Combine(_assetDir, "SNNUAutoLogin.exe"));
+        _iconCache[key] = icon;
+        return icon;
+    }
+
     private static IntPtr LoadAppIcon(string exePath)
     {
         try
@@ -293,11 +397,12 @@ public sealed class TrayIcon : IDisposable
                 _added = false;
             }
 
-            if (_icon != IntPtr.Zero)
+            foreach (var icon in _iconCache.Values)
             {
-                DestroyIcon(_icon);
-                _icon = IntPtr.Zero;
+                if (icon != IntPtr.Zero) DestroyIcon(icon);
             }
+            _iconCache.Clear();
+            _icon = IntPtr.Zero;
 
             if (_hwnd != IntPtr.Zero)
             {

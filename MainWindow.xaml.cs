@@ -708,7 +708,6 @@ public sealed partial class MainWindow : Window
         try
         {
             _theme.Refresh(Root.ActualTheme == ElementTheme.Dark);
-            TitleIcon.Foreground = BrushCache.Get(_theme.Accent);
             RepaintState(_lastState);
         }
         catch { }
@@ -747,13 +746,13 @@ public sealed partial class MainWindow : Window
                 return new StateView("正在认证", "需要输入图片验证码才能继续", "\uE8D7", _theme.Caution, false);
 
             case ConnState.Offline when portalDown:
-                return new StateView("不在校园网", "打不开认证门户，连回校园网后会自动继续", "\uE774", _theme.Neutral, false);
+                return new StateView("未接入校园网", "请先连接校园 Wi-Fi 或网线", "\uE774", _theme.Neutral, false);
 
             case ConnState.Offline:
                 return new StateView("未连接", "点下面的按钮登录校园网", "\uE7BA", _theme.Caution, false);
 
             case ConnState.Failed when portalDown:
-                return new StateView("不在校园网", "打不开认证门户，先确认已经连上校园网", "\uE774", _theme.Neutral, false);
+                return new StateView("未接入校园网", "请先连接校园 Wi-Fi 或网线", "\uE774", _theme.Neutral, false);
 
             case ConnState.Failed:
                 string why = result?.Message is { Length: > 0 } m && m != "未认证"
@@ -863,7 +862,7 @@ public sealed partial class MainWindow : Window
         // 后台还没推过状态时，卡片底部的占位文案要跟开关一致：
         // 开关明明开着，下面却写「未启用」，看着像坏了。
         if (!_guardStatusSeen)
-            DeviceGuardStateText.Text = s.DeviceGuardEnabled ? "监测已启用，等待首次检测" : "监测未启用";
+            DeviceGuardStateText.Text = "上次检测：尚未检测";
 
         SyncLegacyHostsBar();
         _uiReady = ready;
@@ -934,6 +933,7 @@ public sealed partial class MainWindow : Window
     {
         bool on = DeviceGuardSwitch.IsOn;
         GuardRows.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        DeviceGuardCard.IsExpanded = on;
     }
 
     private void FillLogsFromRuntime()
@@ -964,23 +964,12 @@ public sealed partial class MainWindow : Window
 
             _guardStatusSeen = true;
 
-            string state = status.State switch
-            {
-                DeviceGuardState.Disabled => "监测未启用",
-                DeviceGuardState.Idle => "待命",
-                DeviceGuardState.Probing => "正在检查出网",
-                DeviceGuardState.Disposing => "正在断开本机连接",
-                DeviceGuardState.Reauthenticating => "正在重新认证",
-                DeviceGuardState.Cooldown => "稍后再检测",
-                DeviceGuardState.Stopped => "已停止自动处理，请检查网络",
-                _ => "待命"
-            };
+            // 状态行只说「上次检测」这一件事，检测前不摆「在线 0 台」这种误导数字
+            DeviceGuardStateText.Text = status.LastProbeAt is null
+                ? "上次检测：尚未检测"
+                : $"上次检测：{status.LastProbeAt:HH:mm} · {(status.LastProbeOk == true ? "网络正常" : "网络不通")}";
 
-            DeviceGuardStateText.Text = $"{state} · 在线 {status.DeviceCount} 台（上限 {status.Threshold}）";
-
-            DeviceGuardLastText.Text = status.LastProbeAt is null
-                ? "还没检查过"
-                : $"上次检查 {status.LastProbeAt:HH:mm} · {(status.LastProbeOk == true ? "正常" : "异常")} · {status.LastMessage}";
+            DeviceGuardLastText.Text = status.LastMessage ?? "";
 
             RefreshRulesUi();
         });
@@ -992,19 +981,20 @@ public sealed partial class MainWindow : Window
     private async Task ProbeNowAsync()
     {
         DeviceGuardProbeNowBtn.IsEnabled = false;
-        DeviceGuardLastText.Text = "正在检测…";
+        DeviceGuardStateText.Text = "上次检测：正在检测…";
+        DeviceGuardLastText.Text = "";
 
         try
         {
             UpdateGuardProbeSettings();
             var result = await _rt.Guard.ProbeNowAsync();
-            DeviceGuardLastText.Text = result.Success
-                ? $"出网正常（{result.Detail}）"
-                : $"出网异常（{result.Detail}）";
+            DeviceGuardStateText.Text = result.Success ? "上次检测：网络正常" : "上次检测：网络不通";
+            DeviceGuardLastText.Text = result.Detail;
         }
         catch (Exception ex)
         {
-            DeviceGuardLastText.Text = $"检测失败：{ex.Message}";
+            DeviceGuardStateText.Text = "上次检测：检测失败";
+            DeviceGuardLastText.Text = ex.Message;
         }
         finally
         {
@@ -1042,7 +1032,7 @@ public sealed partial class MainWindow : Window
         }
 
         // 端口这类技术细节挪到探测设置里，规则卡上只说人话
-        if (ProbePortText is { } port) port.Text = $"统计端口 {profile.Port}";
+        if (ProbePortText is { } port) port.Text = $"当前连接入口 {profile.Port}";
 
         var ruleId = profile.Rule?.Id;
         if (onlyIfChanged && _displayedRuleId == ruleId
@@ -1361,10 +1351,12 @@ public sealed partial class MainWindow : Window
         _ => op.ToString()
     };
 
-    /// <summary>开关关掉时整行折叠 —— 灰着一排用不了的控件比藏起来更让人困惑。</summary>
+    /// <summary>开关关掉时整段折叠 —— 灰着一排用不了的控件比藏起来更让人困惑。</summary>
     private void UpdateReauthenticateControls()
     {
-        ReauthRows.Visibility = ReauthenticateSwitch.IsOn ? Visibility.Visible : Visibility.Collapsed;
+        bool on = ReauthenticateSwitch.IsOn;
+        ReauthRows.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        ReauthExpander.IsExpanded = on;
         ReauthenticateValueBox.Maximum = ReauthenticateUnitBox.SelectedIndex == 1 ? 365 : 8760;
     }
 
@@ -1820,24 +1812,34 @@ public sealed partial class MainWindow : Window
 
         string account = result?.Account ?? _rt.Store.Settings.Account;
         AccText.Text = ShortAccount(account);
-        IpText.Text = state == ConnState.Online ? result?.Ip ?? "—" : "—";
+
+        // 没值的字段整格藏起来，不留「—」占位
+        string ip = state == ConnState.Online ? result?.Ip ?? "" : "";
+        IpText.Text = ip;
+        IpCell.Visibility = ip.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
 
         UpdateClockTexts();
         UpdateAutoPill();
 
-        ConnectLabel.Text = state switch
-        {
-            ConnState.Online => "重新登录",
-            ConnState.Connecting => "正在认证…",
-            _ => "立即连接"
-        };
+        // 主按钮跟着状态走：不在校园网时点「连接」没有意义，改成重新检测
+        bool portalDown = _rt.PortalDown;
+        ConnectLabel.Text = portalDown
+            ? "重新检测"
+            : state switch
+            {
+                ConnState.Online => "重新登录",
+                ConnState.Connecting => "正在认证…",
+                _ => "立即连接"
+            };
 
-        ConnectIcon.Glyph = state switch
-        {
-            ConnState.Online => "\uE72C",
-            ConnState.Connecting => "\uE895",
-            _ => "\uE7E8"
-        };
+        ConnectIcon.Glyph = portalDown
+            ? "\uE72C"
+            : state switch
+            {
+                ConnState.Online => "\uE72C",
+                ConnState.Connecting => "\uE895",
+                _ => "\uE7E8"
+            };
 
         // 认证进行中再点主按钮只会重复提交，先禁掉；其余状态都可点
         ConnectBtn.IsEnabled = !view.Busy && !_rt.Exiting;
@@ -1865,24 +1867,23 @@ public sealed partial class MainWindow : Window
         return at > 0 ? account[..at] : account;
     }
 
-    /// <summary>每秒刷新一次的两格：已连接时长、下次巡检倒计时。</summary>
+    /// <summary>每秒刷新一次：已连接时长、下次巡检倒计时。没值的整格隐藏。</summary>
     private void UpdateClockTexts()
     {
         if (!_uiBuilt) return;
 
-        // 没连接的时候不该显示上一次的时长，那会让人以为现在还连着
-        DurationText.Text = _lastState == ConnState.Online
-            ? FormatDuration(_rt.LastResult?.LoginTime)
-            : "—";
+        bool online = _lastState == ConnState.Online;
 
-        int left = _rt.SecondsUntilNextCheck;
-        CountdownText.Text = _lastState switch
-        {
-            ConnState.Connecting => "认证中",
-            ConnState.CaptchaRequired => "已暂停",
-            _ when _rt.Coordinator.LastCheckAt is null => "—",
-            _ => left <= 0 ? "马上" : $"{left} 秒后"
-        };
+        // 没连接的时候不该显示上一次的时长，那会让人以为现在还连着
+        string duration = online ? FormatDuration(_rt.LastResult?.LoginTime) : "";
+        bool hasDuration = duration.Length > 0 && duration != "—";
+        DurationText.Text = hasDuration ? duration : "";
+        DurationCell.Visibility = hasDuration ? Visibility.Visible : Visibility.Collapsed;
+
+        // 「下次检查」只在已连接时显示，倒计时不显示「马上」
+        int left = Math.Max(1, _rt.SecondsUntilNextCheck);
+        CountdownText.Text = $"{left} 秒后";
+        CountdownCell.Visibility = online ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private static string FormatDuration(string? loginTime)
@@ -1979,7 +1980,7 @@ public sealed partial class MainWindow : Window
     {
         if (!_uiBuilt) return;
 
-        DeviceSummary.Text = "正在读取在线设备…";
+        DeviceSummary.Text = "在线设备：正在读取…";
 
         try
         {
@@ -2237,6 +2238,13 @@ public sealed partial class MainWindow : Window
 
     private async Task OnConnectClicked()
     {
+        // 未接入校园网时主按钮是「重新检测」，走检测而不是提交登录
+        if (_rt.PortalDown)
+        {
+            await OnRefreshClicked();
+            return;
+        }
+
         bool reconnect = _rt.State == ConnState.Online;
         PersistToStore();
 
@@ -2268,6 +2276,15 @@ public sealed partial class MainWindow : Window
     }
 
     private async void OnRefreshMenuClicked(object sender, RoutedEventArgs e) => await OnRefreshClicked();
+
+    /// <summary>密码小眼睛：切换明文/密文，图标跟着换。</summary>
+    private void OnPwdRevealClicked(object sender, RoutedEventArgs e)
+    {
+        bool reveal = PwdBox.PasswordRevealMode == PasswordRevealMode.Hidden;
+        PwdBox.PasswordRevealMode = reveal ? PasswordRevealMode.Visible : PasswordRevealMode.Hidden;
+        PwdRevealIcon.Glyph = reveal ? "\uE9A9" : "\uE9A8";
+        ToolTipService.SetToolTip(PwdRevealBtn, reveal ? "隐藏密码" : "显示密码");
+    }
 
     private async Task OnRefreshClicked()
     {

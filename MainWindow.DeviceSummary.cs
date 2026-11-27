@@ -33,12 +33,12 @@ public sealed partial class MainWindow
 
     private static string DescribeDevices(DeviceListState state, int count, bool enabled, int threshold)
     {
-        if (state == DeviceListState.Idle) return "尚未读取在线设备";
+        if (state == DeviceListState.Idle) return "在线设备：尚未读取";
         if (count == 0) return state switch
         {
-            DeviceListState.Loading => "正在读取在线设备…",
+            DeviceListState.Loading => "在线设备：正在读取…",
             DeviceListState.Failed => "在线设备暂时读不到",
-            _ => "当前没有在线设备"
+            _ => "在线设备：当前没有设备"
         };
         return enabled ? $"当前 {count} 台设备在线 · 守卫阈值 {threshold} 台" : $"当前 {count} 台设备在线";
     }

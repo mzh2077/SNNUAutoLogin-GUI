@@ -20,9 +20,9 @@
     <EnableMsixTooling>true</EnableMsixTooling>
 
     <!-- 文件属性（exe 右键「属性 → 详细信息」与「应用和功能」列表里显示的内容） -->
-    <Version>2.0.0</Version>
-    <FileVersion>2.0.0.0</FileVersion>
-    <AssemblyVersion>2.0.0.0</AssemblyVersion>
+    <Version>2.0.1</Version>
+    <FileVersion>2.0.1.0</FileVersion>
+    <AssemblyVersion>2.0.1.0</AssemblyVersion>
     <Product>SNNU 校园网助手</Product>
     <AssemblyTitle>SNNU 校园网助手</AssemblyTitle>
     <Company>SNNU</Company>
@@ -90,9 +90,11 @@
       <UnusedRuntime Include="$(TrimRoot)WebView2Loader.dll" />
 
       <!-- 语言资源目录：只留简中与英文回退 -->
-      <UnusedLocaleDir Include="$(TrimDirs)" />
-      <UnusedLocaleDir Remove="$(TrimRoot)zh-CN;$(TrimRoot)en-us" />
-      <UnusedLocaleDir Remove="$(TrimRoot)Microsoft.UI.Xaml;$(TrimRoot)NpuDetect" />
+      <!-- 保留：zh-CN / en-us 语言、Microsoft.UI.Xaml 资源、NpuDetect、
+           Assets（应用图标 / 托盘图标 / 关于页图像；标题栏走 ms-appx，托盘走磁盘 ico）。
+           用 Exclude 一次性排除，不能用后置 Remove（实测不生效，Assets 会被删光）。 -->
+      <UnusedLocaleDir Include="$(TrimDirs)"
+        Exclude="$(TrimRoot)zh-CN;$(TrimRoot)en-us;$(TrimRoot)Microsoft.UI.Xaml;$(TrimRoot)NpuDetect;$(TrimRoot)Assets" />
     </ItemGroup>
 
     <!--
@@ -146,6 +148,16 @@
          它是 TextBox / RichEditBox 的编辑内核，删掉后 XAML 里第一个 TextBox 就创建不出来 -->
     <RemoveDir Directories="$(TrimRoot)NpuDetect" ContinueOnError="true" />
   </Target>
+
+  <!-- 标题栏/关于页走 ms-appx:///Assets/...，托盘走磁盘 ico；
+       SDK 默认不把 Assets 下的图片/ico 带进 publish，必须显式声明 CopyToOutput。
+       之前正式版没有 Assets 目录就是漏了这条，装上后图标全是回退值。 -->
+  <ItemGroup>
+    <Content Include="Assets\**\*.png;Assets\**\*.ico;Assets\**\*.svg">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>Assets\%(RecursiveDir)%(Filename)%(Extension)</TargetPath>
+    </Content>
+  </ItemGroup>
 
   <ItemGroup>
     <Compile Remove="tests\**\*.cs;Shared\**\*.cs;Linux\**\*.cs;Services\PortalClient.cs;Services\PortalPortDiscovery.cs;Services\ConnectionProfileResolver.cs;Services\ConnectionRules.cs;Services\DeviceListParser.cs;Services\IOnlineDevicePortal.cs;Services\DeviceManager.cs;Services\DeviceGuardService.cs;Services\NetworkProbeService.cs;Services\LoginCoordinator.cs;Services\OperationLifetime.cs" />

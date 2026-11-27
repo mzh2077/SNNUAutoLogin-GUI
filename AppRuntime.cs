@@ -209,12 +209,21 @@ public sealed class AppRuntime : IAsyncDisposable
         }
     }
 
+    /// <summary>连接状态到托盘图标三态的映射：登录失败/需要验证码显示感叹号，已连接正常，其余未连接。</summary>
+    private static TrayIconKind IconKindOf(ConnState s) => s switch
+    {
+        ConnState.Online => TrayIconKind.Connected,
+        ConnState.Failed or ConnState.CaptchaRequired => TrayIconKind.Error,
+        _ => TrayIconKind.Disconnected
+    };
+
     private TrayMenuState MenuState() => new()
     {
         AutoStart = Store.Settings.AutoStart,
         AutoReconnect = Store.Settings.AutoReconnect,
         MinimizeToTray = Store.Settings.MinimizeToTray,
-        Tip = $"SNNU 校园网助手 · {StateLabel}"
+        Tip = $"SNNU 校园网助手 · {StateLabel}",
+        IconKind = IconKindOf(State)
     };
 
     public void RefreshTray() => Tray?.UpdateState(MenuState());
@@ -393,7 +402,7 @@ public sealed class AppRuntime : IAsyncDisposable
         LastResult = result;
         StateLabel = LabelOf(state);
 
-        Tray?.UpdateTip($"SNNU 校园网助手 · {StateLabel}");
+        Tray?.UpdateState(MenuState());
 
         // 要验证码就得有人看着：把窗口叫回来（驻留托盘时也算）。
         // 锁屏时叫了也看不见，等解锁时再召回。

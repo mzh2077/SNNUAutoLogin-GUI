@@ -182,6 +182,15 @@ public sealed partial class MainWindow
 
         var argv = Environment.GetCommandLineArgs();
 
+        // --demo-filled：填一个演示账号让首次引导卡收起，用来看正常有账号时的版式
+        if (argv.AsSpan().Contains("--demo-filled"))
+        {
+            AccountBox.Text = "42662134";
+            PwdBox.Password = "demo1234";
+            AccText.Text = "42662134";
+            UpdateGuideCard();
+        }
+
         // SNNU_WIN_W=<逻辑像素>：按指定宽度截图，用来看 420 / 520 / 800 三档版式
         if (_appWindow is not null
             && int.TryParse(Environment.GetEnvironmentVariable("SNNU_WIN_W"), out int winW)
