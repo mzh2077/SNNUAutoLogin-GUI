@@ -115,6 +115,17 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
     private DateTime? _nextAllowedAt;
     private int _consecutiveFailures;
 
+    /// <summary>
+    /// 暂停周期评估。锁屏且用户关掉「锁屏保持」时打开：定时循环不再主动取设备数 / 探测外网，
+    /// 避免网络活动打断 S0 低电量待机。网络变化仍走 NotifyNetworkChanged 立即评估。
+    /// </summary>
+    private volatile bool _periodicPaused;
+    public bool PeriodicPaused
+    {
+        get => _periodicPaused;
+        set => _periodicPaused = value;
+    }
+
     /// <summary>状态变化（界面订阅）。</summary>
     public event Action<DeviceGuardStatus>? Changed;
 
@@ -213,14 +224,19 @@ public sealed class DeviceGuardService : IDisposable, IAsyncDisposable
 
         while (!ct.IsCancellationRequested)
         {
-            try
+            // 息屏且不需要保活时跳过整轮评估：这里一发请求，S0 待机就被打断，风扇跟着转。
+            // 网络变化走 NotifyNetworkChanged，不受这个开关影响。
+            if (!_periodicPaused)
             {
-                await EvaluateAsync().ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) { return; }
-            catch (Exception ex)
-            {
-                Write($"守卫评估异常：{ex.Message}");
+                try
+                {
+                    await EvaluateAsync().ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { return; }
+                catch (Exception ex)
+                {
+                    Write($"守卫评估异常：{ex.Message}");
+                }
             }
 
             try

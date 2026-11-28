@@ -94,6 +94,21 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
     /// <summary>当前巡检节奏（秒），供界面显示。</summary>
     public int CurrentDelaySeconds { get; private set; } = 8;
 
+    /// <summary>暂停周期巡检时的占位等待（秒）；网络变化会提前唤醒，不会真等这么久。</summary>
+    private const int PausedDelaySeconds = 3600;
+
+    /// <summary>
+    /// 暂停周期巡检。锁屏且用户关掉「锁屏保持」时打开：期间不发起任何主动网络请求，
+    /// 免得把 S0 低电量待机反复打断（表现为合盖后风扇一阵一阵响）。
+    /// 网络变化 / 系统唤醒仍走 RequestImmediateCheck，随时能叫醒。
+    /// </summary>
+    private volatile bool _periodicPaused;
+    public bool PeriodicPaused
+    {
+        get => _periodicPaused;
+        set => _periodicPaused = value;
+    }
+
     public event Action<ConnState, LoginResult?>? StateChanged;
     public event Action<string>? Log;
 
@@ -227,6 +242,13 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
     /// </summary>
     private TimeSpan NextDelay(bool first)
     {
+        if (_periodicPaused)
+        {
+            // 只挂一个长等待，不发网络请求；Task.Delay 本身不会阻止 S0 待机。
+            CurrentDelaySeconds = PausedDelaySeconds;
+            return TimeSpan.FromSeconds(PausedDelaySeconds);
+        }
+
         TimeSpan delay;
 
         if (State == ConnState.Online)

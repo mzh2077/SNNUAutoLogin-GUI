@@ -350,35 +350,54 @@ public sealed class AppRuntime : IAsyncDisposable
         }
     }
 
-    /// <summary>按「设置开关 + 当前锁屏状态」决定是否让系统保持运行。</summary>
+    /// <summary>按「设置开关 + 当前锁屏状态」决定是否让系统保持运行、是否暂停周期巡检。</summary>
     public void ApplyLockPolicy()
     {
         if (_disposed) return;
 
-        bool hold = Store.Settings.KeepAliveOnLock && IsSessionLocked;
-        _stayAwake.Set(hold);
+        bool keep = Store.Settings.KeepAliveOnLock;
+        bool locked = IsSessionLocked;
+        _stayAwake.Set(keep && locked);
+
+        // 关掉「锁屏保持」又锁上屏时，把周期巡检和守卫评估一起停掉：
+        // 这两条每 15 / 60 秒就要发一次网络请求，S0 待机会被反复打断，合盖后风扇就一阵一阵响。
+        // 网络变化、系统唤醒仍会触发单轮检测，不影响掉线后重连。
+        bool wasPaused = Coordinator.PeriodicPaused;
+        bool pause = locked && !keep;
+        Coordinator.PeriodicPaused = pause;
+        Guard.PeriodicPaused = pause;
+
+        if (wasPaused && !pause)
+        {
+            Coordinator.RequestImmediateCheck();
+            Guard.NotifyNetworkChanged();
+        }
     }
+
+    /// <summary>周期巡检是否已因息屏而暂停（界面用它改倒计时文案）。</summary>
+    public bool ChecksPaused => Coordinator.PeriodicPaused;
 
     private void OnSessionLockChanged(bool locked)
     {
         ApplyLockPolicy();
+        bool paused = Coordinator.PeriodicPaused;
 
         if (locked)
         {
-            AddLog(Store.Settings.KeepAliveOnLock
-                ? "已锁屏：保持认证在线，系统暂不睡眠"
-                : "已锁屏：按系统电源策略处理");
+            AddLog(paused
+                ? "已锁屏：暂停周期巡检，网络变化或解锁后恢复"
+                : "已锁屏：保持认证在线，系统暂不睡眠");
         }
         else
         {
-            AddLog("已解锁：恢复系统电源策略");
+            AddLog("已解锁：恢复周期巡检与系统电源策略");
 
             // 锁屏期间如果 Portal 要验证码，界面上是看不见的，解锁后再把窗口叫回来
             if (Coordinator.State == ConnState.CaptchaRequired) ShowWindow();
         }
 
-        // 锁屏 / 解锁各确认一次认证状态，避免正好卡在掉线的空档里
-        Coordinator.RequestImmediateCheck();
+        // 息屏且不需要保活时别主动敲门户，否则刚要待机就被叫醒
+        if (!paused) Coordinator.RequestImmediateCheck();
     }
 
     private void OnSystemResumed()
