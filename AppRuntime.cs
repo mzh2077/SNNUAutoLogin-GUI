@@ -130,10 +130,10 @@ public sealed class AppRuntime : IAsyncDisposable
         Profiles = new ConnectionProfileResolver(Store, Access, Ports);
 
         var eventDispatcher = new EventDispatcher(() => dispatcher.HasThreadAccess, action => dispatcher.TryEnqueue(() => action()));
-        Coordinator = new LoginCoordinator(Store, eventDispatcher, Profiles, Ports, launchedAtStartup);
+        Coordinator = new LoginCoordinator(Store, eventDispatcher, Profiles, Ports, launchedAtStartup, client: _portal);
         Coordinator.StateChanged += OnStateChanged;
         Coordinator.Log += AddLog;
-        Coordinator.DiagnosticLog += AddDiagnostic;
+        // The shared portal has one diagnostic subscription below, including login requests.
         _portal.Diagnostics += AddDiagnostic;
 
         // 门户客户端是共用的，所以这里不让 DeviceManager 负责释放它

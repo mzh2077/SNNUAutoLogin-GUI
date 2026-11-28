@@ -266,6 +266,9 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
                 .GetAsync(RootFor(port) + "userstatus.jsp", ct).ConfigureAwait(false);
             var html = await ReadHtmlAsync(resp, ct).ConfigureAwait(false);
 
+            if (!resp.IsSuccessStatusCode)
+                return DeviceListResult.Fail($"设备状态页返回 HTTP {(int)resp.StatusCode}");
+
             // 没登录时这个页面没有 iframe，也没有「当前登录账号」
             var currentIp = Match(html, @"当前IP[：:]\s*(?:<[^>]+>\s*)*([0-9]{1,3}(?:\.[0-9]{1,3}){3})");
             var frameUrl = Match(html, @"<iframe[^>]*\ssrc\s*=\s*[""']([^""']+)[""']");
@@ -275,8 +278,16 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
                 return DeviceListResult.Fail("未认证，无法获取在线设备");
             }
 
-            // iframe 在 80 端口的 zili 目录下，是绝对地址
-            using var frameResp = await ClientFor(port).GetAsync(frameUrl, ct).ConfigureAwait(false);
+            // Resolve relative iframe paths and HTML-encoded query separators against the
+            // actual status page. Keep the authenticated client/cookies for the frame request.
+            var baseUri = resp.RequestMessage?.RequestUri ?? new Uri(RootFor(port) + "userstatus.jsp");
+            if (!Uri.TryCreate(baseUri, WebUtility.HtmlDecode(frameUrl), out var frameUri)
+                || !PortalRequestHandler.IsPortalAddress(frameUri))
+                return DeviceListResult.Fail("设备列表地址无效或不属于认证门户");
+            frameUrl = frameUri.AbsoluteUri;
+            using var frameResp = await ClientFor(port).GetAsync(frameUri, ct).ConfigureAwait(false);
+            if (!frameResp.IsSuccessStatusCode)
+                return DeviceListResult.Fail($"设备列表页返回 HTTP {(int)frameResp.StatusCode}");
             var frameBytes = await frameResp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
             var frameHtml = Encoding.UTF8.GetString(frameBytes);
 
@@ -686,7 +697,14 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
         var bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
         if (bytes.Length == 0) return string.Empty;
 
-        var text = Gb.GetString(bytes);
+        var encoding = Gb;
+        var charset = resp.Content.Headers.ContentType?.CharSet?.Trim(' ', '"', '\'');
+        if (!string.IsNullOrWhiteSpace(charset))
+        {
+            try { encoding = Encoding.GetEncoding(charset); }
+            catch (ArgumentException) { /* Unknown declarations retain the portal's GB fallback. */ }
+        }
+        var text = encoding.GetString(bytes);
         // 部分页面实际为 UTF-8 但声明 GB2312，出现大量替换符时回退
         if (text.Contains('\uFFFD'))
         {
