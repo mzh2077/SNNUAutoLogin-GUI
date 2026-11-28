@@ -187,6 +187,23 @@ using (var coordinator = new LoginCoordinator(switchStore, new DispatcherQueue()
     Check(PortalClient.DisconnectCallsAtLogin == previousDisconnects + 1 && PortalClient.LastForce
         && PortalClient.LastOperator == Operator.Telecom, "reconnect disconnects before forcing login on the current outlet");
 }
+var ruleResolver = new OutletRuleResolver();
+using (var coordinator = new LoginCoordinator(switchStore, new DispatcherQueue(), ruleResolver))
+{
+    PortalClient.DisconnectSucceeds = true;
+    PortalClient.Login = ok;
+    await coordinator.ManualConnectAsync(Operator.Unicom);
+    Check(PortalClient.LastOperator == Operator.Unicom && PortalClient.LastAccount == "rule-user"
+        && PortalClient.LastPort == 8605 && PortalClient.LastForce,
+        "explicit outlet uses rule credentials and assigned port but overrides rule operator and suffix");
+    await coordinator.ManualConnectAsync();
+    Check(PortalClient.LastOperator == Operator.Unicom, "rule does not undo the temporary outlet on reconnect");
+    coordinator.InvalidateNetwork();
+    await coordinator.ManualConnectAsync();
+    Check(PortalClient.LastOperator == Operator.Mobile && PortalClient.LastAccount == "rule-user@mobile",
+        "network change expires the temporary outlet and restores the rule");
+}
+
 // Advance only the scheduler anchor; these checks never wait for wall-clock hours.
 void MakePeriodicDue(LoginCoordinator coordinator)
 {
@@ -231,4 +248,15 @@ using (var coordinator = new LoginCoordinator(periodicStore, new DispatcherQueue
     Check(PortalClient.LoginCalls == 1, "disabled periodic authentication never forces a login");
 }
 Console.WriteLine($"{checks} checks passed.");
+
+sealed class OutletRuleResolver : IConnectionProfileResolver
+{
+    private readonly ConnectionRule _rule = new() { Id = "wired-rule" };
+    public EffectiveProfile Resolve() => new()
+    {
+        Account = "rule-user@mobile", Password = "rule-password", Port = 8605,
+        Operator = Operator.Mobile, Rule = _rule, IsDefault = false
+    };
+    public void SetDiscoveredPort(int port) { }
+}
 

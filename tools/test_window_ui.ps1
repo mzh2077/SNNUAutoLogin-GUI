@@ -27,5 +27,9 @@ foreach ($theme in @('light', 'dark')) {
     if (!(Select-String -LiteralPath $report -SimpleMatch 'PASS portal hyperlink and shared dialog input style')) {
         throw "$theme portal and style check missing"
     }
+    foreach ($check in @('PASS explicit taskbar icons and outlet switch menu',
+        'PASS concurrent dialogs, dialog teardown and late captcha decoding')) {
+        if (!(Select-String -LiteralPath $report -SimpleMatch $check)) { throw "$theme missing regression check: $check" }
+    }
     Get-Content -LiteralPath $report | Write-Host
 }

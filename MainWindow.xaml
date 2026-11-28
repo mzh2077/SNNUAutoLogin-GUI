@@ -627,6 +627,10 @@
                                                             <FontIcon Glyph="&#xE72C;" />
                                                         </MenuFlyoutItem.Icon>
                                                     </MenuFlyoutItem>
+                                                    <MenuFlyoutItem
+                                                        x:Name="SwitchOutletItem"
+                                                        Text="切换出口运营商"
+                                                        Click="OnSwitchOutletClicked" />
                                                     <MenuFlyoutSeparator />
                                                     <MenuFlyoutItem
                                                         x:Name="DisconnectItem"
@@ -1420,7 +1424,7 @@
                                                     BorderThickness="1"
                                                     Style="{StaticResource RowNumberBoxStyle}"
                                                     Minimum="1"
-                                                    Maximum="20" />
+                                                    Maximum="50" />
                                             </Grid>
                                         </Border>
 

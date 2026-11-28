@@ -73,6 +73,11 @@ jobs:
         run: |
           $publish = Get-ChildItem artifacts/staging-*/SNNUAutoLogin-InstallerPayload-win-x64 -Directory | Select-Object -First 1
           ./tools/test_window_ui.ps1 -Executable (Join-Path $publish.FullName 'SNNUAutoLogin.exe')
+      - name: Native icon transparency regression tests
+        shell: pwsh
+        run: |
+          $publish = Get-ChildItem artifacts/staging-*/SNNUAutoLogin-InstallerPayload-win-x64 -Directory | Select-Object -First 1
+          python tools/test_icons.py $publish.FullName
       - name: Installer install, launch and uninstall smoke test
         shell: pwsh
         run: ./tools/test_installer.ps1 -Installer (Resolve-Path artifacts/SNNUAutoLogin-Setup-*.exe)

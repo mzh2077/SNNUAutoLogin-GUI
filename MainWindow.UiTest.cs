@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using SNNUAutoLogin.Services;
 
 namespace SNNUAutoLogin;
@@ -20,6 +21,8 @@ public sealed partial class MainWindow
         var sb = new StringBuilder();
 
         await Task.Delay(1500);
+        CheckWindowIcon(sb);
+        await CheckDialogAndCaptchaLifetimeAsync(sb);
 
         // 设置项都在设置页上，先切过去量尺寸；首页的量测放到后面切回来再做。
         ShowSettingsPage(true, animate: false);
@@ -30,7 +33,7 @@ public sealed partial class MainWindow
 
         if (PortalLink.NavigateUri != new Uri("http://202.117.144.205/"))
             throw new InvalidOperationException("认证门户链接应不包含动态端口");
-        var formStyle = (Style)Root.Resources["FormInputStyle"];
+        var formStyle = (Style)Root.Resources["RowInputStyle"];
         var dialogInput = new TextBox { Style = formStyle };
         if (dialogInput.HorizontalAlignment != HorizontalAlignment.Stretch || dialogInput.MinHeight != 32
             || dialogInput.FontSize != AccountBox.FontSize)
@@ -131,6 +134,67 @@ public sealed partial class MainWindow
             sb.ToString(), Encoding.UTF8);
 
         Application.Current.Exit();
+    }
+
+    private void CheckWindowIcon(StringBuilder report)
+    {
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        if (SendMessageForIcon(hwnd, 0x007F, (IntPtr)1, IntPtr.Zero) == IntPtr.Zero
+            || SendMessageForIcon(hwnd, 0x007F, IntPtr.Zero, IntPtr.Zero) == IntPtr.Zero)
+            throw new InvalidOperationException("Window must have explicit large and small taskbar icons");
+        if (SwitchOutletItem.Text != "切换出口运营商")
+            throw new InvalidOperationException("Missing explicit outlet switch menu");
+        report.AppendLine("PASS explicit taskbar icons and outlet switch menu");
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendMessageForIcon(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    private async Task CheckDialogAndCaptchaLifetimeAsync(StringBuilder report)
+    {
+        OnSwitchOutletClicked(SwitchOutletItem, new RoutedEventArgs());
+        await Task.Delay(500);
+        if (_shownDialog is not { Title: "切换出口" } outletDialog)
+            throw new InvalidOperationException("Outlet menu item must open its picker");
+        outletDialog.Hide();
+        for (int i = 0; i < 100 && _shownDialog is not null; i++) await Task.Delay(25);
+        if (_shownDialog is not null) throw new InvalidOperationException("Outlet picker did not close");
+
+        var first = new ContentDialog { XamlRoot = Root.XamlRoot, Title = "回归检查", CloseButtonText = "关闭" };
+        var opened = ShowDialogAsync(first);
+        await Task.Delay(500);
+        var second = new ContentDialog { XamlRoot = Root.XamlRoot, Title = "重复请求", CloseButtonText = "关闭" };
+        if (await ShowDialogAsync(second) != ContentDialogResult.None || !ReferenceEquals(_shownDialog, first))
+            throw new InvalidOperationException("Concurrent dialogs must be ignored without replacing the active dialog");
+
+        // Hold decoding so teardown/rebuild always happens before the async continuation.
+        var release = new TaskCompletionSource<BitmapImage?>();
+        var whileHidden = new TaskCompletionSource<BitmapImage?>();
+        _rt.Coordinator.InjectCaptchaForTest(LoadSamplePng());
+        var hiddenDecode = SyncCaptchaAsync(_ => whileHidden.Task);
+        var decoding = SyncCaptchaAsync(_ => release.Task);
+        TeardownUi();
+        if (await opened != ContentDialogResult.None || _shownDialog is not null || _openDialogs != 0)
+            throw new InvalidOperationException("Closing to tray must dismiss its dialog");
+        whileHidden.SetResult(null);
+        await hiddenDecode;
+        BuildUi();
+        CaptchaBox.Text = "new-tree-input";
+        release.SetResult(null);
+        await decoding;
+        if (CaptchaBox.Text != "new-tree-input")
+            throw new InvalidOperationException("Old captcha decode touched the rebuilt view");
+
+        var older = new TaskCompletionSource<BitmapImage?>();
+        var oldDecode = SyncCaptchaAsync(_ => older.Task);
+        var newest = new BitmapImage();
+        await SyncCaptchaAsync(_ => Task.FromResult<BitmapImage?>(newest));
+        CaptchaBox.Text = "latest-image-input";
+        older.SetResult(null);
+        await oldDecode;
+        if (CaptchaBox.Text != "latest-image-input" || !ReferenceEquals(CaptchaPic.Source, newest))
+            throw new InvalidOperationException("An older captcha decode replaced the latest challenge");
+        report.AppendLine("PASS concurrent dialogs, dialog teardown and late captcha decoding");
     }
 
     private async Task CheckRulesVisibilityAsync(StringBuilder report)

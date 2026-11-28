@@ -104,6 +104,10 @@ public sealed partial class MainWindow : Window
         var appWindow = AppWindow.GetFromWindowId(id);
         _appWindow = appWindow;
 
+        // ApplicationIcon sets the executable resource; WinUI's HWND needs its own icon.
+        try { appWindow.SetIcon(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico")); }
+        catch (Exception ex) { _rt.AddLog("窗口图标加载失败：" + ex.Message); }
+
         try
         {
             SystemBackdrop = new MicaBackdrop();
@@ -558,6 +562,8 @@ public sealed partial class MainWindow : Window
 
         PersistToStore();
         _uiBuilt = false;
+        _uiReady = false;
+        _shownDialog?.Hide();
 
         // 文本控件跟着树一起没了，重建后要重新等后台推一次守卫状态
         _guardStatusSeen = false;
@@ -1258,7 +1264,7 @@ public sealed partial class MainWindow : Window
             };
         }
 
-        var inputStyle = (Style)Root.Resources["FormInputStyle"];
+        var inputStyle = (Style)Root.Resources["RowInputStyle"];
         var matchBox = new ComboBox { Style = inputStyle, HorizontalAlignment = HorizontalAlignment.Stretch };
         matchBox.Items.Add("有线");
         matchBox.Items.Add("无线（任意 SSID）");
@@ -1582,8 +1588,8 @@ public sealed partial class MainWindow : Window
                 DefaultButton = ContentDialogButton.Primary
             };
 
-            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
-                await OnConnectClicked();
+            if (await ShowDialogAsync(dialog) == ContentDialogResult.Primary)
+                await ConnectToOutletAsync(OperatorAt(index));
         };
 
         // ── 首次使用：登录引导 ──
@@ -1910,6 +1916,7 @@ public sealed partial class MainWindow : Window
 
         // 认证进行中再点主按钮只会重复提交，先禁掉；其余状态都可点
         ConnectBtn.IsEnabled = !view.Busy && !_rt.Exiting;
+        SwitchOutletItem.IsEnabled = !view.Busy && !_rt.Exiting;
         DisconnectItem.IsEnabled = state == ConnState.Online;
 
         // 一直在线的话日志会一条都没有，看起来像坏了。连上时补一条「当前已连接」。
@@ -2189,9 +2196,12 @@ public sealed partial class MainWindow : Window
         _ = SyncCaptchaAsync();
     }
 
-    private async Task SyncCaptchaAsync()
+    private async Task SyncCaptchaAsync(Func<byte[], Task<BitmapImage?>>? loadImage = null)
     {
         if (!_uiBuilt) return;
+
+        var root = Root;
+        int imageVersion = ++_captchaImageVersion;
 
         CaptchaSubmitBtn.IsEnabled = true;
         var captcha = _rt.Coordinator.PendingCaptcha;
@@ -2217,13 +2227,18 @@ public sealed partial class MainWindow : Window
         Fx.Reveal(CaptchaPanel);
         CaptchaHint.Text = string.IsNullOrWhiteSpace(captcha.Hint) ? "按图输入后按回车" : captcha.Hint;
 
-        await SetCaptchaImageAsync(captcha.Bytes);
+        var bitmap = await (loadImage ?? LoadCaptchaImageAsync)(captcha.Bytes);
+        // Decoding yields to the UI thread: closing to tray can release this entire tree.
+        if (!_uiBuilt || !ReferenceEquals(root, Root) || imageVersion != _captchaImageVersion) return;
+        CaptchaPic.Source = bitmap;
 
         CaptchaBox.Text = "";
         CaptchaBox.Focus(FocusState.Programmatic);
     }
 
-    private async Task SetCaptchaImageAsync(byte[] bytes)
+    private int _captchaImageVersion;
+
+    private static async Task<BitmapImage?> LoadCaptchaImageAsync(byte[] bytes)
     {
         try
         {
@@ -2240,16 +2255,18 @@ public sealed partial class MainWindow : Window
 
             var bitmap = new BitmapImage();
             await bitmap.SetSourceAsync(stream);
-            CaptchaPic.Source = bitmap;
+            return bitmap;
         }
         catch
         {
-            CaptchaPic.Source = null;
+            return null;
         }
     }
 
     private async Task SubmitCaptchaAsync()
     {
+        if (!_uiBuilt || _rt.Exiting) return;
+        var root = Root;
         var code = CaptchaBox.Text.Trim();
         if (code.Length == 0)
         {
@@ -2266,14 +2283,40 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
-            CaptchaSubmitBtn.IsEnabled = true;
+            if (_uiBuilt && ReferenceEquals(root, Root)) CaptchaSubmitBtn.IsEnabled = true;
         }
     }
 
-    private async Task OnConnectClicked()
+    private async void OnSwitchOutletClicked(object sender, RoutedEventArgs e)
+    {
+        if (!_uiBuilt || _rt.Exiting) return;
+        var options = Enum.GetValues<Operator>();
+        var picker = new ComboBox
+        {
+            Style = (Style)Root.Resources["RowInputStyle"],
+            ItemsSource = options.Select(OperatorName).ToArray(),
+            SelectedIndex = Array.IndexOf(options, _rt.Coordinator.ActiveOperator)
+        };
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Root.XamlRoot,
+            Title = "切换出口",
+            Content = new StackPanel { Spacing = 12, Children =
+                { new TextBlock { Text = "断开本机连接，并使用所选出口重新登录。本次选择优先于连接规则。", TextWrapping = TextWrapping.Wrap }, picker } },
+            PrimaryButtonText = "断开并重新登录",
+            CloseButtonText = "取消"
+        };
+        if (await ShowDialogAsync(dialog) == ContentDialogResult.Primary && picker.SelectedIndex >= 0)
+            await ConnectToOutletAsync(options[picker.SelectedIndex]);
+    }
+
+    private Task ConnectToOutletAsync(Operator outlet) => OnConnectClicked(outlet);
+
+    private async Task OnConnectClicked(Operator? outlet = null)
     {
         // 未接入校园网时主按钮是「重新检测」，走检测而不是提交登录
-        if (_rt.PortalDown)
+        if (!_uiBuilt || _rt.Exiting) return;
+        if (_rt.PortalDown && outlet is null)
         {
             await OnRefreshClicked();
             return;
@@ -2300,8 +2343,12 @@ public sealed partial class MainWindow : Window
         ConnectBtn.IsEnabled = false;
         try
         {
-            await _rt.Coordinator.ManualConnectAsync(reconnect: reconnect);
-            if (reconnect) _rt.Devices.Invalidate();
+            await _rt.Coordinator.ManualConnectAsync(switchOutlet: outlet, reconnect: reconnect);
+            if (reconnect || outlet is not null) _rt.Devices.Invalidate();
+        }
+        catch (Exception ex)
+        {
+            _rt.AddLog("登录操作失败：" + ex.Message);
         }
         finally
         {
@@ -2432,6 +2479,7 @@ public sealed partial class MainWindow : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        _shownDialog?.Hide();
         _edgeDock?.Dispose();
         _deviceActions.Dispose();
         PersistToStore();
