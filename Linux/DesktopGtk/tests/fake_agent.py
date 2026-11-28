@@ -31,7 +31,7 @@ RULES = [
         "id": "11111111-1111-1111-1111-111111111111",
         "matchType": "Wired",
         "ssid": "",
-        "account": "42662134",
+        "account": "demo-user",
         "operator": "Campus",
         "enabled": True,
         "passwordRef": "",
@@ -40,7 +40,7 @@ RULES = [
         "id": "22222222-2222-2222-2222-222222222222",
         "matchType": "WirelessSsid",
         "ssid": "SNNU",
-        "account": "42662134",
+        "account": "demo-user",
         "operator": "Mobile",
         "enabled": True,
         "passwordRef": "",
@@ -57,7 +57,7 @@ RULES = [
 ]
 
 SETTINGS = {
-    "account": "42662134",
+    "account": "demo-user",
     "operator": "Mobile",
     "autoStart": True,
     "autoReconnect": True,

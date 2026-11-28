@@ -403,7 +403,7 @@
                                         <TextBox
                                             x:Name="GuideAccountBox"
                                             MinHeight="32"
-                                            PlaceholderText="例如 42662134" />
+                                            PlaceholderText="请输入学号" />
                                     </StackPanel>
 
                                     <StackPanel Spacing="4">

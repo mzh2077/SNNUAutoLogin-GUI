@@ -189,9 +189,9 @@ public sealed partial class MainWindow
         // --demo-filled：填一个演示账号让首次引导卡收起，用来看正常有账号时的版式
         if (argv.AsSpan().Contains("--demo-filled"))
         {
-            AccountBox.Text = "42662134";
+            AccountBox.Text = "demo-user";
             PwdBox.Password = "demo1234";
-            AccText.Text = "42662134";
+            AccText.Text = "demo-user";
             UpdateGuideCard();
         }
 
@@ -251,8 +251,8 @@ public sealed partial class MainWindow
             string now = DateTime.Now.ToString("HH:mm:ss");
             foreach (var text in new[]
             {
-                "登录成功 · 42662134 · 10.138.47.56",
-                "登录成功 · 42662134 · 10.138.47.56",
+                "登录成功 · demo-user · 10.138.47.56",
+                "登录成功 · demo-user · 10.138.47.56",
                 "检测到未认证，正在自动登录…",
                 "认证门户不可达（可能不在校园网），已放慢巡检",
                 "登录失败：密码错误",
