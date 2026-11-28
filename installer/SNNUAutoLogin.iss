@@ -122,12 +122,13 @@ procedure NotifyIconUpdated(Event: Integer; Flags: Cardinal; Path: String; Unuse
 procedure RefreshLinksIn(Dir: String);
 var
   FindRec: TFindRec;
-  Shell, Link: Variant;
+  Shell, Folder, Item, Link: Variant;
   Path, Target: String;
 begin
   if not DirExists(Dir) then Exit;
   try
-    Shell := CreateOleObject('WScript.Shell');
+    Shell := CreateOleObject('Shell.Application');
+    Folder := Shell.NameSpace(Dir);
   except
     Log('SNNU: shortcut automation unavailable: ' + GetExceptionMessage);
     Exit;
@@ -138,9 +139,10 @@ begin
     repeat
       Path := AddBackslash(Dir) + FindRec.Name;
       try
-        Link := Shell.CreateShortcut(Path);
-        if CompareText(Link.TargetPath, Target) <> 0 then Continue;
-        Link.IconLocation := ExpandConstant('{app}\Assets\{#ShellIconFile}') + ',0';
+        Item := Folder.ParseName(FindRec.Name);
+        Link := Item.GetLink;
+        if CompareText(GetShortName(Link.Path), GetShortName(Target)) <> 0 then Continue;
+        Link.SetIconLocation(ExpandConstant('{app}\Assets\{#ShellIconFile}'), 0);
         Link.Save;
         NotifyIconUpdated($00002000, $00003005, Path, 0);
         Log('SNNU: refreshed shortcut icon ' + Path);

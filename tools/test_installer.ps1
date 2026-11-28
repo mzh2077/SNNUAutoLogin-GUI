@@ -10,7 +10,7 @@ if (!$ExpectedVersion) {
 $ExpectedFileVersion = "$ExpectedVersion.0"
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 if (Get-ItemProperty -LiteralPath $runKey -Name 'SNNUAutoLogin' -ErrorAction SilentlyContinue) { throw 'Existing startup entry found; refusing installer smoke test.' }
-$testDir = Join-Path $env:TEMP ('SNNU-InstallerTest-' + [Guid]::NewGuid().ToString('N'))
+$testDir = Join-Path (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Temp') ('SNNU-InstallerTest-' + [Guid]::NewGuid().ToString('N'))
 $desktopLink = Join-Path ([Environment]::GetFolderPath('Desktop')) 'SNNU 校园网助手.lnk'
 if (Test-Path -LiteralPath $desktopLink) { throw 'Existing desktop shortcut found; refusing installer smoke test.' }
 $installLog = "$testDir-install.log"
@@ -22,12 +22,19 @@ if (!(Test-Path -LiteralPath $exe)) { throw 'Installed executable missing' }
 $installedVersion = (Get-Item -LiteralPath $exe).VersionInfo.FileVersion
 if ($installedVersion -ne $ExpectedFileVersion) { throw "Installed version mismatch: $installedVersion != $ExpectedFileVersion" }
 $shell = New-Object -ComObject WScript.Shell
+$shellApp = New-Object -ComObject Shell.Application
+function Get-ExistingShortcut([string]$path) {
+    if (!(Test-Path -LiteralPath $path)) { throw "Shortcut missing: $path" }
+    $folder = $shellApp.NameSpace([IO.Path]::GetDirectoryName($path))
+    return $folder.ParseName([IO.Path]::GetFileName($path)).GetLink
+}
 function Assert-ShortcutIcon([string]$path) {
-    $link = $shell.CreateShortcut($path)
-    $iconPath = $link.IconLocation -replace ',0$', ''
-    if ($link.TargetPath -ne $exe -or !(Test-Path -LiteralPath $iconPath) -or
+    $link = Get-ExistingShortcut $path
+    $iconPath = ''
+    $iconIndex = $link.GetIconLocation([ref]$iconPath)
+    if ($link.Path -ne $exe -or $iconIndex -ne 0 -or !(Test-Path -LiteralPath $iconPath) -or
         [IO.Path]::GetFileName($iconPath) -notmatch '^app-[0-9a-fA-F]{64}\.ico$') {
-        Write-Host "Shortcut: $path; target: [$($link.TargetPath)]; expected target: [$exe]; icon: [$($link.IconLocation)]"
+        Write-Host "Shortcut: $path; target: [$($link.Path)]; expected target: [$exe]; icon: [$iconPath,$iconIndex]"
         Get-ChildItem -LiteralPath (Join-Path $testDir 'Assets') -Filter '*.ico' | Select-Object Name, Length | Out-String | Write-Host
         Get-Content -LiteralPath $installLog | Select-Object -Last 65 | Write-Host
         throw "Shortcut icon mismatch: $path"
@@ -38,8 +45,8 @@ function Assert-ShortcutIcon([string]$path) {
 }
 Assert-ShortcutIcon $desktopLink
 # Simulate old desktop/pinned link metadata without programmatically pinning an app.
-$link = $shell.CreateShortcut($desktopLink)
-$link.IconLocation = "$env:WINDIR\System32\shell32.dll,0"
+$link = Get-ExistingShortcut $desktopLink
+$link.SetIconLocation("$env:WINDIR\System32\shell32.dll", 0)
 $link.Save()
 $pinDir = Join-Path $env:APPDATA 'Microsoft/Internet Explorer/Quick Launch/User Pinned/TaskBar'
 New-Item -ItemType Directory -Force $pinDir | Out-Null
