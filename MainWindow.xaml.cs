@@ -1834,6 +1834,7 @@ public sealed partial class MainWindow : Window
     {
         RawLogs.Clear();
         foreach (var entry in _rt.RawLogSnapshot) RawLogs.Add(entry);
+        if (RawLogs.Count > 0 && RawLogExpander.IsExpanded) LogList.ScrollIntoView(RawLogs[^1]);
     }
 
     private void OnRuntimeRawLog(LogEntry entry)
