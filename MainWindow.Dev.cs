@@ -211,7 +211,15 @@ public sealed partial class MainWindow
             else if (argv.AsSpan().Contains("about")) Navigate(NavPage.About, animate: anim);
             else if (argv.AsSpan().Contains("settings")) Navigate(NavPage.Settings, animate: anim);
 
-            if (argv.AsSpan().Contains("--advanced")) GuardAdvancedExpander.IsExpanded = true;
+            if (argv.AsSpan().Contains("--advanced"))
+            {
+                GuardAdvancedExpander.IsExpanded = true;
+                ReauthenticateSwitch.IsOn = true;
+                DeviceGuardSwitch.IsOn = true;
+                ReauthExpander.IsExpanded = true;
+                DeviceGuardCard.IsExpanded = true;
+                RulesCard.IsExpanded = true;
+            }
 
             await Task.Delay(500);
 
@@ -266,7 +274,7 @@ public sealed partial class MainWindow
         // --expand-devices：展开在线设备列表
         if (argv.AsSpan().Contains("--expand-devices"))
         {
-            if (!_deviceExpanded) ToggleDeviceBody();
+            DeviceCard.IsExpanded = true;
             await Task.Delay(300);
         }
 
@@ -433,26 +441,29 @@ public sealed partial class MainWindow
         await Task.Delay(2500);
         if (!_uiBuilt) return;
 
+        // 自检会来回改这个开关，结束前要还原，别把用户的设置留成另一个值
+        bool originalKeep = _rt.Store.Settings.KeepAliveOnLock;
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"setting          = {_rt.Store.Settings.KeepAliveOnLock}  wts={_rt.SessionWatchAvailable}");
         sb.AppendLine($"locked(before)   = {_rt.IsSessionLocked}");
-        sb.AppendLine($"awake(before)    = {_rt.StayAwakeActive}");
+        sb.AppendLine($"awake(before)    = {_rt.StayAwakeActive}  paused={_rt.ChecksPaused}");
 
         _rt.SimulateSessionLock(true);
         await Task.Delay(1500);
         sb.AppendLine($"locked(after)    = {_rt.IsSessionLocked}");
         sb.AppendLine($"awake(after)     = {_rt.StayAwakeActive}  applied=0x{_rt.StayAwakeApplied:X}  ok={_rt.StayAwakeResult != 0}");
+        sb.AppendLine($"paused(after)    = {_rt.ChecksPaused}（锁屏 + 关掉保持，期望 True）");
 
         // 关掉开关应立即释放，不需要等到解锁
         _rt.Store.Settings.KeepAliveOnLock = false;
         _rt.ApplyLockPolicy();
         await Task.Delay(700);
-        sb.AppendLine($"switch off       = awake {_rt.StayAwakeActive}（锁屏中，期望 False）");
+        sb.AppendLine($"switch off       = awake {_rt.StayAwakeActive}  paused={_rt.ChecksPaused}（锁屏中，期望 False / True）");
 
         _rt.Store.Settings.KeepAliveOnLock = true;
         _rt.ApplyLockPolicy();
         await Task.Delay(700);
-        sb.AppendLine($"switch on        = awake {_rt.StayAwakeActive}（期望 True）");
+        sb.AppendLine($"switch on        = awake {_rt.StayAwakeActive}  paused={_rt.ChecksPaused}（期望 True / False）");
 
         sb.AppendLine("--- powercfg /requests（锁屏中，需管理员才有输出）---");
         sb.AppendLine(ReadExecutionRequests());
@@ -460,9 +471,13 @@ public sealed partial class MainWindow
         _rt.SimulateSessionLock(false);
         await Task.Delay(1800);
         sb.AppendLine($"locked(unlock)   = {_rt.IsSessionLocked}");
-        sb.AppendLine($"awake(unlock)    = {_rt.StayAwakeActive}  applied=0x{_rt.StayAwakeApplied:X}（期望 False）");
+        sb.AppendLine($"awake(unlock)    = {_rt.StayAwakeActive}  applied=0x{_rt.StayAwakeApplied:X}  paused={_rt.ChecksPaused}（期望 False / False）");
         sb.AppendLine("--- powercfg /requests（解锁后，需管理员才有输出）---");
         sb.AppendLine(ReadExecutionRequests());
+
+        _rt.Store.Settings.KeepAliveOnLock = originalKeep;
+        _rt.ApplyLockPolicy();
+        sb.AppendLine($"restored keep    = {originalKeep}  paused={_rt.ChecksPaused}");
 
         System.IO.File.WriteAllText(
             System.IO.Path.Combine(System.IO.Path.GetTempPath(), "snnu_lock.txt"),

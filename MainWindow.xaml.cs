@@ -58,7 +58,6 @@ public sealed partial class MainWindow : Window
     private bool _logScrollQueued;
     private bool _legacyDismissed;
     private bool _legacyCleaning;
-    private bool _deviceExpanded;
 
     private readonly DispatcherTimer _saveTimer = new() { Interval = TimeSpan.FromMilliseconds(450) };
 
@@ -169,30 +168,30 @@ public sealed partial class MainWindow : Window
         });
     }
 
-    private bool _tallTried;
+    private bool _heightOptionTried;
 
     /// <summary>
-    /// 标题栏行高、齿轮按钮尺寸都跟着系统给的真实标题栏高度走。
+    /// 标题栏行高跟着系统给的真实标题栏高度走。
     ///
-    /// Edge 那一类应用用的是 Tall：标题栏 48 高，系统的 caption 按钮跟着一起变高，
-    /// 齿轮做成 48 就与它们同高同中线，不用再靠 ±3 像素的偏移去凑。
-    /// Win10 上没有 Tall，读回的仍然是 32，行高与按钮就一起退回 32。
+    /// 用 Standard：32 逻辑像素，系统的 caption 按钮也是 46×32 贴右沿排，
+    /// 行高与按钮同高同中线，不需要再靠 ±3 像素的偏移去凑。
+    /// （Tall 会把三枚按钮拉到 41 逻辑像素高，与 Fluent 的 32 规格不符。）
     /// </summary>
     private void ApplyTitleBarMetrics()
     {
         if (_appWindow is null || TitleBarRow is null) return;
 
-        if (!_tallTried)
+        if (!_heightOptionTried)
         {
-            _tallTried = true;
+            _heightOptionTried = true;
             try
             {
                 var tb = _appWindow.TitleBar;
-                tb.PreferredHeightOption = TitleBarHeightOption.Tall;
+                tb.PreferredHeightOption = TitleBarHeightOption.Standard;
                 Trace($"标题栏高度：opt={tb.PreferredHeightOption} 物理高={tb.Height} " +
                       $"inset={tb.RightInset}");
             }
-            catch (Exception ex) { Trace("Tall 设置失败：" + ex.Message); }
+            catch (Exception ex) { Trace("Standard 设置失败：" + ex.Message); }
         }
 
         // ⚠ TitleBar.Height 与 RightInset 一样是【物理像素】，XAML 用逻辑像素。
@@ -302,6 +301,8 @@ public sealed partial class MainWindow : Window
         // 隐藏页里的开关还没量过尺寸，切过来之后补量几拍（模板铺开有先后）
         ScheduleFitToggles();
 
+        if (page == NavPage.Settings) UpdateSettingsInputLayout();
+
         // 齿轮显隐变了，标题栏的直通区域要跟着重报
         DispatcherQueue.TryEnqueue(UpdateTitleBarInteractiveRegion);
     }
@@ -311,6 +312,50 @@ public sealed partial class MainWindow : Window
         FitToggleWidths();
         DispatcherQueue.TryEnqueue(FitToggleWidths);
         DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, FitToggleWidths);
+    }
+
+    // ────────────────────────── 设置页输入卡自适应 ──────────────────────────
+
+    private bool? _inputsStacked;
+
+    /// <summary>
+    /// 学号 / 密码 / 出口运营商三张卡：窗口够宽时输入框与标题同一行、固定 240 靠右；
+    /// 窗口窄于 440 逻辑像素才换到标题下方并铺满。
+    ///
+    /// 用 Root 的实际宽度判断（含左侧导航栏），是因为 520 宽时卡片内宽只有 426，
+    /// 按卡片宽度卡 440 会让默认窗口也换行。
+    /// </summary>
+    private void UpdateSettingsInputLayout()
+    {
+        if (!_uiBuilt) return;
+
+        double width = Root.ActualWidth;
+        if (width <= 0) return;
+
+        bool stacked = width < 440;
+        if (_inputsStacked == stacked) return;
+        _inputsStacked = stacked;
+
+        ApplyInputRow(AccountIcon, AccountBox, AccountColumn, stacked);
+        ApplyInputRow(PwdIcon, PasswordInputHost, PasswordColumn, stacked);
+        ApplyInputRow(OperatorIcon, DefaultOperatorBox, OperatorColumn, stacked);
+        ApplyInputRow(ProbeInternalIcon, DeviceGuardProbeTargetBox, ProbeInternalColumn, stacked);
+        ApplyInputRow(ProbeExternalIcon, DeviceGuardExternalProbeTargetBox, ProbeExternalColumn, stacked);
+    }
+
+    private static void ApplyInputRow(FontIcon icon, FrameworkElement input, ColumnDefinition column, bool stacked)
+    {
+        Grid.SetRow(input, stacked ? 1 : 0);
+        Grid.SetColumn(input, stacked ? 1 : 2);
+        Grid.SetColumnSpan(input, stacked ? 2 : 1);
+        input.Width = stacked ? double.NaN : 240;
+        input.MaxWidth = stacked ? double.PositiveInfinity : 240;
+        input.HorizontalAlignment = stacked ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+        input.Margin = stacked ? new Thickness(0, 8, 0, 0) : new Thickness(0);
+
+        // 图标始终跟标题那一行对齐；换行后控件在下一行，图标不跟着往下沉
+        Grid.SetRowSpan(icon, 1);
+        column.Width = new GridLength(stacked ? 0 : 240);
     }
 
     /// <summary>代码里跳页时把左栏选中项拉回来，别让导航和内容对不上。</summary>
@@ -862,7 +907,7 @@ public sealed partial class MainWindow : Window
         // 后台还没推过状态时，卡片底部的占位文案要跟开关一致：
         // 开关明明开着，下面却写「未启用」，看着像坏了。
         if (!_guardStatusSeen)
-            DeviceGuardStateText.Text = "上次检测：尚未检测";
+            DeviceGuardStateText.Text = "尚未检测";
 
         SyncLegacyHostsBar();
         _uiReady = ready;
@@ -966,13 +1011,34 @@ public sealed partial class MainWindow : Window
 
             // 状态行只说「上次检测」这一件事，检测前不摆「在线 0 台」这种误导数字
             DeviceGuardStateText.Text = status.LastProbeAt is null
-                ? "上次检测：尚未检测"
-                : $"上次检测：{status.LastProbeAt:HH:mm} · {(status.LastProbeOk == true ? "网络正常" : "网络不通")}";
+                ? "尚未检测"
+                : $"{status.LastProbeAt:HH:mm} · {(status.LastProbeOk == true ? "网络正常" : "网络不通")}";
 
-            DeviceGuardLastText.Text = status.LastMessage ?? "";
+            SetGuardDetail(status.LastMessage);
 
             RefreshRulesUi();
         });
+    }
+
+    /// <summary>
+    /// 守卫的内部提示（“获取在线设备失败，本轮跳过（连接超时）”）不进界面，
+    /// 换成一句用户能看懂的话；其余状态原样放展开区最后一行。
+    /// </summary>
+    private void SetGuardDetail(string? raw)
+    {
+        if (!_uiBuilt) return;
+
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            DeviceGuardLastText.Text = "";
+            DeviceGuardLastText.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        DeviceGuardLastText.Text = raw.Contains("获取在线设备失败", StringComparison.Ordinal)
+            ? "暂时无法获取设备信息，稍后会自动重试"
+            : raw;
+        DeviceGuardLastText.Visibility = Visibility.Visible;
     }
 
     /// <summary>「立即检测一次」：只探测，不处置。</summary>
@@ -981,20 +1047,20 @@ public sealed partial class MainWindow : Window
     private async Task ProbeNowAsync()
     {
         DeviceGuardProbeNowBtn.IsEnabled = false;
-        DeviceGuardStateText.Text = "上次检测：正在检测…";
-        DeviceGuardLastText.Text = "";
+        DeviceGuardStateText.Text = "正在检测…";
+        SetGuardDetail(null);
 
         try
         {
             UpdateGuardProbeSettings();
             var result = await _rt.Guard.ProbeNowAsync();
-            DeviceGuardStateText.Text = result.Success ? "上次检测：网络正常" : "上次检测：网络不通";
-            DeviceGuardLastText.Text = result.Detail;
+            DeviceGuardStateText.Text = result.Success ? "网络正常" : "网络不通";
+            SetGuardDetail(result.Detail);
         }
         catch (Exception ex)
         {
-            DeviceGuardStateText.Text = "上次检测：检测失败";
-            DeviceGuardLastText.Text = ex.Message;
+            DeviceGuardStateText.Text = "检测失败";
+            SetGuardDetail(ex.Message);
         }
         finally
         {
@@ -1015,10 +1081,10 @@ public sealed partial class MainWindow : Window
         var profile = _rt.Profiles.Resolve(out var access);
         var currentLink = access.Kind switch
         {
-            NetworkAccessKind.Wired => "当前接入：有线",
-            NetworkAccessKind.Wireless when access.SsidReliable => $"当前接入：无线 · SSID『{access.Ssid}』",
-            NetworkAccessKind.Wireless => "当前接入：无线",
-            _ => "当前接入：未知"
+            NetworkAccessKind.Wired => "有线",
+            NetworkAccessKind.Wireless when access.SsidReliable => $"无线 · SSID『{access.Ssid}』",
+            NetworkAccessKind.Wireless => "无线",
+            _ => "未知"
         };
 
         var source = profile.Rule is { } rule ? DescribeRule(rule) : "默认账号";
@@ -1364,6 +1430,9 @@ public sealed partial class MainWindow : Window
     {
         ConnectBtn.Click += async (_, _) => await OnConnectClicked();
 
+        // 设置页三张输入卡：窗口窄于 440 才把输入框换到标题下方
+        Root.SizeChanged += (_, _) => UpdateSettingsInputLayout();
+
         AccountBox.TextChanged += (_, _) =>
         {
             ScheduleSave();
@@ -1460,10 +1529,8 @@ public sealed partial class MainWindow : Window
         // 主按钮按下时轻微回弹（合成线程 Scale 通道，不参与布局）
         Fx.PressFeedback(ConnectBtn);
         Fx.PressFeedback(CaptchaSubmitBtn);
-        Fx.PressFeedback(DeviceToggleBtn);
 
-        // 在线设备：整行展开 / 收起，重试走卡片里的链接
-        DeviceToggleBtn.Click += (_, _) => ToggleDeviceBody();
+        // 在线设备：展开时若上次没取到列表，补拉一次；重试走卡片里的链接
         DeviceRetryBtn.Click += async (_, _) => await OnDeviceRefreshClicked();
 
         // 日志：复制与清空
@@ -1844,7 +1911,6 @@ public sealed partial class MainWindow : Window
         // 认证进行中再点主按钮只会重复提交，先禁掉；其余状态都可点
         ConnectBtn.IsEnabled = !view.Busy && !_rt.Exiting;
         DisconnectItem.IsEnabled = state == ConnState.Online;
-        SwitchOutletItem.IsEnabled = !view.Busy;
 
         // 一直在线的话日志会一条都没有，看起来像坏了。连上时补一条「当前已连接」。
         if (state == ConnState.Online && Events.Count == 0)
@@ -1881,8 +1947,16 @@ public sealed partial class MainWindow : Window
         DurationCell.Visibility = hasDuration ? Visibility.Visible : Visibility.Collapsed;
 
         // 「下次检查」只在已连接时显示，倒计时不显示「马上」
-        int left = Math.Max(1, _rt.SecondsUntilNextCheck);
-        CountdownText.Text = $"{left} 秒后";
+        // 息屏暂停时显示「已暂停」，别拿占位等待的 3600 秒当倒计时
+        if (_rt.ChecksPaused)
+        {
+            CountdownText.Text = "已暂停";
+        }
+        else
+        {
+            int left = Math.Max(1, _rt.SecondsUntilNextCheck);
+            CountdownText.Text = $"{left} 秒后";
+        }
         CountdownCell.Visibility = online ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -1953,16 +2027,10 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void ToggleDeviceBody()
+    private void OnDeviceCardExpanding(Expander sender, ExpanderExpandingEventArgs args)
     {
         if (!_uiBuilt) return;
-
-        _deviceExpanded = !_deviceExpanded;
-        DeviceBody.Visibility = _deviceExpanded ? Visibility.Visible : Visibility.Collapsed;
-        DeviceChevron.Glyph = _deviceExpanded ? "\uE70E" : "\uE70D";
-
-        if (_deviceExpanded && _rt.Devices.State == DeviceListState.Failed)
-            _ = RefreshDevicesAsync();
+        if (_rt.Devices.State == DeviceListState.Failed) _ = RefreshDevicesAsync();
     }
 
     private async Task OnDeviceRefreshClicked()
@@ -2202,40 +2270,6 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async void OnSwitchOutletClicked(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button button) return;
-        button.IsEnabled = false;
-        try
-        {
-            PersistToStore();
-            var options = Enum.GetValues<Operator>();
-            var picker = new ComboBox
-            {
-                Style = (Style)Root.Resources["FormInputStyle"],
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                ItemsSource = options.Select(OperatorName).ToArray(),
-                SelectedIndex = Array.IndexOf(options, _rt.Coordinator.ActiveOperator)
-            };
-            var dialog = new ContentDialog
-            {
-                XamlRoot = Root.XamlRoot,
-                Title = "切换出口",
-                Content = new StackPanel { Spacing = 12, Children =
-                    { new TextBlock { Text = "确定后将断开本机连接，并使用所选出口重新登录。",
-                        TextWrapping = TextWrapping.Wrap }, picker } },
-                PrimaryButtonText = "断开并重新登录",
-                CloseButtonText = "取消"
-            };
-            if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary || picker.SelectedIndex < 0) return;
-            var selected = options[picker.SelectedIndex];
-            await _rt.Coordinator.ManualConnectAsync(selected);
-            _rt.Devices.Invalidate();
-        }
-        catch (Exception ex) { _rt.AddLog($"切换出口失败：{ex.Message}"); }
-        finally { if (_uiBuilt) button.IsEnabled = true; }
-    }
-
     private async Task OnConnectClicked()
     {
         // 未接入校园网时主按钮是「重新检测」，走检测而不是提交登录
@@ -2282,7 +2316,8 @@ public sealed partial class MainWindow : Window
     {
         bool reveal = PwdBox.PasswordRevealMode == PasswordRevealMode.Hidden;
         PwdBox.PasswordRevealMode = reveal ? PasswordRevealMode.Visible : PasswordRevealMode.Hidden;
-        PwdRevealIcon.Glyph = reveal ? "\uE9A9" : "\uE9A8";
+        // View（E890）/ Hide（ED1A）一对，线条粗细与其它 Segoe Fluent Icons 一致
+        PwdRevealIcon.Glyph = reveal ? "\uED1A" : "\uE890";
         ToolTipService.SetToolTip(PwdRevealBtn, reveal ? "隐藏密码" : "显示密码");
     }
 

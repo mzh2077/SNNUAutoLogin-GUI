@@ -1,213 +1,246 @@
-"""生成应用图标：圆形纯色底 + 经典三弧无线符号。
+"""从 Assets/icon-main.svg、icon-small.svg 生成全部图标资源。
 
-只用标准库，CI 不需要额外依赖。
-几何基准与 artifacts/icon-concepts/round-1.png 一致，但做了两处针对 Windows 的修正：
+只依赖 Pillow + 本机 Edge（headless 渲染 SVG）。所有尺寸都从一张 2048px 的母版
+LANCZOS 降采样，避免小尺寸各画一遍导致笔画粗细不一致。
 
-1. 圆形外径从 960 提到 1010（画布 1024）。任务栏里方形图标是满格铺开的，
-   圆形的视觉面积只有方形的 78%，不多给一点外径就会明显小一圈。
-2. 小尺寸单独一套几何。16/24 px 下三弧的线宽不足 1 个像素，缩小后会糊成白斑，
-   所以 24 px 用两弧、16 px 用单弧，线宽按像素反算，保证笔画实心。
+产出：
+  Assets/app.ico                     16/20/24/32(小图) + 40/48/64/256(大图)
+  Assets/app_16/32/64/256.png        关于页、标题栏、磁贴共用
+  Assets/Square44x44.png 等 MSIX 磁贴   居中、四周 15% 边距
+  Assets/tray/tray_{connected,disconnected,error}_{dark,light}.ico   16/20/24 单色
+
+说明：源 SVG 的画布是 1024，图形本身只占左下约 66%。这里按「墨迹外框」等比裁切并
+四周留 5% 空隙再缩放，图形的形状、比例、颜色都不动——不裁的话 16px 下会挤在角落里
+只剩一小点。
 """
-import math
 import os
+import re
 import struct
+import subprocess
+import tempfile
+import pathlib
 import zlib
 
-S = 1024                       # 基准画布
-CX = CY = 512.0                # 圆心
-R_CIRCLE = 510.0               # 圆半径，直径 1020（只留 2px 抗锯齿余量，几乎顶满图标槽）
-BRAND = (0x16, 0x77, 0xFF)     # 品牌蓝
+from PIL import Image
 
-# 大尺寸几何：三条等粗弧 + 圆点，半径与线宽按 1024 画布给出
-ARC_HALF = 45.0                # 弧张开半角
-FULL_ARCS = [(360.0, 58.0), (238.0, 58.0), (116.0, 58.0)]
-FULL_DOT = 46.0
+HERE = pathlib.Path(__file__).resolve().parent
+ASSETS = HERE / "Assets"
+TRAY = ASSETS / "tray"
 
-# 小尺寸几何：16 px 实在塞不下三条弧，用一条粗弧带点
-MID_ARCS = FULL_ARCS                            # 24 px 仍用三弧（约 1.2 px 线宽，还算清楚）
-MID_DOT = FULL_DOT
-SMALL_ARCS = [(338.0, 104.0)]                   # 16 px
-SMALL_DOT = 108.0
+EDGE = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 
+MASTER = 2048          # 母版边长
+INK_PAD = 0.05         # 裁切后四周留白（占成品边长）
 
-def geometry_for(size):
-    """按输出尺寸挑几何。只有 16 px 才退成单弧，再上面都保持三弧的形状。"""
-    if size >= 20:
-        return FULL_ARCS, FULL_DOT
-    return SMALL_ARCS, SMALL_DOT
+ICO_SMALL = [16, 20, 24, 32]      # 用 icon-small.svg
+ICO_LARGE = [40, 48, 64, 256]     # 用 icon-main.svg
+
+# 托盘单色：深色墨（浅色任务栏）/ 白色（深色任务栏）
+INK_LIGHT_TASKBAR = "#1A1A1A"
+INK_DARK_TASKBAR = "#FFFFFF"
+
+_browser = None
 
 
-def centered_cy(arcs, dot_r):
-    """让「弧顶到点底」这一段整体在画布里垂直居中。"""
-    outer = max(r for r, _w in arcs) + max(w for _r, w in arcs) / 2.0
-    return CY + (outer - dot_r) / 2.0
+def browser():
+    global _browser
+    if _browser:
+        return _browser
+    for p in (EDGE, CHROME):
+        if os.path.exists(p):
+            _browser = p
+            return p
+    raise SystemExit("找不到 Edge / Chrome，无法渲染 SVG")
 
 
-def render(size, supersample=1):
-    """直接按 size 渲染（内部可超采样）。弧线用「到圆弧段的距离」算覆盖度，端点天然圆头。"""
-    arcs, dot_r = geometry_for(size)
-    arc_cy = centered_cy(arcs, dot_r)
+def read_svg(path):
+    """取出 <svg> 内部的 defs/图形；顺手去掉 c2pa metadata（只是签名清单，不参与绘制）。"""
+    s = pathlib.Path(path).read_text(encoding="utf-8")
+    s = re.sub(r"<metadata>.*?</metadata>", "", s, flags=re.S)
+    inner = re.sub(r"^.*?<svg[^>]*>", "", s, flags=re.S)
+    inner = re.sub(r"</svg>\s*$", "", inner, flags=re.S)
+    return inner.strip()
 
-    k = size / float(S)                 # 1024 坐标 → 目标尺寸
-    ss = max(1, supersample)
-    W = H = size * ss
-    br, bg, bb = BRAND
-    buf = bytearray(W * H * 4)
 
-    r_circle = R_CIRCLE * k * ss
-    cx = cy = (size / 2.0) * ss
-    acy = arc_cy * k * ss
-    dot = dot_r * k * ss
-    scaled_arcs = [(r * k * ss, w * k * ss) for r, w in arcs]
-
-    deg0 = 270.0 - ARC_HALF
-    deg1 = 270.0 + ARC_HALF
-    rad0 = math.radians(deg0)
-    rad1 = math.radians(deg1)
-    ends = [
-        ((cx + r * math.cos(rad0), acy + r * math.sin(rad0)),
-         (cx + r * math.cos(rad1), acy + r * math.sin(rad1)))
-        for r, _w in scaled_arcs
+def _shot(inner, box, px, out):
+    """把 svg 内部内容按 viewBox=box 渲染成 px×px 的 PNG（透明底）。"""
+    vx, vy, vw, vh = box
+    html = (
+        '<!doctype html><html><head><meta charset="utf-8"><style>'
+        "html,body{margin:0;padding:0;background:transparent;overflow:hidden}"
+        f"svg{{display:block;width:{px}px;height:{px}px}}"
+        "</style></head><body>"
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{vx} {vy} {vw} {vh}">{inner}</svg>'
+        "</body></html>"
+    )
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="icon_"))
+    page = tmp / "a.html"
+    page.write_text(html, encoding="utf-8")
+    cmd = [
+        browser(), "--headless=new", "--disable-gpu", "--hide-scrollbars",
+        "--force-device-scale-factor=1", f"--user-data-dir={tmp / 'prof'}",
+        f"--window-size={px},{px}", "--default-background-color=00000000",
+        f"--screenshot={out}", page.as_uri(),
     ]
-
-    for y in range(H):
-        fy = y + 0.5
-        dy = fy - acy
-        for x in range(W):
-            fx = x + 0.5
-
-            dc = math.hypot(fx - cx, fy - cy)
-            if dc > r_circle + 1.0:
-                continue
-            mask = min(max(r_circle + 0.5 - dc, 0.0), 1.0)
-            if mask <= 0:
-                continue
-
-            dist = math.hypot(fx - cx, dy)
-            cover = dot + 0.5 - dist
-            if cover < 0.0:
-                cover = 0.0
-
-            ang = (math.degrees(math.atan2(dy, fx - cx)) + 360.0) % 360.0
-            in_range = deg0 <= ang <= deg1
-            for i, (radius, width) in enumerate(scaled_arcs):
-                if in_range:
-                    d = abs(dist - radius)
-                else:
-                    (e0x, e0y), (e1x, e1y) = ends[i]
-                    d = min(math.hypot(fx - e0x, fy - e0y),
-                            math.hypot(fx - e1x, fy - e1y))
-                v = width * 0.5 + 0.5 - d
-                if v > cover:
-                    cover = v
-
-            if cover > 1.0:
-                cover = 1.0
-            elif cover < 0.0:
-                cover = 0.0
-
-            if cover > 0.0:
-                cr = int(br + (255 - br) * cover)
-                cg = int(bg + (255 - bg) * cover)
-                cb = int(bb + (255 - bb) * cover)
-            else:
-                cr, cg, cb = br, bg, bb
-
-            i4 = (y * W + x) * 4
-            buf[i4] = cr
-            buf[i4 + 1] = cg
-            buf[i4 + 2] = cb
-            buf[i4 + 3] = int(mask * 255)
-
-    if ss == 1:
-        return buf, W, H
-    return downsample(buf, W, H, size, size)
+    subprocess.run(cmd, capture_output=True, timeout=180)
+    return Image.open(out).convert("RGBA")
 
 
-def downsample(buf, W, H, nw, nh):
-    nw = int(nw)
-    nh = int(nh)
-    out = bytearray(nw * nh * 4)
-    sw, sh = W / nw, H / nh
-    for y in range(nh):
-        y0 = int(y * sh)
-        y1 = max(y0 + 1, int((y + 1) * sh))
-        for x in range(nw):
-            x0 = int(x * sw)
-            x1 = max(x0 + 1, int((x + 1) * sw))
-            r = g = b = a = 0
-            n = 0
-            for yy in range(y0, y1):
-                base = yy * W
-                for xx in range(x0, x1):
-                    i = (base + xx) * 4
-                    av = buf[i + 3]
-                    r += buf[i] * av
-                    g += buf[i + 1] * av
-                    b += buf[i + 2] * av
-                    a += av
-                    n += 1
-            i = (y * nw + x) * 4
-            if a > 0:
-                out[i] = r // a
-                out[i + 1] = g // a
-                out[i + 2] = b // a
-                out[i + 3] = a // n
-            else:
-                out[i + 3] = 0
-    return out, nw, nh
+def ink_box(img):
+    b = img.getbbox()
+    if b is None:
+        raise SystemExit("SVG 渲染为空")
+    return b
 
 
-def png_bytes(buf, w, h):
-    raw = bytearray()
-    for y in range(h):
-        raw.append(0)
-        raw += buf[y * w * 4:(y + 1) * w * 4]
-
-    def chunk(tag, data):
-        c = struct.pack('>I', len(data)) + tag + data
-        return c + struct.pack('>I', zlib.crc32(tag + data) & 0xFFFFFFFF)
-
-    ihdr = struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0)
-    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', ihdr)
-            + chunk(b'IDAT', zlib.compress(bytes(raw), 9)) + chunk(b'IEND', b''))
+def square_box(img, pad_ratio=INK_PAD):
+    """把墨迹外框扩成正方形，四周加 pad_ratio 的留白，返回 (x,y,w,h)。"""
+    x0, y0, x1, y1 = ink_box(img)
+    w, h = x1 - x0, y1 - y0
+    side = max(w, h) * (1 + 2 * pad_ratio)
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    return (cx - side / 2, cy - side / 2, side, side)
 
 
-print('rendering base...')
-base, BW, BH = render(S)
-print('base done')
+def master(inner):
+    """先按原画布渲一张，量出墨迹外框，再按外框裁一次。"""
+    raw = _shot(inner, (0, 0, 1024, 1024), MASTER, str(pathlib.Path(tempfile.mkdtemp()) / "raw.png"))
+    x, y, side, _ = square_box(raw)
+    k = 1024 / MASTER
+    return _shot(inner, (x * k, y * k, side * k, side * k),
+                 MASTER, str(pathlib.Path(tempfile.mkdtemp()) / "crop.png"))
 
-sizes = [256, 128, 64, 48, 32, 24, 16]
-images = []
-for s in sizes:
-    # 大尺寸从 1024 降采样（质量最好），小尺寸按自己的几何超采样单独渲染
-    if s >= 48:
-        images.append(downsample(base, BW, BH, s, s))
-    else:
-        images.append(render(s, supersample=4))
-    print('rendered', s)
 
-pngs = [(png_bytes(b, w, h), w, h) for b, w, h in images]
+def scale(img, size):
+    return img.resize((size, size), Image.LANCZOS) if img.size != (size, size) else img
 
-count = len(pngs)
-head = struct.pack('<HHH', 0, 1, count)
-entries = b''
-offset = 6 + 16 * count
-blobs = b''
-for data, w, h in pngs:
-    ww = 0 if w >= 256 else w
-    hh = 0 if h >= 256 else h
-    entries += struct.pack('<BBBBHHII', ww, hh, 0, 0, 1, 32, len(data), offset)
-    blobs += data
-    offset += len(data)
 
-here = os.path.dirname(os.path.abspath(__file__))
-out_path = os.path.join(here, 'Assets', 'app.ico')
-os.makedirs(os.path.dirname(out_path), exist_ok=True)
-with open(out_path, 'wb') as f:
-    f.write(head + entries + blobs)
+# ─────────────────────────── ICO ───────────────────────────
 
-with open(os.path.join(os.path.dirname(out_path), 'app_256.png'), 'wb') as f:
-    f.write(pngs[0][0])
+def png_bytes(img):
+    tmp = pathlib.Path(tempfile.mkdtemp()) / "x.png"
+    img.save(tmp, format="PNG", optimize=True)
+    return tmp.read_bytes()
 
-print('ico written:', out_path, os.path.getsize(out_path), 'bytes')
+
+def write_ico(path, entries):
+    """entries: [(size, PIL.Image)]；256 的目录项宽高记 0，data 统一存 PNG。"""
+    entries = sorted(entries, key=lambda e: e[0])
+    blobs, dirs = b"", b""
+    offset = 6 + 16 * len(entries)
+    for size, img in entries:
+        data = png_bytes(img)
+        w = 0 if size >= 256 else size
+        dirs += struct.pack("<BBBBHHII", w, w, 0, 0, 1, 32, len(data), offset)
+        blobs += data
+        offset += len(data)
+    pathlib.Path(path).write_bytes(struct.pack("<HHH", 0, 1, len(entries)) + dirs + blobs)
+
+
+# ─────────────────────────── 托盘 ───────────────────────────
+
+TRAY_ARCS = [
+    ("M220 235.7 A569.3 569.3 0 0 1 789.3 805", 100),
+    ("M220 475.7 A329.3 329.3 0 0 1 549.3 805", 100),
+]
+
+BADGE_C, BADGE_R = 815, 215      # 感叹号角标的圆心与半径（1024 画布）
+SLASH_GAP, SLASH_W = 260, 120    # 斜线两侧挖空的宽度、斜线本身的宽度
+
+
+def tray_svg(color, state):
+    """单色托盘图标：只留 icon-small 里的两层波纹（去掉学士帽、去掉直腿），
+    state = connected / disconnected / error。
+
+    角标都用 mask 挖透明缝，不依赖托盘背景色，浅色/深色任务栏都能贴。
+    """
+    body = "".join(
+        f'<path d="{d}" fill="none" stroke="{color}" stroke-width="{w}" '
+        f'stroke-linecap="round"/>'
+        for d, w in TRAY_ARCS
+    )
+
+    mask = ""
+    overlay = ""
+
+    if state == "disconnected":
+        # 一道斜线压在波纹上，两侧挖 200 单位的透明缝
+        mask = ('<mask id="cut"><rect width="1024" height="1024" fill="#fff"/>'
+                f'<path d="M170 150 L870 850" stroke="#000" stroke-width="{SLASH_GAP}" '
+                'stroke-linecap="round"/></mask>')
+        overlay = (f'<path d="M170 150 L870 850" stroke="{color}" stroke-width="{SLASH_W}" '
+                   'stroke-linecap="round"/>')
+        body = f'<g mask="url(#cut)">{body}</g>'
+
+    elif state == "error":
+        # 右下角实心圆，感叹号是挖空的；圆外再挖一圈缝，不压住波纹
+        c, r = BADGE_C, BADGE_R
+        bar_w, bar_h = int(r * 0.30), int(r * 0.62)
+        mask = (f'<mask id="cut"><rect width="1024" height="1024" fill="#fff"/>'
+                f'<circle cx="{c}" cy="{c}" r="{int(r * 1.34)}" fill="#000"/>'
+                f'<circle cx="{c}" cy="{c}" r="{r}" fill="#fff"/>'
+                f'<rect x="{c - bar_w // 2}" y="{c - int(r * 0.46)}" width="{bar_w}" '
+                f'height="{bar_h}" rx="{bar_w // 2}" fill="#000"/>'
+                f'<circle cx="{c}" cy="{c + int(r * 0.44)}" r="{int(r * 0.16)}" fill="#000"/></mask>')
+        overlay = f'<circle cx="{c}" cy="{c}" r="{r}" fill="{color}" mask="url(#cut)"/>'
+        body = f'<g mask="url(#cut)">{body}</g>'
+
+    return f"<defs>{mask}</defs>{body}{overlay}"
+
+
+def mono_master(inner):
+    """单色图标母版：按原始 1024 画布渲一次，裁到墨迹外框后再渲一次（一次一状态）。"""
+    raw = _shot(inner, (0, 0, 1024, 1024), 1024, str(pathlib.Path(tempfile.mkdtemp()) / "m.png"))
+    x, y, side, _ = square_box(raw, pad_ratio=0.04)
+    return _shot(inner, (x, y, side, side), 1024, str(pathlib.Path(tempfile.mkdtemp()) / "mc.png"))
+
+
+# ─────────────────────────── 磁贴 ───────────────────────────
+
+def tile(img, w, h, content=0.70):
+    """把图标居中放进 w×h 的透明画布，长边占 content，四周留白。"""
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    side = int(round(min(w, h) * content))
+    ic = scale(img, side)
+    out.alpha_composite(ic, ((w - side) // 2, (h - side) // 2))
+    return out
+
+
+def main():
+    ASSETS.mkdir(exist_ok=True)
+    TRAY.mkdir(exist_ok=True)
+
+    print("渲染母版…")
+    big = master(read_svg(ASSETS / "icon-main.svg"))
+    small = master(read_svg(ASSETS / "icon-small.svg"))
+
+    # app.ico
+    entries = [(s, scale(small, s)) for s in ICO_SMALL] + [(s, scale(big, s)) for s in ICO_LARGE]
+    write_ico(ASSETS / "app.ico", entries)
+    print("app.ico", (ASSETS / "app.ico").stat().st_size, "bytes", [s for s, _ in entries])
+
+    # 单独 PNG
+    for name, img, s in (("app_16.png", small, 16), ("app_32.png", small, 32),
+                         ("app_64.png", big, 64), ("app_256.png", big, 256)):
+        scale(img, s).save(ASSETS / name)
+    print("app_16/32/64/256.png")
+
+    # MSIX 磁贴
+    tile(scale(big, 256), 44, 44).save(ASSETS / "Square44x44.png")
+    tile(scale(big, 256), 44, 44).save(ASSETS / "Square44x44.targetsize-44_altform-unplated.png")
+    tile(big, 150, 150).save(ASSETS / "Square150x150.png")
+    tile(big, 310, 150).save(ASSETS / "Wide310x150.png")
+    tile(big, 256, 256).save(ASSETS / "StoreLogo-256.png")
+    print("tiles 44/150/310x150/256")
+
+    # 托盘
+    for state in ("connected", "disconnected", "error"):
+        for theme, color in (("dark", INK_LIGHT_TASKBAR), ("light", INK_DARK_TASKBAR)):
+            m = mono_master(tray_svg(color, state))
+            write_ico(TRAY / f"tray_{state}_{theme}.ico", [(s, scale(m, s)) for s in (16, 20, 24)])
+    print("tray 6 个 ico（16/20/24）")
+
+
+if __name__ == "__main__":
+    main()
