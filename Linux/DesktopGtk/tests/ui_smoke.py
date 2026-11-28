@@ -502,7 +502,7 @@ def test_online_state_renders() -> None:
     assert win._captcha_group.get_visible() is False
     assert win._login_button.get_sensitive() is True
 
-    assert win._entry_account.get_text() == "42662134"
+    assert win._entry_account.get_text() == "demo-user"
     assert win._combo_operator.get_selected() == 1, "Mobile 应该选中第二项"
     assert win._switch_autostart.get_active() is True
     assert int(win._spin_interval.get_value()) == 8
@@ -568,7 +568,7 @@ def test_save_account_sends_settings_then_password() -> None:
 
     client.send = lambda request, **_kw: spy(request)  # type: ignore[assignment]
 
-    win._entry_account.set_text("42669999")
+    win._entry_account.set_text("demo-updated")
     win._entry_password.set_text("secret-value")
     win._switch_save_secret.set_active(True)
     win._save_account()
@@ -577,7 +577,7 @@ def test_save_account_sends_settings_then_password() -> None:
     commands = [request.get("command") for request in sent]
     assert commands[:2] == ["save-settings", "password"], commands
     assert sent[1]["password"] == "secret-value" and sent[1]["save"] is True
-    assert agent.settings["account"] == "42669999"
+    assert agent.settings["account"] == "demo-updated"
     # 保存后会用新的版本号重新拉一次设置
     assert "settings" in commands
 

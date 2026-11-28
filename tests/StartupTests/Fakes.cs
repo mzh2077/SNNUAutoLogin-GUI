@@ -103,6 +103,7 @@ namespace SNNUAutoLogin.Services
 
     public sealed class PortalClient : IDisposable
     {
+        public event Action<string>? Diagnostics { add { } remove { } }
         public static LoginResult Status { get; set; } = LoginResult.Fail("offline");
         public static Func<CancellationToken, Task<LoginResult>>? StatusRequest { get; set; }
         public static LoginResult Login { get; set; } = new() { Success = true };

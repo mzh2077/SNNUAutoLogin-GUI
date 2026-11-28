@@ -13,6 +13,12 @@ internal readonly record struct DockRect(int X, int Y, int Width, int Height)
 
 internal static class EdgeDockGeometry
 {
+    public static DockRect Fit(DockRect window, DockRect work) => Clamp(window with
+    {
+        Width = Math.Clamp(window.Width, 1, Math.Max(1, work.Width)),
+        Height = Math.Clamp(window.Height, 1, Math.Max(1, work.Height))
+    }, work);
+
     public static DockEdge FindEdge(DockRect window, DockRect screen, DockRect work, int distance)
     {
         if (window.Width >= work.Width || window.Height >= work.Height) return DockEdge.None;

@@ -74,7 +74,7 @@ def test_round_trip_keeps_payload_untouched() -> None:
                     "networkVersion": 7,
                     "awaitingCaptcha": True,
                 },
-                "settings": {"account": "42662134", "connectionRules": [{"id": "x", "enabled": True}]},
+                "settings": {"account": "demo-user", "connectionRules": [{"id": "x", "enabled": True}]},
             }
         )
     )

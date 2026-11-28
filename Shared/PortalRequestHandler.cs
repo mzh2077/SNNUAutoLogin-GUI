@@ -1,13 +1,19 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace SNNUAutoLogin.Services;
 
-internal sealed class PortalRequestHandler(HttpMessageHandler transport) : DelegatingHandler(transport)
+internal sealed class PortalRequestHandler(HttpMessageHandler transport, Action<string>? diagnostic = null) : DelegatingHandler(transport)
 {
+    private static long _nextRequest;
+    private void Note(string message) { try { diagnostic?.Invoke(message); } catch { } }
+
+    // Form bodies, query values, cookies and authorization headers are never recorded.
+    private static string Address(Uri? uri) => uri?.GetLeftPart(UriPartial.Path) ?? "(no URI)";
     internal static bool IsPortalAddress(Uri? uri) =>
         uri is { IsAbsoluteUri: true, Scheme: "http" or "https", UserInfo.Length: 0 }
         && string.Equals(uri.Host, PortalClient.PortalHost, StringComparison.OrdinalIgnoreCase);
@@ -26,7 +32,21 @@ internal sealed class PortalRequestHandler(HttpMessageHandler transport) : Deleg
                 if (!IsPortalAddress(current.RequestUri))
                     throw new HttpRequestException("门户请求地址超出校园网认证范围");
 
-                var response = await base.SendAsync(current, ct).ConfigureAwait(false);
+                long started = Stopwatch.GetTimestamp();
+                long requestId = Interlocked.Increment(ref _nextRequest);
+                Note($"[{requestId}] HTTP -> {current.Method} {Address(current.RequestUri)}");
+                HttpResponseMessage response;
+                try
+                {
+                    response = await base.SendAsync(current, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    Note($"[{requestId}] HTTP !! {current.Method} {Address(current.RequestUri)} {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F0} ms\n{ex}");
+                    throw;
+                }
+                Note($"[{requestId}] HTTP <- {(int)response.StatusCode} {current.Method} {Address(current.RequestUri)} " +
+                    $"{Stopwatch.GetElapsedTime(started).TotalMilliseconds:F0} ms content-type={response.Content.Headers.ContentType} bytes={response.Content.Headers.ContentLength?.ToString() ?? "unknown"}");
                 response.RequestMessage ??= current;
                 var code = (int)response.StatusCode;
                 if (code is not (301 or 302 or 303 or 307 or 308) || response.Headers.Location is not { } location)
@@ -35,6 +55,7 @@ internal sealed class PortalRequestHandler(HttpMessageHandler transport) : Deleg
                 using (response)
                 {
                     var target = new Uri(current.RequestUri!, location);
+                    Note($"HTTP redirect {code} -> {Address(target)}");
                     var method = current.Method;
                     var content = current.Content;
                     if ((code is 301 or 302 && method == HttpMethod.Post) || (code == 303 && method != HttpMethod.Head))

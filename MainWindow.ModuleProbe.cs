@@ -103,9 +103,7 @@ public sealed partial class MainWindow
             await Task.Delay(1200);
 
             // 直接走解码路径：不依赖面板可见性（面板可能被状态机收起）
-            var mi = typeof(MainWindow).GetMethod("SetCaptchaImageAsync",
-                BindingFlags.Instance | BindingFlags.NonPublic);
-            if (mi?.Invoke(this, new object?[] { png }) is Task t) await t;
+            CaptchaPic.Source = await LoadCaptchaImageAsync(png);
             await Task.Delay(600);
             Note("验证码图源=" + (CaptchaPic.Source is null ? "null" : "已解码"));
         }

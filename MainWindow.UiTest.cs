@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using SNNUAutoLogin.Services;
 
 namespace SNNUAutoLogin;
@@ -20,6 +21,11 @@ public sealed partial class MainWindow
         var sb = new StringBuilder();
 
         await Task.Delay(1500);
+        CheckWindowIcon(sb);
+        await CheckDialogAndCaptchaLifetimeAsync(sb);
+        await CheckDisplayRestoreAsync(sb);
+        await CheckDevicesAndCurrentOperatorAsync(sb);
+        CheckRawDiagnosticLog(sb);
 
         // 设置项都在设置页上，先切过去量尺寸；首页的量测放到后面切回来再做。
         ShowSettingsPage(true, animate: false);
@@ -30,7 +36,7 @@ public sealed partial class MainWindow
 
         if (PortalLink.NavigateUri != new Uri("http://202.117.144.205/"))
             throw new InvalidOperationException("认证门户链接应不包含动态端口");
-        var formStyle = (Style)Root.Resources["FormInputStyle"];
+        var formStyle = (Style)Root.Resources["RowInputStyle"];
         var dialogInput = new TextBox { Style = formStyle };
         if (dialogInput.HorizontalAlignment != HorizontalAlignment.Stretch || dialogInput.MinHeight != 32
             || dialogInput.FontSize != AccountBox.FontSize)
@@ -126,11 +132,205 @@ public sealed partial class MainWindow
 
         await CheckNativeDockingAsync(sb);
 
+        // A native close must leave XAML intact until this message stack returns.
+        SendMessageForIcon(WinRT.Interop.WindowNative.GetWindowHandle(this), 0x0010, IntPtr.Zero, IntPtr.Zero);
+        if (!_closeQueued || !_uiBuilt || _rt.Exiting)
+            throw new InvalidOperationException("Native close released the view reentrantly");
+        sb.AppendLine("PASS native close defers view teardown after display changes");
         System.IO.File.WriteAllText(
             System.IO.Path.Combine(System.IO.Path.GetTempPath(), "snnu_uitest.txt"),
             sb.ToString(), Encoding.UTF8);
 
-        Application.Current.Exit();
+        // The queued close now runs AppRuntime.Exit and drains background operations.
+    }
+
+    private async Task CheckDisplayRestoreAsync(StringBuilder report)
+    {
+        if (_appWindow is null) throw new InvalidOperationException("Missing app window");
+        var originalPosition = _appWindow.Position;
+        var originalSize = _appWindow.Size;
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        double scale = Math.Max(96, GetDpiForWindow(hwnd)) / 96.0;
+        try
+        {
+            foreach (int width in new[] { 420, 520, 420 })
+            {
+                _appWindow.Resize(new Windows.Graphics.SizeInt32((int)(width * scale), (int)(680 * scale)));
+                await Task.Delay(180);
+                UpdateSettingsInputLayout();
+                TeardownUi();
+                BuildUi();
+                await Task.Delay(180);
+                UpdateSettingsInputLayout();
+                int expectedRow = Root.ActualWidth < 440 ? 1 : 0;
+                if (Grid.GetRow(AccountBox) != expectedRow || Grid.GetRow(PasswordInputHost) != expectedRow
+                    || Math.Abs(AppTitleBar.Margin.Right - _titleBarInset) > 0.5)
+                    throw new InvalidOperationException("Rebuilt view reused the previous tree's layout cache");
+            }
+            var area = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(_appWindow.Id,
+                Microsoft.UI.Windowing.DisplayAreaFallback.Primary).WorkArea;
+            var smaller = new DockRect(area.X, area.Y, Math.Min(600, area.Width), Math.Min(450, area.Height));
+            RefreshDisplayLayout(smaller);
+            await Task.Delay(180);
+            var p = _appWindow.Position;
+            var size = _appWindow.Size;
+            if (p.X < smaller.X || p.Y < smaller.Y || p.X + size.Width > smaller.Right || p.Y + size.Height > smaller.Bottom)
+                throw new InvalidOperationException("Restored window does not fit the reduced display work area");
+
+            // Deliver display/DPI notifications while a view is being released/rebuilt.
+            QueueDisplayLayoutRefresh();
+            TeardownUi();
+            BuildUi();
+            await Task.Delay(180);
+            if (!_uiBuilt) throw new InvalidOperationException("Display update lost the rebuilt view");
+            report.AppendLine("PASS display changes, reduced work area and rebuilt view layout");
+        }
+        finally
+        {
+            _appWindow.Resize(originalSize);
+            _appWindow.Move(originalPosition);
+            RefreshDisplayLayout();
+        }
+    }
+
+    private async Task CheckDevicesAndCurrentOperatorAsync(StringBuilder report)
+    {
+        var portal = new UiDevicePortal();
+        using var manager = new DeviceManager(EventDispatcher.Inline, portal, ownsClient: false);
+        try
+        {
+            ShowSettingsPage(false, animate: false);
+            await RefreshDevicesAsync(manager);
+            await Task.Delay(120);
+            if (!DeviceCard.IsExpanded || DeviceList.Items.Count != 2 || !DeviceRefreshBtn.IsEnabled
+                || DeviceEmptyText.Visibility != Visibility.Collapsed)
+                throw new InvalidOperationException("Online devices must be expanded, populated and refreshable");
+            manager.Invalidate();
+            RenderDeviceList(manager);
+            await RefreshDevicesAsync(manager);
+            if (DeviceList.Items.Count != 2 || portal.Reads != 2)
+                throw new InvalidOperationException("Device list did not reload after invalidation");
+
+            portal.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var pending = RefreshDevicesAsync(manager);
+            manager.Invalidate();
+            var followup = RefreshDevicesAsync(manager);
+            var release = portal.Hold;
+            portal.Hold = null;
+            release.SetResult();
+            await Task.WhenAll(pending, followup);
+            if (DeviceList.Items.Count != 2 || portal.Reads != 4)
+                throw new InvalidOperationException("Invalidation during a request lost its follow-up refresh");
+
+            ApplyState(ConnState.Online, LoginResult.Online("demo-user@telecom", "192.0.2.10", "2026-01-01 00:00:00"), false);
+            if (CurrentAccountText.Text != "demo-user" || CurrentOperatorText.Text != "中国电信")
+                throw new InvalidOperationException("Current account/operator must follow the portal session");
+            if (DeviceCard.TransformToVisual(Root).TransformPoint(new(0, 0)).Y
+                >= QuickEditAccountBtn.TransformToVisual(Root).TransformPoint(new(0, 0)).Y)
+                throw new InvalidOperationException("Device list must precede the quick settings cards");
+            portal.Fail = true;
+            await RefreshDevicesAsync(manager);
+            if (DeviceErrorRow.Visibility != Visibility.Visible || !DeviceRefreshBtn.IsEnabled)
+                throw new InvalidOperationException("Device query errors must remain visible and retryable");
+            report.AppendLine("PASS expanded online devices, reload after reconnect and current operator");
+        }
+        finally { OnDeviceListChanged(); ApplyState(_rt.State, _rt.LastResult, false); }
+    }
+
+    private void CheckRawDiagnosticLog(StringBuilder report)
+    {
+        const string prefix = "RAW-REGRESSION-";
+        for (int i = 0; i < 80; i++) _rt.AddDiagnostic(prefix + i);
+        _rt.AddDiagnostic("RAW-REPEATED");
+        _rt.AddDiagnostic("RAW-REPEATED");
+        _rt.AddDiagnostic("System.IO.IOException: fixture failure\n   at Fixture.SendAsync()");
+        FillRawLogs();
+        var text = GetRawLogText();
+        if (!text.Contains(prefix + "0") || !text.Contains(prefix + "79")
+            || text.Split("RAW-REPEATED").Length != 3 || !text.Contains("\n   at Fixture.SendAsync()")
+            || RawLogs.Count(entry => entry.Text.StartsWith(prefix)) != 80
+            || !_rt.RawLogSnapshot[^1].Time.Contains('.'))
+            throw new InvalidOperationException("Raw diagnostics were truncated, merged or lost exception details");
+        report.AppendLine("PASS raw diagnostics retain more than 40 entries, duplicates, milliseconds and stack traces");
+    }
+
+    private sealed class UiDevicePortal : IOnlineDevicePortal
+    {
+        public int Reads;
+        public bool Fail;
+        public TaskCompletionSource? Hold;
+        public async Task<DeviceListResult> GetOnlineDevicesAsync(int port, System.Threading.CancellationToken ct = default)
+        {
+            Reads++;
+            if (Hold is { } hold) await hold.Task;
+            return Fail ? DeviceListResult.Fail("fixture portal error") : DeviceListResult.Ok(
+                new[] { new OnlineDevice { DeviceName = "演示电脑", Ip = "192.0.2.10", IsCurrent = true },
+                    new OnlineDevice { DeviceName = "演示手机", Ip = "192.0.2.11", SessionId = "fixture" } }, null);
+        }
+        public Task<bool> DisconnectAsync(int port, System.Threading.CancellationToken ct = default) => Task.FromResult(true);
+        public Task<bool> ForceOfflineAsync(string frameUrl, string sessionId, System.Threading.CancellationToken ct = default) => Task.FromResult(true);
+        public void Dispose() { }
+    }
+
+    private void CheckWindowIcon(StringBuilder report)
+    {
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        if (SendMessageForIcon(hwnd, 0x007F, (IntPtr)1, IntPtr.Zero) == IntPtr.Zero
+            || SendMessageForIcon(hwnd, 0x007F, IntPtr.Zero, IntPtr.Zero) == IntPtr.Zero)
+            throw new InvalidOperationException("Window must have explicit large and small taskbar icons");
+        if (SwitchOutletItem.Text != "切换出口运营商")
+            throw new InvalidOperationException("Missing explicit outlet switch menu");
+        report.AppendLine("PASS explicit taskbar icons and outlet switch menu");
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendMessageForIcon(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    private async Task CheckDialogAndCaptchaLifetimeAsync(StringBuilder report)
+    {
+        OnSwitchOutletClicked(SwitchOutletItem, new RoutedEventArgs());
+        await Task.Delay(500);
+        if (_shownDialog is not { Title: "切换出口" } outletDialog)
+            throw new InvalidOperationException("Outlet menu item must open its picker");
+        outletDialog.Hide();
+        for (int i = 0; i < 100 && _shownDialog is not null; i++) await Task.Delay(25);
+        if (_shownDialog is not null) throw new InvalidOperationException("Outlet picker did not close");
+
+        var first = new ContentDialog { XamlRoot = Root.XamlRoot, Title = "回归检查", CloseButtonText = "关闭" };
+        var opened = ShowDialogAsync(first);
+        await Task.Delay(500);
+        var second = new ContentDialog { XamlRoot = Root.XamlRoot, Title = "重复请求", CloseButtonText = "关闭" };
+        if (await ShowDialogAsync(second) != ContentDialogResult.None || !ReferenceEquals(_shownDialog, first))
+            throw new InvalidOperationException("Concurrent dialogs must be ignored without replacing the active dialog");
+
+        // Hold decoding so teardown/rebuild always happens before the async continuation.
+        var release = new TaskCompletionSource<BitmapImage?>();
+        var whileHidden = new TaskCompletionSource<BitmapImage?>();
+        _rt.Coordinator.InjectCaptchaForTest(LoadSamplePng());
+        var hiddenDecode = SyncCaptchaAsync(_ => whileHidden.Task);
+        var decoding = SyncCaptchaAsync(_ => release.Task);
+        TeardownUi();
+        if (await opened != ContentDialogResult.None || _shownDialog is not null || _openDialogs != 0)
+            throw new InvalidOperationException("Closing to tray must dismiss its dialog");
+        whileHidden.SetResult(null);
+        await hiddenDecode;
+        BuildUi();
+        CaptchaBox.Text = "new-tree-input";
+        release.SetResult(null);
+        await decoding;
+        if (CaptchaBox.Text != "new-tree-input")
+            throw new InvalidOperationException("Old captcha decode touched the rebuilt view");
+
+        var older = new TaskCompletionSource<BitmapImage?>();
+        var oldDecode = SyncCaptchaAsync(_ => older.Task);
+        var newest = new BitmapImage();
+        await SyncCaptchaAsync(_ => Task.FromResult<BitmapImage?>(newest));
+        CaptchaBox.Text = "latest-image-input";
+        older.SetResult(null);
+        await oldDecode;
+        if (CaptchaBox.Text != "latest-image-input" || !ReferenceEquals(CaptchaPic.Source, newest))
+            throw new InvalidOperationException("An older captcha decode replaced the latest challenge");
+        report.AppendLine("PASS concurrent dialogs, dialog teardown and late captcha decoding");
     }
 
     private async Task CheckRulesVisibilityAsync(StringBuilder report)

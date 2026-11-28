@@ -36,6 +36,7 @@ public sealed partial class MainWindow : Window
     private readonly AppRuntime _rt;
     private readonly ThemeColors _theme;
     private readonly ObservableCollection<LogEntry> Logs = new();
+    private readonly ObservableCollection<LogEntry> RawLogs = new();
     private readonly ObservableCollection<UiLog> Events = new();
     private readonly List<UiLog> _eventSource = new(MaxEvents + 2);
     private readonly Queue<LogEntry> _pendingLogs = new();
@@ -48,6 +49,14 @@ public sealed partial class MainWindow : Window
     private bool _uiReady;
     private bool _uiBuilt;
     private bool _hiddenToTray;
+    private bool _windowClosed;
+    private bool _closeQueued;
+    private bool _displayLayoutQueued;
+    private bool _manualConnecting;
+    private bool _rawLogRefreshQueued;
+    private Operator? _requestedOperator;
+    private Task? _deviceRefreshTask;
+    private bool _deviceRefreshAgain;
     private bool _startHidden;
     private bool _settingsOpen;
     private bool _syncing;
@@ -85,6 +94,7 @@ public sealed partial class MainWindow : Window
         _rt.StateChanged += OnRuntimeState;
         _rt.Coordinator.CaptchaChanged += OnCaptchaChanged;
         _rt.Logged += OnRuntimeLog;
+        _rt.RawLogged += OnRuntimeRawLog;
         _rt.UpdateAvailable += ShowUpdateLink;
         _rt.SettingsChanged += OnRuntimeSettings;
         _rt.LegacyHostsChanged += OnLegacyHostsChanged;
@@ -104,6 +114,10 @@ public sealed partial class MainWindow : Window
         var appWindow = AppWindow.GetFromWindowId(id);
         _appWindow = appWindow;
 
+        // ApplicationIcon sets the executable resource; WinUI's HWND needs its own icon.
+        try { appWindow.SetIcon(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico")); }
+        catch (Exception ex) { _rt.AddLog("窗口图标加载失败：" + ex.Message); }
+
         try
         {
             SystemBackdrop = new MicaBackdrop();
@@ -114,7 +128,11 @@ public sealed partial class MainWindow : Window
         }
 
         appWindow.Changed += OnAppWindowChanged;
-        _closeHook = new WindowCloseHook(hwnd) { InterceptClose = OnCloseRequested };
+        _closeHook = new WindowCloseHook(hwnd)
+        {
+            InterceptClose = OnCloseRequested,
+            DisplayChanged = QueueDisplayLayoutRefresh
+        };
         InitializeEdgeDock(hwnd);
 
         double scale = GetDpiForWindow(hwnd) / 96.0;
@@ -139,11 +157,57 @@ public sealed partial class MainWindow : Window
         {
             try
             {
-                presenter.PreferredMinimumWidth = (int)(420 * scale);
-                presenter.PreferredMinimumHeight = (int)(560 * scale);
+                presenter.PreferredMinimumWidth = Math.Min(work.Width, (int)(420 * scale));
+                presenter.PreferredMinimumHeight = Math.Min(work.Height, (int)(560 * scale));
             }
             catch { }
         }
+    }
+
+    private void QueueDisplayLayoutRefresh()
+    {
+        if (_windowClosed || _rt.Exiting || _displayLayoutQueued) return;
+        _displayLayoutQueued = true;
+        if (!DispatcherQueue.TryEnqueue(() =>
+        {
+            _displayLayoutQueued = false;
+            RefreshDisplayLayout();
+        })) _displayLayoutQueued = false;
+    }
+
+    private void RefreshDisplayLayout(DockRect? workOverride = null)
+    {
+        if (_windowClosed || _rt.Exiting || _appWindow is null) return;
+        try
+        {
+            var area = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Primary).WorkArea;
+            var work = workOverride ?? new DockRect(area.X, area.Y, area.Width, area.Height);
+            double scale = Math.Max(96, GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this))) / 96.0;
+            _rt.AddDiagnostic($"DISPLAY scale={scale:F2} work={work} position={_appWindow.Position} size={_appWindow.Size}");
+            if (_appWindow.Presenter is OverlappedPresenter presenter)
+            {
+                presenter.PreferredMinimumWidth = Math.Min(work.Width, (int)(420 * scale));
+                presenter.PreferredMinimumHeight = Math.Min(work.Height, (int)(560 * scale));
+                if (presenter.State == OverlappedPresenterState.Restored)
+                {
+                    var position = _appWindow.Position;
+                    var size = _appWindow.Size;
+                    var current = new DockRect(position.X, position.Y, size.Width, size.Height);
+                    var fitted = EdgeDockGeometry.Fit(current, work);
+                    if (fitted.Width != current.Width || fitted.Height != current.Height)
+                        _appWindow.Resize(new SizeInt32(fitted.Width, fitted.Height));
+                    if (fitted.X != current.X || fitted.Y != current.Y)
+                        _appWindow.Move(new PointInt32(fitted.X, fitted.Y));
+                }
+            }
+            if (!_uiBuilt) return;
+            _titleBarInset = double.NaN;
+            ApplyTitleBarMetrics();
+            UpdateTitleBarInset();
+            UpdateTitleBarInteractiveRegion();
+            UpdateSettingsInputLayout();
+        }
+        catch (Exception ex) { _rt.AddLog("显示布局更新失败：" + ex.Message); }
     }
 
     /// <summary>自定义标题栏。内容树重建后必须重新挂一次（元素实例已换）。</summary>
@@ -465,8 +529,8 @@ public sealed partial class MainWindow : Window
         if (presenter.State != OverlappedPresenterState.Minimized) return;
 
         await Task.Delay(1200);
-        if (!_uiBuilt) return;
-        if (presenter.State == OverlappedPresenterState.Minimized)
+        if (!_uiBuilt || _windowClosed) return;
+        if (sender.Presenter is OverlappedPresenter current && current.State == OverlappedPresenterState.Minimized)
             MemoryOptimizer.Trim(force: true);
     }
 
@@ -502,6 +566,10 @@ public sealed partial class MainWindow : Window
     {
         if (_uiBuilt) return;
 
+        // These values describe the previous controls, not the new XAML tree.
+        _inputsStacked = null;
+        _titleBarInset = double.NaN;
+
         // 生成的 InitializeComponent() 带 _contentLoaded 守卫，第二次调用会直接返回。
         // 想重建整棵树必须先把这个标志复位，否则所有控件字段都会是 null。
         _contentLoaded = false;
@@ -510,7 +578,7 @@ public sealed partial class MainWindow : Window
         ApplyTitleBar();
         ApplyCommandLineOverrides();
 
-        LogList.ItemsSource = Logs;
+        LogList.ItemsSource = RawLogs;
         LogEvents.ItemsSource = Events;
         ShowVersion();
         ShowUpdateLink();
@@ -558,6 +626,8 @@ public sealed partial class MainWindow : Window
 
         PersistToStore();
         _uiBuilt = false;
+        _uiReady = false;
+        _shownDialog?.Hide();
 
         // 文本控件跟着树一起没了，重建后要重新等后台推一次守卫状态
         _guardStatusSeen = false;
@@ -566,6 +636,7 @@ public sealed partial class MainWindow : Window
         try { LogEvents.ItemsSource = null; } catch { }
         Logs.Clear();
         Events.Clear();
+        RawLogs.Clear();
         _pendingLogs.Clear();
         _logFlush?.Stop();
         _logFlush = null;
@@ -680,6 +751,7 @@ public sealed partial class MainWindow : Window
 
         try { _appWindow?.Show(); } catch { }
         Activate();
+        RefreshDisplayLayout();
 
         try { SetForegroundWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)); } catch { }
 
@@ -708,22 +780,28 @@ public sealed partial class MainWindow : Window
         Trace($"close-requested exiting={_rt.Exiting} tray={(_rt.Store.Settings.MinimizeToTray ? 1 : 0)}");
 
         if (_rt.Exiting) return !_rt.ShutdownComplete;
-        if (_rt.Store.Settings.MinimizeToTray && _rt.Tray?.IsVisible == true)
-            HideToTray();
-        else
-            _rt.Exit();
-        return true;
+        if (_closeQueued) return true;
+        // Unload XAML after the native close/display/DPI message stack has unwound.
+        _closeQueued = true;
+        bool queued = DispatcherQueue.TryEnqueue(() =>
+        {
+            try
+            {
+                if (_windowClosed || _rt.Exiting) return;
+                if (_rt.Store.Settings.MinimizeToTray && _rt.Tray?.IsVisible == true) HideToTray();
+                else _rt.Exit();
+            }
+            catch (Exception ex) { _rt.AddLog("关闭窗口失败：" + ex.Message); }
+            finally { _closeQueued = false; }
+        });
+        if (!queued) _closeQueued = false;
+        return queued;
     }
 
     internal static void Trace(string msg)
     {
-        try
-        {
-            System.IO.File.AppendAllText(
-                System.IO.Path.Combine(System.IO.Path.GetTempPath(), "snnu_trace.txt"),
-                $"[{DateTime.Now:HH:mm:ss.fff}] {msg}\n");
-        }
-        catch { }
+        if (AppRuntime.Current is { } runtime) runtime.AddDiagnostic("WINDOW " + msg);
+        else AppRuntime.TraceLine(msg);
     }
 
     internal static string Mem()
@@ -1258,7 +1336,7 @@ public sealed partial class MainWindow : Window
             };
         }
 
-        var inputStyle = (Style)Root.Resources["FormInputStyle"];
+        var inputStyle = (Style)Root.Resources["RowInputStyle"];
         var matchBox = new ComboBox { Style = inputStyle, HorizontalAlignment = HorizontalAlignment.Stretch };
         matchBox.Items.Add("有线");
         matchBox.Items.Add("无线（任意 SSID）");
@@ -1537,6 +1615,16 @@ public sealed partial class MainWindow : Window
         LogCopyBtn.Click += (_, _) => CopyEventLog();
         LogClearBtn.Click += async (_, _) => await ClearEventLogAsync();
         RawLogCopyBtn.Click += (_, _) => CopyRawLog();
+        RawLogOpenBtn.Click += (_, _) =>
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "snnu_trace.txt"))
+                    { UseShellExecute = true });
+            }
+            catch (Exception ex) { _rt.AddLog("打开原始日志失败：" + ex.Message); _rt.AddDiagnostic(ex.ToString()); }
+        };
+        RawLogExpander.Expanding += (_, _) => FillRawLogs();
 
         LegacyCleanBtn.Click += (_, _) => OnLegacyCleanClicked();
         LegacyDismissBtn.Click += (_, _) =>
@@ -1582,8 +1670,8 @@ public sealed partial class MainWindow : Window
                 DefaultButton = ContentDialogButton.Primary
             };
 
-            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
-                await OnConnectClicked();
+            if (await ShowDialogAsync(dialog) == ContentDialogResult.Primary)
+                await ConnectToOutletAsync(OperatorAt(index));
         };
 
         // ── 首次使用：登录引导 ──
@@ -1665,11 +1753,14 @@ public sealed partial class MainWindow : Window
     }
 
     private void CopyRawLog()
+        => CopyToClipboard(GetRawLogText());
+
+    private string GetRawLogText()
     {
         var sb = new System.Text.StringBuilder();
-        foreach (var e in Logs) sb.Append(e.Time).Append("  ").AppendLine(e.Text);
+        foreach (var e in _rt.RawLogSnapshot) sb.Append(e.Time).Append("  ").AppendLine(e.Text);
         if (sb.Length == 0) sb.AppendLine("（暂无日志）");
-        CopyToClipboard(sb.ToString());
+        return sb.ToString();
     }
 
     private void CopyToClipboard(string text)
@@ -1717,6 +1808,9 @@ public sealed partial class MainWindow : Window
         if (!_uiBuilt) return;
         ApplyState(state, result, animate: true);
         RefreshRulesUi(onlyIfChanged: true);
+        if (!_rt.IsUiTest && !_manualConnecting && state == ConnState.Online
+            && _rt.Devices.State is DeviceListState.Idle or DeviceListState.Failed)
+            _ = RefreshDevicesAsync();
     }
 
     private void OnRuntimeLog(string text)
@@ -1734,6 +1828,24 @@ public sealed partial class MainWindow : Window
         _logFlush.IsRepeating = false;
         _logFlush.Tick += OnLogFlushTick;
         _logFlush.Start();
+    }
+
+    private void FillRawLogs()
+    {
+        RawLogs.Clear();
+        foreach (var entry in _rt.RawLogSnapshot) RawLogs.Add(entry);
+        if (RawLogs.Count > 0 && RawLogExpander.IsExpanded) LogList.ScrollIntoView(RawLogs[^1]);
+    }
+
+    private void OnRuntimeRawLog(LogEntry entry)
+    {
+        if (!_uiBuilt || !RawLogExpander.IsExpanded || _rawLogRefreshQueued) return;
+        _rawLogRefreshQueued = true;
+        if (!DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+        {
+            _rawLogRefreshQueued = false;
+            if (_uiBuilt && RawLogExpander.IsExpanded) FillRawLogs();
+        })) _rawLogRefreshQueued = false;
     }
 
     private void OnLogFlushTick(DispatcherQueueTimer sender, object args)
@@ -1877,8 +1989,14 @@ public sealed partial class MainWindow : Window
         Fx.SwapText(StateTitle, view.Title, animate);
         Fx.SwapText(StateSubtitle, view.Subtitle, animate, 4f, 200);
 
-        string account = result?.Account ?? _rt.Store.Settings.Account;
+        string account = result?.Account ?? _rt.Profiles.Resolve().Account;
         AccText.Text = ShortAccount(account);
+        CurrentAccountText.Text = state == ConnState.Online ? ShortAccount(account) : "—";
+        CurrentOperatorLabel.Text = state is ConnState.Online or ConnState.Connecting or ConnState.CaptchaRequired
+            ? "当前出口" : "待用出口";
+        var op = state == ConnState.Connecting && _requestedOperator is { } requested
+            ? requested : OperatorFromAccount(result?.Account, _rt.Coordinator.ActiveOperator);
+        CurrentOperatorText.Text = OperatorName(op);
 
         // 没值的字段整格藏起来，不留「—」占位
         string ip = state == ConnState.Online ? result?.Ip ?? "" : "";
@@ -1910,6 +2028,7 @@ public sealed partial class MainWindow : Window
 
         // 认证进行中再点主按钮只会重复提交，先禁掉；其余状态都可点
         ConnectBtn.IsEnabled = !view.Busy && !_rt.Exiting;
+        SwitchOutletItem.IsEnabled = !view.Busy && !_rt.Exiting;
         DisconnectItem.IsEnabled = state == ConnState.Online;
 
         // 一直在线的话日志会一条都没有，看起来像坏了。连上时补一条「当前已连接」。
@@ -1931,6 +2050,16 @@ public sealed partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(account)) return "—";
         int at = account.IndexOf('@');
         return at > 0 ? account[..at] : account;
+    }
+
+    private static Operator OperatorFromAccount(string? account, Operator fallback)
+    {
+        string suffix = account?.Split('@').LastOrDefault()?.Trim().ToLowerInvariant() ?? "";
+        return suffix switch
+        {
+            "mobile" => Operator.Mobile, "unicom" => Operator.Unicom, "telecom" => Operator.Telecom,
+            "campus" or "edu" => Operator.Campus, _ => fallback
+        };
     }
 
     /// <summary>每秒刷新一次：已连接时长、下次巡检倒计时。没值的整格隐藏。</summary>
@@ -2011,18 +2140,32 @@ public sealed partial class MainWindow : Window
     private void OnDeviceListChanged()
     {
         if (!_uiBuilt) return;
+        RenderDeviceList(_rt.Devices);
+    }
 
-        var dm = _rt.Devices;
+    private void RenderDeviceList(DeviceManager dm)
+    {
+        if (!_uiBuilt) return;
 
         DeviceList.ItemsSource = dm.Devices;
 
-        RefreshDeviceSummary();
+        DeviceSummary.Text = DescribeDevices(dm.State, dm.Devices.Count,
+            _rt.Store.Settings.DeviceGuardEnabled, _rt.Store.Settings.DeviceGuardThreshold);
+        DeviceRefreshBtn.IsEnabled = dm.State != DeviceListState.Loading;
+        DeviceEmptyText.Visibility = dm.Devices.Count == 0 && dm.State != DeviceListState.Failed
+            ? Visibility.Visible : Visibility.Collapsed;
+        DeviceEmptyText.Text = dm.State switch
+        {
+            DeviceListState.Loading => "正在从认证门户读取在线设备…",
+            DeviceListState.Ready => "认证门户当前没有返回在线设备。",
+            _ => "尚未读取，点击刷新查看在线设备。"
+        };
 
         bool failed = dm.State == DeviceListState.Failed || !string.IsNullOrEmpty(dm.Error);
         DeviceErrorRow.Visibility = failed ? Visibility.Visible : Visibility.Collapsed;
         if (failed)
         {
-            DeviceErrorText.Text = "连不上认证门户，设备列表稍后会自动重试。";
+            DeviceErrorText.Text = "设备读取失败：" + dm.Error;
             DeviceErrorText.Visibility = Visibility.Visible;
         }
     }
@@ -2030,7 +2173,7 @@ public sealed partial class MainWindow : Window
     private void OnDeviceCardExpanding(Expander sender, ExpanderExpandingEventArgs args)
     {
         if (!_uiBuilt) return;
-        if (_rt.Devices.State == DeviceListState.Failed) _ = RefreshDevicesAsync();
+        if (_rt.Devices.State is DeviceListState.Idle or DeviceListState.Failed) _ = RefreshDevicesAsync();
     }
 
     private async Task OnDeviceRefreshClicked()
@@ -2038,26 +2181,49 @@ public sealed partial class MainWindow : Window
         await RefreshDevicesAsync();
     }
 
+    private async void OnDevicesRefreshClicked(object sender, RoutedEventArgs e) => await RefreshDevicesAsync();
+
     /// <summary>
     /// 拉一次在线设备列表。
     ///
     /// 端口取当前生效档案里的那个 —— 门户按线路分配接入端口，
     /// 所以这里不能写死，得跟着门户分配的结果走。
     /// </summary>
-    private async Task RefreshDevicesAsync()
+    private Task RefreshDevicesAsync(DeviceManager? source = null)
     {
-        if (!_uiBuilt) return;
+        if (!_uiBuilt || _rt.Exiting) return Task.CompletedTask;
+        if (_deviceRefreshTask is { IsCompleted: false })
+        {
+            _deviceRefreshAgain = true;
+            return _deviceRefreshTask;
+        }
+        return _deviceRefreshTask = RefreshDevicesCoreAsync(source ?? _rt.Devices);
+    }
 
-        DeviceSummary.Text = "在线设备：正在读取…";
+    private async Task RefreshDevicesCoreAsync(DeviceManager source)
+    {
+        var root = Root;
+        DeviceRefreshBtn.IsEnabled = false;
 
         try
         {
-            int port = _rt.Profiles.Resolve().Port;
-            await _rt.Devices.RefreshAsync(port);
+            do
+            {
+                _deviceRefreshAgain = false;
+                if (!_rt.IsUiTest && await _rt.Ports.DiscoverAsync() is { } assigned)
+                    _rt.Profiles.SetDiscoveredPort(assigned);
+                await source.RefreshAsync(_rt.Profiles.Resolve().Port);
+            } while (_deviceRefreshAgain && _uiBuilt && !_rt.Exiting);
+            if (_uiBuilt && ReferenceEquals(root, Root)) RenderDeviceList(source);
+        }
+        catch (Exception ex)
+        {
+            _rt.AddLog("设备读取失败：" + ex.Message);
+            _rt.AddDiagnostic(ex.ToString());
         }
         finally
         {
-            if (_uiBuilt) OnDeviceListChanged();
+            if (_uiBuilt && ReferenceEquals(root, Root)) DeviceRefreshBtn.IsEnabled = true;
         }
     }
 
@@ -2189,9 +2355,12 @@ public sealed partial class MainWindow : Window
         _ = SyncCaptchaAsync();
     }
 
-    private async Task SyncCaptchaAsync()
+    private async Task SyncCaptchaAsync(Func<byte[], Task<BitmapImage?>>? loadImage = null)
     {
         if (!_uiBuilt) return;
+
+        var root = Root;
+        int imageVersion = ++_captchaImageVersion;
 
         CaptchaSubmitBtn.IsEnabled = true;
         var captcha = _rt.Coordinator.PendingCaptcha;
@@ -2217,13 +2386,18 @@ public sealed partial class MainWindow : Window
         Fx.Reveal(CaptchaPanel);
         CaptchaHint.Text = string.IsNullOrWhiteSpace(captcha.Hint) ? "按图输入后按回车" : captcha.Hint;
 
-        await SetCaptchaImageAsync(captcha.Bytes);
+        var bitmap = await (loadImage ?? LoadCaptchaImageAsync)(captcha.Bytes);
+        // Decoding yields to the UI thread: closing to tray can release this entire tree.
+        if (!_uiBuilt || !ReferenceEquals(root, Root) || imageVersion != _captchaImageVersion) return;
+        CaptchaPic.Source = bitmap;
 
         CaptchaBox.Text = "";
         CaptchaBox.Focus(FocusState.Programmatic);
     }
 
-    private async Task SetCaptchaImageAsync(byte[] bytes)
+    private int _captchaImageVersion;
+
+    private static async Task<BitmapImage?> LoadCaptchaImageAsync(byte[] bytes)
     {
         try
         {
@@ -2240,16 +2414,18 @@ public sealed partial class MainWindow : Window
 
             var bitmap = new BitmapImage();
             await bitmap.SetSourceAsync(stream);
-            CaptchaPic.Source = bitmap;
+            return bitmap;
         }
         catch
         {
-            CaptchaPic.Source = null;
+            return null;
         }
     }
 
     private async Task SubmitCaptchaAsync()
     {
+        if (!_uiBuilt || _rt.Exiting) return;
+        var root = Root;
         var code = CaptchaBox.Text.Trim();
         if (code.Length == 0)
         {
@@ -2266,14 +2442,40 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
-            CaptchaSubmitBtn.IsEnabled = true;
+            if (_uiBuilt && ReferenceEquals(root, Root)) CaptchaSubmitBtn.IsEnabled = true;
         }
     }
 
-    private async Task OnConnectClicked()
+    private async void OnSwitchOutletClicked(object sender, RoutedEventArgs e)
+    {
+        if (!_uiBuilt || _rt.Exiting) return;
+        var options = Enum.GetValues<Operator>();
+        var picker = new ComboBox
+        {
+            Style = (Style)Root.Resources["RowInputStyle"],
+            ItemsSource = options.Select(OperatorName).ToArray(),
+            SelectedIndex = Array.IndexOf(options, _rt.Coordinator.ActiveOperator)
+        };
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Root.XamlRoot,
+            Title = "切换出口",
+            Content = new StackPanel { Spacing = 12, Children =
+                { new TextBlock { Text = "断开本机连接，并使用所选出口重新登录。本次选择优先于连接规则。", TextWrapping = TextWrapping.Wrap }, picker } },
+            PrimaryButtonText = "断开并重新登录",
+            CloseButtonText = "取消"
+        };
+        if (await ShowDialogAsync(dialog) == ContentDialogResult.Primary && picker.SelectedIndex >= 0)
+            await ConnectToOutletAsync(options[picker.SelectedIndex]);
+    }
+
+    private Task ConnectToOutletAsync(Operator outlet) => OnConnectClicked(outlet);
+
+    private async Task OnConnectClicked(Operator? outlet = null)
     {
         // 未接入校园网时主按钮是「重新检测」，走检测而不是提交登录
-        if (_rt.PortalDown)
+        if (!_uiBuilt || _rt.Exiting) return;
+        if (_rt.PortalDown && outlet is null)
         {
             await OnRefreshClicked();
             return;
@@ -2298,13 +2500,23 @@ public sealed partial class MainWindow : Window
         }
 
         ConnectBtn.IsEnabled = false;
+        _manualConnecting = true;
+        _requestedOperator = outlet;
         try
         {
-            await _rt.Coordinator.ManualConnectAsync(reconnect: reconnect);
-            if (reconnect) _rt.Devices.Invalidate();
+            await _rt.Coordinator.ManualConnectAsync(switchOutlet: outlet, reconnect: reconnect);
+            if (reconnect || outlet is not null || _rt.Coordinator.State == ConnState.Online) _rt.Devices.Invalidate();
+            if (_rt.Coordinator.State == ConnState.Online) await RefreshDevicesAsync();
+        }
+        catch (Exception ex)
+        {
+            _rt.AddLog("登录操作失败：" + ex.Message);
+            _rt.AddDiagnostic(ex.ToString());
         }
         finally
         {
+            _manualConnecting = false;
+            _requestedOperator = null;
             if (_uiBuilt) ConnectBtn.IsEnabled = true;
         }
     }
@@ -2432,6 +2644,9 @@ public sealed partial class MainWindow : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        _windowClosed = true;
+        if (_appWindow is not null) _appWindow.Changed -= OnAppWindowChanged;
+        _shownDialog?.Hide();
         _edgeDock?.Dispose();
         _deviceActions.Dispose();
         PersistToStore();
@@ -2443,6 +2658,7 @@ public sealed partial class MainWindow : Window
         _theme.Changed -= OnThemeChanged;
         _rt.StateChanged -= OnRuntimeState;
         _rt.Logged -= OnRuntimeLog;
+        _rt.RawLogged -= OnRuntimeRawLog;
         _rt.UpdateAvailable -= ShowUpdateLink;
         _rt.SettingsChanged -= OnRuntimeSettings;
         _rt.LegacyHostsChanged -= OnLegacyHostsChanged;

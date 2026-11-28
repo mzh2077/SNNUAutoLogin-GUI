@@ -4,10 +4,10 @@
 LANCZOS 降采样，避免小尺寸各画一遍导致笔画粗细不一致。
 
 产出：
-  Assets/app.ico                     16/20/24/32(小图) + 40/48/64/256(大图)
+  Assets/app.ico                     16/20/24/32/40/48/64/256，同一个主图标
   Assets/app_16/32/64/256.png        关于页、标题栏、磁贴共用
   Assets/Square44x44.png 等 MSIX 磁贴   居中、四周 15% 边距
-  Assets/tray/tray_{connected,disconnected,error}_{dark,light}.ico   16/20/24 单色
+  Assets/tray/tray_{connected,disconnected,error}_{dark,light}.ico   16/20/24，与主图标一致
 
 说明：源 SVG 的画布是 1024，图形本身只占左下约 66%。这里按「墨迹外框」等比裁切并
 四周留 5% 空隙再缩放，图形的形状、比例、颜色都不动——不裁的话 16px 下会挤在角落里
@@ -33,8 +33,8 @@ CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 MASTER = 2048          # 母版边长
 INK_PAD = 0.05         # 裁切后四周留白（占成品边长）
 
-ICO_SMALL = [16, 20, 24, 32]      # 用 icon-small.svg
-ICO_LARGE = [40, 48, 64, 256]     # 用 icon-main.svg
+ICO_SMALL = [16, 20, 24, 32]      # 小尺寸也从 icon-main.svg 生成
+ICO_LARGE = [40, 48, 64, 256]
 
 # 托盘单色：深色墨（浅色任务栏）/ 白色（深色任务栏）
 INK_LIGHT_TASKBAR = "#1A1A1A"
@@ -213,15 +213,14 @@ def main():
 
     print("渲染母版…")
     big = master(read_svg(ASSETS / "icon-main.svg"))
-    small = master(read_svg(ASSETS / "icon-small.svg"))
 
     # app.ico
-    entries = [(s, scale(small, s)) for s in ICO_SMALL] + [(s, scale(big, s)) for s in ICO_LARGE]
+    entries = [(s, scale(big, s)) for s in ICO_SMALL + ICO_LARGE]
     write_ico(ASSETS / "app.ico", entries)
     print("app.ico", (ASSETS / "app.ico").stat().st_size, "bytes", [s for s, _ in entries])
 
     # 单独 PNG
-    for name, img, s in (("app_16.png", small, 16), ("app_32.png", small, 32),
+    for name, img, s in (("app_16.png", big, 16), ("app_32.png", big, 32),
                          ("app_64.png", big, 64), ("app_256.png", big, 256)):
         scale(img, s).save(ASSETS / name)
     print("app_16/32/64/256.png")
@@ -234,11 +233,11 @@ def main():
     tile(big, 256, 256).save(ASSETS / "StoreLogo-256.png")
     print("tiles 44/150/310x150/256")
 
-    # 托盘
+    # 托盘与窗口使用同一彩色主图标；三态通过现有悬浮提示表达。
+    # 保留原来的状态/主题文件名，兼容已存在的托盘加载逻辑。
     for state in ("connected", "disconnected", "error"):
         for theme, color in (("dark", INK_LIGHT_TASKBAR), ("light", INK_DARK_TASKBAR)):
-            m = mono_master(tray_svg(color, state))
-            write_ico(TRAY / f"tray_{state}_{theme}.ico", [(s, scale(m, s)) for s in (16, 20, 24)])
+            write_ico(TRAY / f"tray_{state}_{theme}.ico", [(s, scale(big, s)) for s in (16, 20, 24)])
     print("tray 6 个 ico（16/20/24）")
 
 

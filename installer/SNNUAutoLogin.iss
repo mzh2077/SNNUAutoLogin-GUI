@@ -15,6 +15,7 @@
   #define AppExe       "SNNUAutoLogin.exe"
 #endif
 #define AppPublisher   "SNNU"
+#define ShellIconFile "app-" + GetSHA256OfFile(SourcePath + "\..\Assets\app.ico") + ".ico"
 #define AppURL         "https://www.snnu.edu.cn"
 #ifndef SrcDir
   #define SrcDir       "..\release"
@@ -59,7 +60,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=Output
 OutputBaseFilename={#AppNameEn}-Setup-{#AppVer}
 SetupIconFile=..\Assets\app.ico
-UninstallDisplayIcon={app}\{#AppExe}
+UninstallDisplayIcon={app}\Assets\{#ShellIconFile}
 UninstallDisplayName={#AppName}
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -82,11 +83,13 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#SrcDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; A content-specific path bypasses stale EXE icon cache entries after an icon update.
+Source: "..\Assets\app.ico"; DestDir: "{app}\Assets"; DestName: "{#ShellIconFile}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Check: CanCreateStartMenuIcon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\Assets\{#ShellIconFile}"; Check: CanCreateStartMenuIcon
 Name: "{autoprograms}\卸载 {#AppName}"; Filename: "{uninstallexe}"; Check: CanCreateUninstallIcon
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon; Check: CanCreateDesktopIcon
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\Assets\{#ShellIconFile}"; Check: CanCreateDesktopIcon
 
 [Registry]
 ; 卸载时顺带清掉开机自启项（ValueType=none 表示安装阶段不写入，只登记删除动作）
@@ -110,6 +113,54 @@ const
 
 var
   WasRunning: Boolean;   { 安装前程序是否在运行，用来决定装完要不要拉起来 }
+  HadDesktopIcon: Boolean;
+
+procedure NotifyIconUpdated(Event: Integer; Flags: Cardinal; Path: String; Unused: Integer);
+  external 'SHChangeNotify@shell32.dll stdcall';
+
+{ Update only existing links targeting this installation. Never add/remove taskbar pins. }
+procedure RefreshLinksIn(Dir: String);
+var
+  FindRec: TFindRec;
+  Shell, Folder, Item, Link: Variant;
+  Path, Target: String;
+begin
+  if not DirExists(Dir) then Exit;
+  try
+    Shell := CreateOleObject('Shell.Application');
+    Folder := Shell.NameSpace(Dir);
+  except
+    Log('SNNU: shortcut automation unavailable: ' + GetExceptionMessage);
+    Exit;
+  end;
+  Target := ExpandConstant('{app}\{#AppExe}');
+  if not FindFirst(AddBackslash(Dir) + '*.lnk', FindRec) then Exit;
+  try
+    repeat
+      Path := AddBackslash(Dir) + FindRec.Name;
+      try
+        Item := Folder.ParseName(FindRec.Name);
+        Link := Item.GetLink;
+        if CompareText(GetShortName(Link.Path), GetShortName(Target)) <> 0 then Continue;
+        Link.SetIconLocation(ExpandConstant('{app}\Assets\{#ShellIconFile}'), 0);
+        Link.Save;
+        NotifyIconUpdated($00002000, $00003005, Path, 0);
+        Log('SNNU: refreshed shortcut icon ' + Path);
+      except
+        Log('SNNU: could not refresh shortcut icon ' + Path + ': ' + GetExceptionMessage);
+      end;
+    until not FindNext(FindRec);
+  finally
+    FindClose(FindRec);
+  end;
+end;
+
+procedure RefreshShellIcons;
+begin
+  RefreshLinksIn(ExpandConstant('{autodesktop}'));
+  RefreshLinksIn(ExpandConstant('{autoprograms}'));
+  RefreshLinksIn(ExpandConstant('{userappdata}\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'));
+end;
 
 { 程序是否还在运行（托盘驻留时没有主窗口，只能靠单实例互斥量判断） }
 function RunningInstance: Boolean;
@@ -281,7 +332,8 @@ end;
 
 function CanCreateDesktopIcon: Boolean;
 begin
-  Result := ShortcutWritable(ExpandConstant('{autodesktop}\{#AppName}.lnk'));
+  Result := (HadDesktopIcon or WizardIsTaskSelected('desktopicon')) and
+    ShortcutWritable(ExpandConstant('{autodesktop}\{#AppName}.lnk'));
 end;
 
 { 覆盖升级时把开机自启改指到安装目录：
@@ -293,6 +345,8 @@ var
 begin
   if CurStep = ssInstall then
   begin
+    HadDesktopIcon := FileExists(ExpandConstant('{autodesktop}\{#AppName}.lnk'));
+    if HadDesktopIcon then DeleteFile(ExpandConstant('{autodesktop}\{#AppName}.lnk'));
     DeleteStaleFiles(ExpandConstant('{app}'));
     CleanupStaleDirs;
     DeleteStaleShortcuts;
@@ -300,6 +354,7 @@ begin
   end;
 
   if CurStep <> ssPostInstall then Exit;
+  RefreshShellIcons;
   if not RegQueryStringValue(HKCU, RunKey, RunValue, OldValue) then Exit;
   if OldValue = '' then Exit;
 

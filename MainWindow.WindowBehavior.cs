@@ -32,6 +32,10 @@ public sealed partial class MainWindow
 
     private async Task<ContentDialogResult> ShowDialogAsync(ContentDialog dialog)
     {
+        // WinUI permits one ContentDialog per window. A second async event used to throw
+        // from ShowAsync and terminate the process; closing to tray also invalidates XamlRoot.
+        if (!_uiBuilt || _rt.Exiting || _shownDialog is not null) return ContentDialogResult.None;
+        var root = Root;
         _openDialogs++;
         _shownDialog = dialog;
         _edgeDock?.Reveal();
@@ -45,7 +49,14 @@ public sealed partial class MainWindow
             dialog.Resources["TextControlBorderThemeThickness"] = new Thickness(1);
             dialog.Resources["TextControlBorderThemeThicknessFocused"] = new Thickness(1);
             dialog.Resources["ComboBoxBorderThemeThicknessFocused"] = new Thickness(1);
-            return await dialog.ShowAsync();
+            var result = await dialog.ShowAsync();
+            return _uiBuilt && !_rt.Exiting && ReferenceEquals(root, Root)
+                ? result : ContentDialogResult.None;
+        }
+        catch (Exception ex)
+        {
+            _rt.AddLog("无法显示操作对话框：" + ex.Message);
+            return ContentDialogResult.None;
         }
         finally { _shownDialog = null; _openDialogs--; }
     }
