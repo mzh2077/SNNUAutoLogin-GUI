@@ -28,7 +28,9 @@ foreach ($theme in @('light', 'dark')) {
         throw "$theme portal and style check missing"
     }
     foreach ($check in @('PASS explicit taskbar icons and outlet switch menu',
-        'PASS concurrent dialogs, dialog teardown and late captcha decoding')) {
+        'PASS concurrent dialogs, dialog teardown and late captcha decoding',
+        'PASS display changes, reduced work area and rebuilt view layout',
+        'PASS native close defers view teardown after display changes')) {
         if (!(Select-String -LiteralPath $report -SimpleMatch $check)) { throw "$theme missing regression check: $check" }
     }
     Get-Content -LiteralPath $report | Write-Host

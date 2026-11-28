@@ -130,6 +130,10 @@ public sealed partial class MainWindow
     private async Task RunExitWhileHiddenAsync()
     {
         await Task.Delay(2200);
+        // The settings page starts collapsed; its input templates/theme resources
+        // must be realized before checking their effective border brushes.
+        ShowSettingsPage(true, animate: false);
+        await Task.Delay(260);
         CheckFormInputBorders();
         HideToTray();
         await Task.Delay(2000);

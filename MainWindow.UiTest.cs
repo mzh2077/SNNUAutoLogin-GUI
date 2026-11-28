@@ -23,6 +23,7 @@ public sealed partial class MainWindow
         await Task.Delay(1500);
         CheckWindowIcon(sb);
         await CheckDialogAndCaptchaLifetimeAsync(sb);
+        await CheckDisplayRestoreAsync(sb);
 
         // 设置项都在设置页上，先切过去量尺寸；首页的量测放到后面切回来再做。
         ShowSettingsPage(true, animate: false);
@@ -129,11 +130,65 @@ public sealed partial class MainWindow
 
         await CheckNativeDockingAsync(sb);
 
+        // A native close must leave XAML intact until this message stack returns.
+        SendMessageForIcon(WinRT.Interop.WindowNative.GetWindowHandle(this), 0x0010, IntPtr.Zero, IntPtr.Zero);
+        if (!_closeQueued || !_uiBuilt || _rt.Exiting)
+            throw new InvalidOperationException("Native close released the view reentrantly");
+        sb.AppendLine("PASS native close defers view teardown after display changes");
         System.IO.File.WriteAllText(
             System.IO.Path.Combine(System.IO.Path.GetTempPath(), "snnu_uitest.txt"),
             sb.ToString(), Encoding.UTF8);
 
-        Application.Current.Exit();
+        // The queued close now runs AppRuntime.Exit and drains background operations.
+    }
+
+    private async Task CheckDisplayRestoreAsync(StringBuilder report)
+    {
+        if (_appWindow is null) throw new InvalidOperationException("Missing app window");
+        var originalPosition = _appWindow.Position;
+        var originalSize = _appWindow.Size;
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        double scale = Math.Max(96, GetDpiForWindow(hwnd)) / 96.0;
+        try
+        {
+            foreach (int width in new[] { 420, 520, 420 })
+            {
+                _appWindow.Resize(new Windows.Graphics.SizeInt32((int)(width * scale), (int)(680 * scale)));
+                await Task.Delay(180);
+                UpdateSettingsInputLayout();
+                TeardownUi();
+                BuildUi();
+                await Task.Delay(180);
+                UpdateSettingsInputLayout();
+                int expectedRow = Root.ActualWidth < 440 ? 1 : 0;
+                if (Grid.GetRow(AccountBox) != expectedRow || Grid.GetRow(PasswordInputHost) != expectedRow
+                    || Math.Abs(AppTitleBar.Margin.Right - _titleBarInset) > 0.5)
+                    throw new InvalidOperationException("Rebuilt view reused the previous tree's layout cache");
+            }
+            var area = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(_appWindow.Id,
+                Microsoft.UI.Windowing.DisplayAreaFallback.Primary).WorkArea;
+            var smaller = new DockRect(area.X, area.Y, Math.Min(600, area.Width), Math.Min(450, area.Height));
+            RefreshDisplayLayout(smaller);
+            await Task.Delay(180);
+            var p = _appWindow.Position;
+            var size = _appWindow.Size;
+            if (p.X < smaller.X || p.Y < smaller.Y || p.X + size.Width > smaller.Right || p.Y + size.Height > smaller.Bottom)
+                throw new InvalidOperationException("Restored window does not fit the reduced display work area");
+
+            // Deliver display/DPI notifications while a view is being released/rebuilt.
+            QueueDisplayLayoutRefresh();
+            TeardownUi();
+            BuildUi();
+            await Task.Delay(180);
+            if (!_uiBuilt) throw new InvalidOperationException("Display update lost the rebuilt view");
+            report.AppendLine("PASS display changes, reduced work area and rebuilt view layout");
+        }
+        finally
+        {
+            _appWindow.Resize(originalSize);
+            _appWindow.Move(originalPosition);
+            RefreshDisplayLayout();
+        }
     }
 
     private void CheckWindowIcon(StringBuilder report)

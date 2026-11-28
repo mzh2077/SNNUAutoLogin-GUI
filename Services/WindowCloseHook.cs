@@ -20,6 +20,7 @@ public sealed class WindowCloseHook : IDisposable
 
     /// <summary>返回 true 表示已拦截（窗口保持存活）。</summary>
     public Func<bool>? InterceptClose { get; set; }
+    public Action? DisplayChanged { get; set; }
     public bool IsInMoveSize { get; private set; }
 
     public WindowCloseHook(IntPtr hwnd)
@@ -41,6 +42,10 @@ public sealed class WindowCloseHook : IDisposable
     {
         if (msg == 0x0231) IsInMoveSize = true;
         if (msg == 0x0232) IsInMoveSize = false;
+        if (!_disposed && msg is 0x007E or 0x02E0 or 0x001A) // display mode, DPI, work area
+        {
+            try { DisplayChanged?.Invoke(); } catch { }
+        }
         if (msg == WM_CLOSE && !_disposed)
         {
             try

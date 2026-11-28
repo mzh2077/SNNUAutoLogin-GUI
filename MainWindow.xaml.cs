@@ -48,6 +48,9 @@ public sealed partial class MainWindow : Window
     private bool _uiReady;
     private bool _uiBuilt;
     private bool _hiddenToTray;
+    private bool _windowClosed;
+    private bool _closeQueued;
+    private bool _displayLayoutQueued;
     private bool _startHidden;
     private bool _settingsOpen;
     private bool _syncing;
@@ -118,7 +121,11 @@ public sealed partial class MainWindow : Window
         }
 
         appWindow.Changed += OnAppWindowChanged;
-        _closeHook = new WindowCloseHook(hwnd) { InterceptClose = OnCloseRequested };
+        _closeHook = new WindowCloseHook(hwnd)
+        {
+            InterceptClose = OnCloseRequested,
+            DisplayChanged = QueueDisplayLayoutRefresh
+        };
         InitializeEdgeDock(hwnd);
 
         double scale = GetDpiForWindow(hwnd) / 96.0;
@@ -143,11 +150,56 @@ public sealed partial class MainWindow : Window
         {
             try
             {
-                presenter.PreferredMinimumWidth = (int)(420 * scale);
-                presenter.PreferredMinimumHeight = (int)(560 * scale);
+                presenter.PreferredMinimumWidth = Math.Min(work.Width, (int)(420 * scale));
+                presenter.PreferredMinimumHeight = Math.Min(work.Height, (int)(560 * scale));
             }
             catch { }
         }
+    }
+
+    private void QueueDisplayLayoutRefresh()
+    {
+        if (_windowClosed || _rt.Exiting || _displayLayoutQueued) return;
+        _displayLayoutQueued = true;
+        if (!DispatcherQueue.TryEnqueue(() =>
+        {
+            _displayLayoutQueued = false;
+            RefreshDisplayLayout();
+        })) _displayLayoutQueued = false;
+    }
+
+    private void RefreshDisplayLayout(DockRect? workOverride = null)
+    {
+        if (_windowClosed || _rt.Exiting || _appWindow is null) return;
+        try
+        {
+            var area = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Primary).WorkArea;
+            var work = workOverride ?? new DockRect(area.X, area.Y, area.Width, area.Height);
+            double scale = Math.Max(96, GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this))) / 96.0;
+            if (_appWindow.Presenter is OverlappedPresenter presenter)
+            {
+                presenter.PreferredMinimumWidth = Math.Min(work.Width, (int)(420 * scale));
+                presenter.PreferredMinimumHeight = Math.Min(work.Height, (int)(560 * scale));
+                if (presenter.State == OverlappedPresenterState.Restored)
+                {
+                    var position = _appWindow.Position;
+                    var size = _appWindow.Size;
+                    var current = new DockRect(position.X, position.Y, size.Width, size.Height);
+                    var fitted = EdgeDockGeometry.Fit(current, work);
+                    if (fitted.Width != current.Width || fitted.Height != current.Height)
+                        _appWindow.Resize(new SizeInt32(fitted.Width, fitted.Height));
+                    if (fitted.X != current.X || fitted.Y != current.Y)
+                        _appWindow.Move(new PointInt32(fitted.X, fitted.Y));
+                }
+            }
+            if (!_uiBuilt) return;
+            _titleBarInset = double.NaN;
+            ApplyTitleBarMetrics();
+            UpdateTitleBarInset();
+            UpdateTitleBarInteractiveRegion();
+            UpdateSettingsInputLayout();
+        }
+        catch (Exception ex) { _rt.AddLog("显示布局更新失败：" + ex.Message); }
     }
 
     /// <summary>自定义标题栏。内容树重建后必须重新挂一次（元素实例已换）。</summary>
@@ -469,8 +521,8 @@ public sealed partial class MainWindow : Window
         if (presenter.State != OverlappedPresenterState.Minimized) return;
 
         await Task.Delay(1200);
-        if (!_uiBuilt) return;
-        if (presenter.State == OverlappedPresenterState.Minimized)
+        if (!_uiBuilt || _windowClosed) return;
+        if (sender.Presenter is OverlappedPresenter current && current.State == OverlappedPresenterState.Minimized)
             MemoryOptimizer.Trim(force: true);
     }
 
@@ -505,6 +557,10 @@ public sealed partial class MainWindow : Window
     private void BuildUi()
     {
         if (_uiBuilt) return;
+
+        // These values describe the previous controls, not the new XAML tree.
+        _inputsStacked = null;
+        _titleBarInset = double.NaN;
 
         // 生成的 InitializeComponent() 带 _contentLoaded 守卫，第二次调用会直接返回。
         // 想重建整棵树必须先把这个标志复位，否则所有控件字段都会是 null。
@@ -686,6 +742,7 @@ public sealed partial class MainWindow : Window
 
         try { _appWindow?.Show(); } catch { }
         Activate();
+        RefreshDisplayLayout();
 
         try { SetForegroundWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)); } catch { }
 
@@ -714,11 +771,22 @@ public sealed partial class MainWindow : Window
         Trace($"close-requested exiting={_rt.Exiting} tray={(_rt.Store.Settings.MinimizeToTray ? 1 : 0)}");
 
         if (_rt.Exiting) return !_rt.ShutdownComplete;
-        if (_rt.Store.Settings.MinimizeToTray && _rt.Tray?.IsVisible == true)
-            HideToTray();
-        else
-            _rt.Exit();
-        return true;
+        if (_closeQueued) return true;
+        // Unload XAML after the native close/display/DPI message stack has unwound.
+        _closeQueued = true;
+        bool queued = DispatcherQueue.TryEnqueue(() =>
+        {
+            try
+            {
+                if (_windowClosed || _rt.Exiting) return;
+                if (_rt.Store.Settings.MinimizeToTray && _rt.Tray?.IsVisible == true) HideToTray();
+                else _rt.Exit();
+            }
+            catch (Exception ex) { _rt.AddLog("关闭窗口失败：" + ex.Message); }
+            finally { _closeQueued = false; }
+        });
+        if (!queued) _closeQueued = false;
+        return queued;
     }
 
     internal static void Trace(string msg)
@@ -2479,6 +2547,8 @@ public sealed partial class MainWindow : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        _windowClosed = true;
+        if (_appWindow is not null) _appWindow.Changed -= OnAppWindowChanged;
         _shownDialog?.Hide();
         _edgeDock?.Dispose();
         _deviceActions.Dispose();

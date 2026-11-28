@@ -35,6 +35,12 @@ Check(EdgeDockGeometry.FindEdge(left, screen, work with { X = -1880, Width = 188
 Check(EdgeDockGeometry.FindEdge(work, screen, work, 12) == DockEdge.None, "full work-area window never docks");
 Check(EdgeDockGeometry.Clamp(left, new(0, 0, 1600, 900)).X == 0, "display removal restores window onto surviving display");
 Check(EdgeDockGeometry.Clamp(new(-200, -100, 1800, 1000), new(0, 0, 1600, 900)).X == 0, "oversized window restoration does not throw");
+Check(EdgeDockGeometry.Fit(new(1800, 900, 1200, 1000), new(0, 0, 1024, 728)) == new DockRect(0, 0, 1024, 728),
+    "resolution reduction fits both window position and size");
+Check(EdgeDockGeometry.Fit(new(2000, 200, 780, 1020), new(-1280, 0, 1280, 680)) == new DockRect(-780, 0, 780, 680),
+    "display removal fits the window onto a negative-coordinate monitor");
+Check(EdgeDockGeometry.Fit(new(100, 100, 520, 680), new(0, 0, 1920, 1040)) == new DockRect(100, 100, 520, 680),
+    "display refresh preserves a window that already fits");
 
 using (var action = new TimedDeviceAction(TimeSpan.FromMilliseconds(80)))
 {
