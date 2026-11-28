@@ -26,7 +26,12 @@ function Assert-ShortcutIcon([string]$path) {
     $link = $shell.CreateShortcut($path)
     $iconPath = $link.IconLocation -replace ',0$', ''
     if ($link.TargetPath -ne $exe -or !(Test-Path -LiteralPath $iconPath) -or
-        [IO.Path]::GetFileName($iconPath) -notmatch '^app-[0-9a-fA-F]{64}\.ico$') { throw "Shortcut icon mismatch: $path" }
+        [IO.Path]::GetFileName($iconPath) -notmatch '^app-[0-9a-fA-F]{64}\.ico$') {
+        Write-Host "Shortcut: $path; target: [$($link.TargetPath)]; expected target: [$exe]; icon: [$($link.IconLocation)]"
+        Get-ChildItem -LiteralPath (Join-Path $testDir 'Assets') -Filter '*.ico' | Select-Object Name, Length | Out-String | Write-Host
+        Get-Content -LiteralPath $installLog | Select-Object -Last 65 | Write-Host
+        throw "Shortcut icon mismatch: $path"
+    }
     if ((Get-FileHash -LiteralPath $iconPath).Hash -ne (Get-FileHash -LiteralPath (Join-Path $testDir 'Assets/app.ico')).Hash) {
         throw 'Shortcut icon content differs from the application icon'
     }
