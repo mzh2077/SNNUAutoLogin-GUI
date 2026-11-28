@@ -489,7 +489,22 @@
                                         </StackPanel>
                                     </Grid>
 
-                                    <!--  信息格：有值的项一行三列，没值的整列隐藏  -->
+                                    <Grid Margin="0,16,0,0" ColumnSpacing="16">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Style="{StaticResource MetaLabelStyle}" Text="当前账号" />
+                                            <TextBlock x:Name="CurrentAccountText" Style="{StaticResource MetaValueStyle}" Text="—" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock x:Name="CurrentOperatorLabel" Style="{StaticResource MetaLabelStyle}" Text="当前出口" />
+                                            <TextBlock x:Name="CurrentOperatorText" Style="{StaticResource MetaValueStyle}" Text="—" />
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <!--  IP、连接时长和巡检倒计时  -->
                                     <Grid Margin="0,16,0,0" ColumnSpacing="16">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
@@ -657,6 +672,123 @@
                                 </StackPanel>
                             </Border>
 
+                            <!--  ────── 在线设备  ──────  -->
+                            <Expander
+                                x:Name="DeviceCard"
+                                Margin="0,0,0,24"
+                                Style="{StaticResource SettingsExpanderStyle}"
+                                Expanding="OnDeviceCardExpanding"
+                                IsExpanded="True">
+                                <Expander.Header>
+                                    <Grid Padding="4,8,4,8" ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <FontIcon Style="{StaticResource SectionIconStyle}" Glyph="&#xE977;" />
+
+                                        <TextBlock
+                                            x:Name="DeviceSummary"
+                                            Grid.Column="1"
+                                            VerticalAlignment="Center"
+                                            FontSize="14"
+                                            Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                            Text="在线设备：正在读取…"
+                                            TextTrimming="CharacterEllipsis" />
+                                        <Button Grid.Column="2" x:Name="DeviceRefreshBtn"
+                                            Style="{StaticResource SmallButtonStyle}" Content="刷新"
+                                            Click="OnDevicesRefreshClicked" />
+                                    </Grid>
+                                </Expander.Header>
+
+                                <StackPanel Padding="16,0,16,8">
+                                    <TextBlock x:Name="DeviceEmptyText" Style="{StaticResource HintStyle}" Text="尚未读取，点击刷新查看在线设备。" />
+
+                                    <ScrollViewer
+                                        MaxHeight="180"
+                                        HorizontalScrollBarVisibility="Disabled"
+                                        VerticalScrollBarVisibility="Auto">
+                                        <ItemsControl x:Name="DeviceList">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid
+                                                        Padding="0,8"
+                                                        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                                        BorderThickness="0,1,0,0"
+                                                        ColumnSpacing="8">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+
+                                                        <StackPanel Spacing="1">
+                                                            <TextBlock
+                                                                FontSize="13"
+                                                                Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                                                Text="{Binding DisplayName}"
+                                                                TextTrimming="CharacterEllipsis" />
+                                                            <TextBlock
+                                                                FontSize="11"
+                                                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                                Text="{Binding Ip}" />
+                                                            <TextBlock FontSize="11" Text="{Binding Detail}" TextWrapping="Wrap"
+                                                                Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                        </StackPanel>
+
+                                                        <StackPanel
+                                                            Grid.Column="1"
+                                                            VerticalAlignment="Center"
+                                                            Orientation="Horizontal"
+                                                            Spacing="6">
+                                                            <TextBlock
+                                                                VerticalAlignment="Center"
+                                                                FontSize="11"
+                                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                                Text="{Binding Status}" />
+                                                            <Button
+                                                                Click="OnDeviceOfflineClicked"
+                                                                Content="下线"
+                                                                Style="{StaticResource SmallButtonStyle}"
+                                                                Tag="{Binding}"
+                                                                Visibility="{Binding CanForceOffline, Converter={StaticResource BoolToVisibility}}" />
+                                                            <TextBlock
+                                                                VerticalAlignment="Center"
+                                                                FontSize="11"
+                                                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                                Text="本机"
+                                                                Visibility="{Binding IsCurrent, Converter={StaticResource BoolToVisibility}}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+
+                                    <Grid
+                                        x:Name="DeviceErrorRow"
+                                        Margin="0,4,0,0"
+                                        ColumnSpacing="8"
+                                        Visibility="Collapsed">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock
+                                            x:Name="DeviceErrorText"
+                                            VerticalAlignment="Center"
+                                            Style="{StaticResource HintStyle}"
+                                            Text="暂时读取不到设备信息" />
+                                        <HyperlinkButton
+                                            x:Name="DeviceRetryBtn"
+                                            Grid.Column="1"
+                                            Style="{StaticResource InlineLinkStyle}"
+                                            Content="重试" />
+                                    </Grid>
+                                </StackPanel>
+                            </Expander>
+
                             <!--  ────── 快捷设置：四项各一张独立卡片，间距 4  ──────  -->
                             <StackPanel Margin="0,0,0,24" Spacing="4">
                                 <Border Style="{StaticResource SettingsCardStyle}">
@@ -757,116 +889,6 @@
                                     </Grid>
                                 </Border>
                             </StackPanel>
-
-                            <!--  ────── 在线设备  ──────  -->
-                            <Expander
-                                x:Name="DeviceCard"
-                                Margin="0,0,0,24"
-                                Style="{StaticResource SettingsExpanderStyle}"
-                                Expanding="OnDeviceCardExpanding"
-                                IsExpanded="False">
-                                <Expander.Header>
-                                    <Grid Padding="4,8,4,8" ColumnSpacing="12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-
-                                        <FontIcon Style="{StaticResource SectionIconStyle}" Glyph="&#xE977;" />
-
-                                        <TextBlock
-                                            x:Name="DeviceSummary"
-                                            Grid.Column="1"
-                                            VerticalAlignment="Center"
-                                            FontSize="14"
-                                            Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                                            Text="在线设备：正在读取…"
-                                            TextTrimming="CharacterEllipsis" />
-                                    </Grid>
-                                </Expander.Header>
-
-                                <StackPanel Padding="16,0,16,8">
-
-                                    <ScrollViewer
-                                        MaxHeight="180"
-                                        HorizontalScrollBarVisibility="Disabled"
-                                        VerticalScrollBarVisibility="Auto">
-                                        <ItemsControl x:Name="DeviceList">
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate>
-                                                    <Grid
-                                                        Padding="0,8"
-                                                        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
-                                                        BorderThickness="0,1,0,0"
-                                                        ColumnSpacing="8">
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="*" />
-                                                            <ColumnDefinition Width="Auto" />
-                                                        </Grid.ColumnDefinitions>
-
-                                                        <StackPanel Spacing="1">
-                                                            <TextBlock
-                                                                FontSize="13"
-                                                                Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                                                                Text="{Binding DisplayName}"
-                                                                TextTrimming="CharacterEllipsis" />
-                                                            <TextBlock
-                                                                FontSize="11"
-                                                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                                                Text="{Binding Ip}" />
-                                                        </StackPanel>
-
-                                                        <StackPanel
-                                                            Grid.Column="1"
-                                                            VerticalAlignment="Center"
-                                                            Orientation="Horizontal"
-                                                            Spacing="6">
-                                                            <TextBlock
-                                                                VerticalAlignment="Center"
-                                                                FontSize="11"
-                                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                                Text="{Binding Status}" />
-                                                            <Button
-                                                                Click="OnDeviceOfflineClicked"
-                                                                Content="下线"
-                                                                Style="{StaticResource SmallButtonStyle}"
-                                                                Tag="{Binding}"
-                                                                Visibility="{Binding CanForceOffline, Converter={StaticResource BoolToVisibility}}" />
-                                                            <TextBlock
-                                                                VerticalAlignment="Center"
-                                                                FontSize="11"
-                                                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                                                Text="本机"
-                                                                Visibility="{Binding IsCurrent, Converter={StaticResource BoolToVisibility}}" />
-                                                        </StackPanel>
-                                                    </Grid>
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
-                                    </ScrollViewer>
-
-                                    <Grid
-                                        x:Name="DeviceErrorRow"
-                                        Margin="0,4,0,0"
-                                        ColumnSpacing="8"
-                                        Visibility="Collapsed">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock
-                                            x:Name="DeviceErrorText"
-                                            VerticalAlignment="Center"
-                                            Style="{StaticResource HintStyle}"
-                                            Text="暂时读取不到设备信息" />
-                                        <HyperlinkButton
-                                            x:Name="DeviceRetryBtn"
-                                            Grid.Column="1"
-                                            Style="{StaticResource InlineLinkStyle}"
-                                            Content="重试" />
-                                    </Grid>
-                                </StackPanel>
-                            </Expander>
 
                             <!--  ────── 最近事件  ──────  -->
                             <Expander
@@ -1781,7 +1803,7 @@
                                             <FontIcon Style="{StaticResource SectionIconStyle}" Glyph="&#xE8A5;" />
                                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                 <TextBlock Style="{StaticResource RowTitleStyle}" Text="原始日志" />
-                                                <TextBlock Style="{StaticResource RowDescStyle}" Text="排查问题时使用" />
+                                                <TextBlock Style="{StaticResource RowDescStyle}" Text="最近 2000 条逐条记录，含请求、响应、耗时和异常详情" />
                                             </StackPanel>
                                         </Grid>
                                     </Expander.Header>
@@ -1800,7 +1822,7 @@
                                                     <DataTemplate>
                                                         <Grid Padding="0,3" ColumnSpacing="8">
                                                             <Grid.ColumnDefinitions>
-                                                                <ColumnDefinition Width="52" />
+                                                                <ColumnDefinition Width="144" />
                                                                 <ColumnDefinition Width="*" />
                                                             </Grid.ColumnDefinitions>
                                                             <TextBlock
@@ -1824,6 +1846,8 @@
                                             HorizontalAlignment="Left"
                                             Style="{StaticResource InlineLinkStyle}"
                                             Content="复制全部" />
+                                        <HyperlinkButton x:Name="RawLogOpenBtn" HorizontalAlignment="Left"
+                                            Style="{StaticResource InlineLinkStyle}" Content="打开完整日志文件" />
                                     </StackPanel>
                                 </Expander>
                             </StackPanel>

@@ -71,3 +71,5 @@ for state in ["connected", "disconnected", "error"]:
     for theme, bg in [("dark", 245), ("light", 32)]:
         for size in [16, 20, 24]:
             check(root / f"Assets/tray/tray_{state}_{theme}.ico", size, bg)
+            assert render(root / f"Assets/tray/tray_{state}_{theme}.ico", size, bg) == render(root / "Assets/app.ico", size, bg), (state, theme, size, "tray differs from window icon")
+            print(f"PASS tray/window identity {state} {theme} {size}px")

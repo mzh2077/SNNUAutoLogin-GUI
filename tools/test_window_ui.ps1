@@ -30,7 +30,9 @@ foreach ($theme in @('light', 'dark')) {
     foreach ($check in @('PASS explicit taskbar icons and outlet switch menu',
         'PASS concurrent dialogs, dialog teardown and late captcha decoding',
         'PASS display changes, reduced work area and rebuilt view layout',
-        'PASS native close defers view teardown after display changes')) {
+        'PASS native close defers view teardown after display changes',
+        'PASS expanded online devices, reload after reconnect and current operator',
+        'PASS raw diagnostics retain more than 40 entries, duplicates, milliseconds and stack traces')) {
         if (!(Select-String -LiteralPath $report -SimpleMatch $check)) { throw "$theme missing regression check: $check" }
     }
     Get-Content -LiteralPath $report | Write-Host

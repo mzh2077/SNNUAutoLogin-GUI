@@ -170,6 +170,8 @@ using (var coordinator = new LoginCoordinator(new CredentialStore(), new Dispatc
 var switchStore = new CredentialStore();
 switchStore.Settings.Account = "test@mobile";
 using (var coordinator = new LoginCoordinator(switchStore, new DispatcherQueue()))
+    Check(coordinator.ActiveOperator == Operator.Mobile, "displayed active operator honors the account suffix");
+using (var coordinator = new LoginCoordinator(switchStore, new DispatcherQueue()))
 {
     PortalClient.LoginCalls = 0;
     PortalClient.Login = ok;
@@ -180,6 +182,7 @@ using (var coordinator = new LoginCoordinator(switchStore, new DispatcherQueue()
     await coordinator.ManualConnectAsync(Operator.Telecom);
     Check(PortalClient.LastOperator == Operator.Telecom && PortalClient.LastAccount == "test" && PortalClient.LastForce,
         "explicit outlet overrides the account suffix and forces login");
+    Check(coordinator.ActiveOperator == Operator.Telecom, "displayed active operator follows the temporary outlet override");
     await coordinator.ManualConnectAsync();
     Check(PortalClient.LastOperator == Operator.Telecom, "subsequent login keeps the temporary outlet");
     int previousDisconnects = PortalClient.DisconnectCalls;

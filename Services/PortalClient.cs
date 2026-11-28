@@ -111,6 +111,8 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
     private readonly Func<int, HttpMessageHandler>? _testTransport;
 
     public PortalClient() { }
+    public event Action<string>? Diagnostics;
+    private void Note(string message) { try { Diagnostics?.Invoke(message); } catch { } }
 
     internal PortalClient(Func<int, HttpMessageHandler> transport) => _testTransport = transport;
 
@@ -136,7 +138,7 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
             UseProxy = false
         };
 
-        var http = new HttpClient(new PortalRequestHandler(handler))
+        var http = new HttpClient(new PortalRequestHandler(handler, Note))
         {
             Timeout = TimeSpan.FromSeconds(15)
         };
@@ -191,6 +193,7 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
             using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
 
             using var resp = await http.GetAsync(DiscoveryUrl, ct).ConfigureAwait(false);
+            Note($"PORT discovery {DiscoveryUrl} HTTP {(int)resp.StatusCode}");
             var html = await ReadHtmlAsync(resp, ct).ConfigureAwait(false);
 
             // 形如 http://202.117.144.205:8601/snnuportal/login.jsp
@@ -267,7 +270,10 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
             var currentIp = Match(html, @"当前IP[：:]\s*(?:<[^>]+>\s*)*([0-9]{1,3}(?:\.[0-9]{1,3}){3})");
             var frameUrl = Match(html, @"<iframe[^>]*\ssrc\s*=\s*[""']([^""']+)[""']");
             if (string.IsNullOrEmpty(frameUrl))
+            {
+                Note($"DEVICE parse port={port} status={(int)resp.StatusCode} html_chars={html.Length} missing_iframe=true");
                 return DeviceListResult.Fail("未认证，无法获取在线设备");
+            }
 
             // iframe 在 80 端口的 zili 目录下，是绝对地址
             using var frameResp = await ClientFor(port).GetAsync(frameUrl, ct).ConfigureAwait(false);
@@ -275,6 +281,7 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
             var frameHtml = Encoding.UTF8.GetString(frameBytes);
 
             var devices = DeviceListParser.Parse(frameHtml, currentIp);
+            Note($"DEVICE parse port={port} status={(int)frameResp.StatusCode} bytes={frameBytes.Length} devices={devices.Count}");
             return DeviceListResult.Ok(devices, frameUrl);
         }
         catch (OperationCanceledException)
@@ -283,6 +290,7 @@ public sealed class PortalClient : IDisposable, IOnlineDevicePortal
         }
         catch (Exception ex)
         {
+            Note($"DEVICE failure port={port}\n{ex}");
             return DeviceListResult.Fail(Describe(ex));
         }
     }

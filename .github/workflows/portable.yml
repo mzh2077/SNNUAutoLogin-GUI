@@ -19,6 +19,7 @@ on:
       - 'tests/DeviceListTests/**'
       - 'tests/GuardTests/**'
       - 'tests/WindowBehaviorTests/**'
+      - 'tests/PortalDiagnosticsTests/**'
   pull_request:
     paths:
       - '.github/workflows/portable.yml'
@@ -37,6 +38,7 @@ on:
       - 'tests/DeviceListTests/**'
       - 'tests/GuardTests/**'
       - 'tests/WindowBehaviorTests/**'
+      - 'tests/PortalDiagnosticsTests/**'
   workflow_dispatch:
 permissions:
   contents: read
@@ -60,6 +62,8 @@ jobs:
       # GitHub runner 上跑不了，因此不进 CI。它是给本机用的实机验证入口。
       - name: Window docking and device action regression tests
         run: dotnet run --project tests/WindowBehaviorTests -c Release
+      - name: Portal diagnostics regression tests
+        run: dotnet run --project tests/PortalDiagnosticsTests -c Release
       - name: Build Windows installer
         shell: pwsh
         run: ./tools/build_release.ps1

@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 
 namespace SNNUAutoLogin.Services;
 
-/// <summary>托盘图标要表达的三种状态，与资产目录 Assets/tray 下的文件一一对应。</summary>
+/// <summary>托盘提示的三种连接状态，图标与窗口统一使用彩色主图标。</summary>
 public enum TrayIconKind
 {
     Connected,
@@ -213,7 +213,7 @@ public sealed class TrayIcon : IDisposable
 
     private IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
-        // 任务栏深浅主题切换时换一套墨色/白色图标，让图标在两种任务栏上都看得清。
+        // 保留主题通知和资源命名兼容；两套资源现在都使用统一的彩色主图标。
         if ((msg == WM_SETTINGCHANGE || msg == WM_DWMCOLORIZATIONCOLORCHANGED)
             && _added && IsLightTaskbar() != _lightTaskbar)
         {
@@ -314,7 +314,7 @@ public sealed class TrayIcon : IDisposable
     private static string Clip(string s, int max) =>
         s.Length <= max ? s : s[..max];
 
-    /// <summary>读系统「任务栏/开始菜单」深浅主题：true=浅色任务栏，用深色墨图标。</summary>
+    /// <summary>读系统任务栏主题，兼容已有托盘资源文件命名。</summary>
     private static bool IsLightTaskbar()
     {
         try
@@ -329,7 +329,7 @@ public sealed class TrayIcon : IDisposable
 
     /// <summary>
     /// 按「状态 × 主题」取图标句柄。ico 文件缺失时回退到从 exe 抽主图标。
-    /// 命名对应：dark=深色墨（浅色任务栏），light=白色（深色任务栏）。
+    /// 保留状态/主题文件名用于兼容；各文件均由同一个彩色主图标生成。
     /// </summary>
     private IntPtr PickIcon()
     {

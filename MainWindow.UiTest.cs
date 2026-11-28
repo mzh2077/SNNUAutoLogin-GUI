@@ -24,6 +24,8 @@ public sealed partial class MainWindow
         CheckWindowIcon(sb);
         await CheckDialogAndCaptchaLifetimeAsync(sb);
         await CheckDisplayRestoreAsync(sb);
+        await CheckDevicesAndCurrentOperatorAsync(sb);
+        CheckRawDiagnosticLog(sb);
 
         // 设置项都在设置页上，先切过去量尺寸；首页的量测放到后面切回来再做。
         ShowSettingsPage(true, animate: false);
@@ -189,6 +191,85 @@ public sealed partial class MainWindow
             _appWindow.Move(originalPosition);
             RefreshDisplayLayout();
         }
+    }
+
+    private async Task CheckDevicesAndCurrentOperatorAsync(StringBuilder report)
+    {
+        var portal = new UiDevicePortal();
+        using var manager = new DeviceManager(EventDispatcher.Inline, portal, ownsClient: false);
+        try
+        {
+            ShowSettingsPage(false, animate: false);
+            await RefreshDevicesAsync(manager);
+            await Task.Delay(120);
+            if (!DeviceCard.IsExpanded || DeviceList.Items.Count != 2 || !DeviceRefreshBtn.IsEnabled
+                || DeviceEmptyText.Visibility != Visibility.Collapsed)
+                throw new InvalidOperationException("Online devices must be expanded, populated and refreshable");
+            manager.Invalidate();
+            RenderDeviceList(manager);
+            await RefreshDevicesAsync(manager);
+            if (DeviceList.Items.Count != 2 || portal.Reads != 2)
+                throw new InvalidOperationException("Device list did not reload after invalidation");
+
+            portal.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var pending = RefreshDevicesAsync(manager);
+            manager.Invalidate();
+            var followup = RefreshDevicesAsync(manager);
+            var release = portal.Hold;
+            portal.Hold = null;
+            release.SetResult();
+            await Task.WhenAll(pending, followup);
+            if (DeviceList.Items.Count != 2 || portal.Reads != 4)
+                throw new InvalidOperationException("Invalidation during a request lost its follow-up refresh");
+
+            ApplyState(ConnState.Online, LoginResult.Online("demo-user@telecom", "192.0.2.10", "2026-01-01 00:00:00"), false);
+            if (CurrentAccountText.Text != "demo-user" || CurrentOperatorText.Text != "中国电信")
+                throw new InvalidOperationException("Current account/operator must follow the portal session");
+            if (DeviceCard.TransformToVisual(Root).TransformPoint(new(0, 0)).Y
+                >= QuickEditAccountBtn.TransformToVisual(Root).TransformPoint(new(0, 0)).Y)
+                throw new InvalidOperationException("Device list must precede the quick settings cards");
+            portal.Fail = true;
+            await RefreshDevicesAsync(manager);
+            if (DeviceErrorRow.Visibility != Visibility.Visible || !DeviceRefreshBtn.IsEnabled)
+                throw new InvalidOperationException("Device query errors must remain visible and retryable");
+            report.AppendLine("PASS expanded online devices, reload after reconnect and current operator");
+        }
+        finally { OnDeviceListChanged(); ApplyState(_rt.State, _rt.LastResult, false); }
+    }
+
+    private void CheckRawDiagnosticLog(StringBuilder report)
+    {
+        const string prefix = "RAW-REGRESSION-";
+        for (int i = 0; i < 80; i++) _rt.AddDiagnostic(prefix + i);
+        _rt.AddDiagnostic("RAW-REPEATED");
+        _rt.AddDiagnostic("RAW-REPEATED");
+        _rt.AddDiagnostic("System.IO.IOException: fixture failure\n   at Fixture.SendAsync()");
+        FillRawLogs();
+        var text = GetRawLogText();
+        if (!text.Contains(prefix + "0") || !text.Contains(prefix + "79")
+            || text.Split("RAW-REPEATED").Length != 3 || !text.Contains("\n   at Fixture.SendAsync()")
+            || RawLogs.Count(entry => entry.Text.StartsWith(prefix)) != 80
+            || !_rt.RawLogSnapshot[^1].Time.Contains('.'))
+            throw new InvalidOperationException("Raw diagnostics were truncated, merged or lost exception details");
+        report.AppendLine("PASS raw diagnostics retain more than 40 entries, duplicates, milliseconds and stack traces");
+    }
+
+    private sealed class UiDevicePortal : IOnlineDevicePortal
+    {
+        public int Reads;
+        public bool Fail;
+        public TaskCompletionSource? Hold;
+        public async Task<DeviceListResult> GetOnlineDevicesAsync(int port, System.Threading.CancellationToken ct = default)
+        {
+            Reads++;
+            if (Hold is { } hold) await hold.Task;
+            return Fail ? DeviceListResult.Fail("fixture portal error") : DeviceListResult.Ok(
+                new[] { new OnlineDevice { DeviceName = "演示电脑", Ip = "192.0.2.10", IsCurrent = true },
+                    new OnlineDevice { DeviceName = "演示手机", Ip = "192.0.2.11", SessionId = "fixture" } }, null);
+        }
+        public Task<bool> DisconnectAsync(int port, System.Threading.CancellationToken ct = default) => Task.FromResult(true);
+        public Task<bool> ForceOfflineAsync(string frameUrl, string sessionId, System.Threading.CancellationToken ct = default) => Task.FromResult(true);
+        public void Dispose() { }
     }
 
     private void CheckWindowIcon(StringBuilder report)

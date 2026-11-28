@@ -75,7 +75,19 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
     private readonly IPortalPortDiscovery? _ports;
 
     public ConnState State { get; private set; } = ConnState.Idle;
-    public Operator ActiveOperator => CurrentProfile().Operator;
+    public Operator ActiveOperator
+    {
+        get
+        {
+            var profile = CurrentProfile();
+            int at = profile.Account.IndexOf('@');
+            return at < 0 ? profile.Operator : profile.Account[(at + 1)..].Trim().ToLowerInvariant() switch
+            {
+                "mobile" => Operator.Mobile, "unicom" => Operator.Unicom, "telecom" => Operator.Telecom,
+                "campus" or "edu" => Operator.Campus, _ => profile.Operator
+            };
+        }
+    }
 
     /// <summary>待输入的验证码图片；为空表示当前不需要验证码。</summary>
     public CaptchaImage? PendingCaptcha { get; private set; }
@@ -111,6 +123,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
 
     public event Action<ConnState, LoginResult?>? StateChanged;
     public event Action<string>? Log;
+    public event Action<string>? DiagnosticLog;
 
     /// <summary>验证码图片变化（到达 / 刷新 / 清除）。</summary>
     public event Action? CaptchaChanged;
@@ -137,6 +150,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
         bool launchedAtStartup = false, PortalClient? client = null)
     {
         _client = client ?? new PortalClient();
+        _client.Diagnostics += ForwardDiagnostic;
         _ownsClient = client is null;
         _store = store;
         _dispatcher = dispatcher;
@@ -804,6 +818,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
     }
 
     private void LogLine(string text) => _dispatcher.TryEnqueue(() => Log?.Invoke(text));
+    private void ForwardDiagnostic(string text) => DiagnosticLog?.Invoke(text);
 
     private void PushCaptcha() => _dispatcher.TryEnqueue(() =>
     {
@@ -832,6 +847,7 @@ public sealed class LoginCoordinator : IDisposable, IAsyncDisposable
         if (_loop is not null) await _loop.ConfigureAwait(false);
 
         if (_ownsClient) _client.Dispose();
+        _client.Diagnostics -= ForwardDiagnostic;
         _gate.Dispose();
     }
 }

@@ -21,9 +21,12 @@ public sealed class LogEntry
 public sealed class AppRuntime : IAsyncDisposable
 {
     private const int MaxLogLines = 60;
+    internal const int MaxRawLogLines = 2000;
 
     private readonly List<LogEntry> _logs = new(MaxLogLines + 4);
+    private readonly List<LogEntry> _rawLogs = new();
     private readonly object _logGate = new();
+    private static readonly object TraceGate = new();
 
     private MainWindow? _window;
     private NetworkWatch? _netWatch;
@@ -87,6 +90,7 @@ public sealed class AppRuntime : IAsyncDisposable
 
     public event Action<ConnState, LoginResult?>? StateChanged;
     public event Action<string>? Logged;
+    public event Action<LogEntry>? RawLogged;
     public event Action? UpdateAvailable;
     public string? NewReleaseTag { get; private set; }
 
@@ -129,6 +133,8 @@ public sealed class AppRuntime : IAsyncDisposable
         Coordinator = new LoginCoordinator(Store, eventDispatcher, Profiles, Ports, launchedAtStartup);
         Coordinator.StateChanged += OnStateChanged;
         Coordinator.Log += AddLog;
+        Coordinator.DiagnosticLog += AddDiagnostic;
+        _portal.Diagnostics += AddDiagnostic;
 
         // 门户客户端是共用的，所以这里不让 DeviceManager 负责释放它
         Devices = new DeviceManager(eventDispatcher, _portal, ownsClient: false);
@@ -185,6 +191,25 @@ public sealed class AppRuntime : IAsyncDisposable
         {
             lock (_logGate) return _logs.ToArray();
         }
+    }
+
+    public IReadOnlyList<LogEntry> RawLogSnapshot
+    {
+        get { lock (_logGate) return _rawLogs.ToArray(); }
+    }
+
+    public void AddDiagnostic(string text)
+    {
+        var entry = new LogEntry { Time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), Text = text };
+        lock (_logGate)
+        {
+            _rawLogs.Add(entry);
+            if (_rawLogs.Count > MaxRawLogLines) _rawLogs.RemoveRange(0, _rawLogs.Count - MaxRawLogLines);
+        }
+        TraceLine(text);
+        void Notify() { try { RawLogged?.Invoke(entry); } catch { } }
+        if (Dispatcher.HasThreadAccess) Notify();
+        else Dispatcher.TryEnqueue(Notify);
     }
 
     // ────────────────────────── 托盘 ──────────────────────────
@@ -417,6 +442,7 @@ public sealed class AppRuntime : IAsyncDisposable
 
     private void OnStateChanged(ConnState state, LoginResult? result)
     {
+        AddDiagnostic($"STATE {State} -> {state} result={result?.Message ?? "(none)"}");
         State = state;
         LastResult = result;
         StateLabel = LabelOf(state);
@@ -444,6 +470,7 @@ public sealed class AppRuntime : IAsyncDisposable
 
     public void AddLog(string text)
     {
+        AddDiagnostic(text);
         var entry = new LogEntry { Time = DateTime.Now.ToString("HH:mm:ss"), Text = text };
 
         lock (_logGate)
@@ -453,7 +480,6 @@ public sealed class AppRuntime : IAsyncDisposable
         }
 
         // 运行日志同时落一份到临时目录，程序关掉后还能查
-        TraceLine(text);
 
         // 调用方可能在后台线程（加速服务的测速/写入都在线程池里），
         // 而日志最终会写进绑定 ListView 的 ObservableCollection —— 必须在 UI 线程触发。
@@ -486,9 +512,10 @@ public sealed class AppRuntime : IAsyncDisposable
     {
         try
         {
+            lock (TraceGate)
             System.IO.File.AppendAllText(
                 System.IO.Path.Combine(System.IO.Path.GetTempPath(), "snnu_trace.txt"),
-                $"[{DateTime.Now:HH:mm:ss.fff}] {text}\n");
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {text}\n");
         }
         catch { }
     }
